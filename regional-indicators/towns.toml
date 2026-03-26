@@ -1,0 +1,353 @@
+# towns.toml
+# Configuration for all towns tracked in the indicators project.
+#
+# Fields:
+#   name            - Display name used in output CSVs and reports
+#   state           - Australian state abbreviation
+#   postcode        - Primary postcode (used for ATO income data)
+#   postcodes       - All postcodes to aggregate (some towns span multiple)
+#   sa2_code        - ABS ASGS Edition 3 (2021) SA2 main code
+#   sa2_name        - Official ABS SA2 name (may differ slightly from display name)
+#   sa3_code        - Parent SA3 code
+#   lga             - Local Government Area name
+#   qps_division    - QLD Police Service division (QLD towns only)
+#   csg_notice_year - Year CSG development was first noticed locally (if applicable)
+#   benchmark       - If true, used as state benchmark (not a study town)
+#   notes           - Any data quirks or boundary notes
+
+[settings]
+output_dir  = "3 Web Content"
+raw_dir     = "raw"
+staging     = true          # write to staging/ before overwriting live CSVs
+asgs_edition = 2021         # ABS geography edition in use
+
+# ─────────────────────────────────────────────
+# QUEENSLAND TOWNS
+# ─────────────────────────────────────────────
+
+[[towns]]
+name             = "Roma"
+state            = "QLD"
+postcode         = "4455"
+postcodes        = ["4455"]
+sa2_code         = "307011176"
+sa2_name         = "Roma"
+sa3_code         = "30701"
+lga              = "Maranoa"
+qps_division     = "Roma"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "UCL and SA2 boundaries are the same for Roma"
+
+[[towns]]
+name             = "Chinchilla"
+state            = "QLD"
+postcode         = "4413"
+postcodes        = ["4413"]
+sa2_code         = "307021343"
+sa2_name         = "Chinchilla"
+sa3_code         = "30702"
+lga              = "Western Downs"
+qps_division     = "Dalby"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = ""
+
+[[towns]]
+name             = "Dalby"
+state            = "QLD"
+postcode         = "4405"
+postcodes        = ["4405"]
+sa2_code         = "307021344"
+sa2_name         = "Dalby"
+sa3_code         = "30702"
+lga              = "Western Downs"
+qps_division     = "Dalby"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = ""
+
+[[towns]]
+name             = "Miles"
+state            = "QLD"
+postcode         = "4415"
+postcodes        = ["4415"]
+sa2_code         = "307021348"
+sa2_name         = "Miles"
+sa3_code         = "30702"
+lga              = "Western Downs"
+qps_division     = "Dalby"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = ""
+
+[[towns]]
+name             = "Tara"
+state            = "QLD"
+postcode         = "4421"
+postcodes        = ["4421"]
+sa2_code         = "307021352"
+sa2_name         = "Tara"
+sa3_code         = "30702"
+lga              = "Western Downs"
+qps_division     = "Dalby"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = ""
+
+[[towns]]
+name             = "Wandoan"
+state            = "QLD"
+postcode         = "4419"
+postcodes        = ["4419"]
+sa2_code         = "307021353"
+sa2_name         = "Wandoan"
+sa3_code         = "30702"
+lga              = "Western Downs"
+qps_division     = "Dalby"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "Small population; some ATO data may be suppressed for privacy"
+
+[[towns]]
+name             = "Wallumbilla"
+state            = "QLD"
+postcode         = "4428"
+postcodes        = ["4428"]
+sa2_code         = "307011178"
+sa2_name         = "Wallumbilla - Surat Basin"
+sa3_code         = "30701"
+lga              = "Maranoa"
+qps_division     = "Roma"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "SA2 covers a wider area than the town; population figures are district-level"
+
+[[towns]]
+name             = "Goondiwindi"
+state            = "QLD"
+postcode         = "4390"
+postcodes        = ["4390"]
+sa2_code         = "307031358"
+sa2_name         = "Goondiwindi"
+sa3_code         = "30703"
+lga              = "Goondiwindi"
+qps_division     = "Darling Downs"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = ""
+
+[[towns]]
+name             = "Moranbah"
+state            = "QLD"
+postcode         = "4744"
+postcodes        = ["4744"]
+sa2_code         = "318011429"
+sa2_name         = "Moranbah"
+sa3_code         = "31801"
+lga              = "Isaac"
+qps_division     = "Mackay"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "Coal seam gas and coal mining town in Isaac LGA"
+
+[[towns]]
+name             = "Dysart"
+state            = "QLD"
+postcode         = "4745"
+postcodes        = ["4745"]
+sa2_code         = "318011426"
+sa2_name         = "Dysart"
+sa3_code         = "31801"
+lga              = "Isaac"
+qps_division     = "Mackay"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "Small mining town; ATO data may be suppressed in some years"
+
+[[towns]]
+name             = "Toowoomba"
+state            = "QLD"
+postcode         = "4350"
+postcodes        = ["4350", "4352"]
+sa2_code         = "305031218"   # Toowoomba - East (primary; see sub-areas below)
+sa2_name         = "Toowoomba - East"
+sa3_code         = "30503"
+lga              = "Toowoomba"
+qps_division     = "Darling Downs"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "Multiple SA2s cover Toowoomba; sub-areas tracked separately below"
+
+[[towns]]
+name             = "Toowoomba (Central)"
+state            = "QLD"
+postcode         = "4350"
+postcodes        = ["4350"]
+sa2_code         = "305031220"
+sa2_name         = "Toowoomba - West"
+sa3_code         = "30503"
+lga              = "Toowoomba"
+qps_division     = "Darling Downs"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "Central/CBD SA2 sub-area of Toowoomba"
+
+[[towns]]
+name             = "Toowoomba (Harlaxton)"
+state            = "QLD"
+postcode         = "4350"
+postcodes        = ["4350"]
+sa2_code         = "305031216"
+sa2_name         = "Harlaxton - Newtown"
+sa3_code         = "30503"
+lga              = "Toowoomba"
+qps_division     = "Darling Downs"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "North Toowoomba / Harlaxton SA2 sub-area"
+
+[[towns]]
+name             = "Toowoomba (West)"
+state            = "QLD"
+postcode         = "4350"
+postcodes        = ["4350"]
+sa2_code         = "305031220"
+sa2_name         = "Toowoomba - West"
+sa3_code         = "30503"
+lga              = "Toowoomba"
+qps_division     = "Darling Downs"
+csg_notice_year  = 2009
+benchmark        = false
+notes            = "West Toowoomba SA2 sub-area"
+
+# ─────────────────────────────────────────────
+# QUEENSLAND BENCHMARK
+# ─────────────────────────────────────────────
+
+[[towns]]
+name             = "Queensland (Benchmark)"
+state            = "QLD"
+postcode         = ""
+postcodes        = []
+sa2_code         = ""
+sa2_name         = "Queensland"
+sa3_code         = ""
+lga              = "Queensland"
+qps_division     = ""
+csg_notice_year  = 0
+benchmark        = true
+notes            = "State-level benchmark; use state totals from each data source"
+
+# ─────────────────────────────────────────────
+# NEW SOUTH WALES TOWNS
+# ─────────────────────────────────────────────
+
+[[towns]]
+name             = "Narrabri"
+state            = "NSW"
+postcode         = "2390"
+postcodes        = ["2390"]
+sa2_code         = "102021116"
+sa2_name         = "Narrabri"
+sa3_code         = "10202"
+lga              = "Narrabri"
+qps_division     = ""
+csg_notice_year  = 2015
+benchmark        = false
+notes            = "NSW CSG town added to study in 2021"
+
+# ─────────────────────────────────────────────
+# VICTORIA TOWNS (test cases)
+# ─────────────────────────────────────────────
+
+[[towns]]
+name             = "Shepparton"
+state            = "VIC"
+postcode         = "3630"
+postcodes        = ["3630", "3631"]
+sa2_code         = "213041536"
+sa2_name         = "Shepparton"
+sa3_code         = "21304"
+lga              = "Greater Shepparton"
+qps_division     = ""
+csg_notice_year  = 0
+benchmark        = false
+notes            = "VIC test town. No CSG activity. Crime data from Victoria Police, not QPS."
+
+[[towns]]
+name             = "Yarram"
+state            = "VIC"
+postcode         = "3971"
+postcodes        = ["3971"]
+sa2_code         = "212031483"
+sa2_name         = "Yarram"
+sa3_code         = "21203"
+lga              = "Wellington"
+qps_division     = ""
+csg_notice_year  = 0
+benchmark        = false
+notes            = "VIC test town. Small population; some ATO data may be suppressed."
+
+# ─────────────────────────────────────────────
+# DATA SOURCE CONFIGURATION
+# Per-source settings used by the fetch scripts
+# ─────────────────────────────────────────────
+
+[sources.ato]
+# ATO Taxation Statistics - individual income by postcode
+# Latest available: 2022-23 (released mid-2024); lags ~18 months
+base_url       = "https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/taxation-statistics/"
+table          = "Table 8"   # Median and average taxable income by postcode
+latest_year    = "2022-23"
+lag_years      = 2
+notes          = "Download Table 8 xlsx manually or via direct link; filter by postcode"
+
+[sources.abs_erp]
+# ABS Estimated Resident Population - national, by SA2
+# Updated annually, usually released ~12 months after reference year
+api_url        = "https://api.data.abs.gov.au/data/ABS,ERP_ASGS2021,1.0.0/"
+latest_year    = 2023
+notes          = "Use ABS Data Explorer API; filter by SA2 code"
+
+[sources.abs_labour]
+# ABS Small Area Labour Markets - unemployment by SA2
+# Quarterly; most recent usually 2-3 quarters behind
+api_url        = "https://api.data.abs.gov.au/data/ABS,SALM_ASGS2021,1.0.0/"
+notes          = "National source - works for QLD, NSW and VIC towns equally"
+
+[sources.qgso_housing]
+# QGSO Regional Database - house prices, rent, building approvals
+# QLD only; accessed via web form (semi-automated)
+base_url       = "https://statistics.qgso.qld.gov.au/report-viewer/run"
+states         = ["QLD"]
+notes          = "Requires browser interaction to select region and download; semi-automated only"
+
+[sources.qps_crime]
+# Queensland Police Service crime statistics
+# Annual; financial year basis; downloadable CSV
+base_url       = "https://www.police.qld.gov.au/maps-and-statistics"
+states         = ["QLD"]
+latest_year    = "2023-24"
+notes          = "CSV download available by police division; must map SA2/town to QPS division"
+
+[sources.vicpol_crime]
+# Victoria Police crime statistics
+# Annual; calendar year basis
+base_url       = "https://www.crimestatistics.vic.gov.au/crime-statistics/latest-victorian-crime-data/download-data"
+states         = ["VIC"]
+notes          = "Different geography (LGA/suburb) and year basis to QPS; needs mapping"
+
+[sources.bom_rainfall]
+# Bureau of Meteorology - rainfall by station
+# National; near real-time
+base_url       = "http://www.bom.gov.au/climate/data/"
+api_url        = "http://www.bom.gov.au/jsp/ncc/cdio/weatherData/av"
+notes          = "Use station ID per town; Roma = station 043091 (Roma Airport)"
+
+[sources.fuel_prices]
+# Fuel prices - RULP (regular unleaded)
+# Source TBD - original booklets cited source unclear
+# Options: ACCC quarterly monitoring, state fuel price portals
+base_url       = "https://www.accc.gov.au/consumers/petrol-and-fuel/petrol-price-cycles"
+notes          = "ACCC data is metro/capital city focused; regional town data harder to source automatically"
