@@ -204,6 +204,39 @@ Most sources are automatable. Rough difficulty rating:
 
 ---
 
+## Parked questions / decisions needed
+
+### 1. ABS Statistical Area boundaries for booklet maps
+
+The ABS ASGS Edition 3 (2021) provides SA1/SA2/SA3/SA4 boundaries as shapefiles.
+SA2 is already used for population and unemployment data. SA1 is much more granular
+(~400 people) and could enable more precise local maps in booklets.
+
+Decision needed: do we need SA1 data, or is SA2 sufficient for boundary maps?
+
+Search: https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/digital-boundary-files
+
+### 2. Equivalent data sources for NSW and Victoria
+
+Several indicators currently only fetch QLD data. Equivalent sources for NSW/VIC:
+
+| Indicator | QLD source | NSW equivalent | VIC equivalent |
+|---|---|---|---|
+| Population - town | QGSO UCL ERP | ABS ERP by UCL (national file) | ABS ERP by UCL (national file) |
+| Population - LGA | QGSO ERP | ABS ERP by LGA | ABS ERP by LGA |
+| Crime - all | QPS division rates (S3 CSV) | BOCSAR LGA offences | Crime Statistics Agency (CSA) |
+| Housing - sales | QGSO QRIS | NSW Valuer General | REIV / DSS |
+| Housing - rent | QGSO QRIS | NSW FACS rent tables | DHHS rent reports |
+| Building approvals | QGSO QRIS | ABS 8731 (national) | ABS 8731 (national) |
+| NRW population | QGSO Surat/Bowen Basin reports | No direct equivalent (Narrabri only) | No equivalent |
+
+Note: ABS ERP UCL data is national — the QGSO UCL fetcher could be extended to
+cover NSW/VIC towns (Narrabri, Shepparton, Yarram) from the same national ABS file.
+See: https://www.abs.gov.au/statistics/people/population/regional-population/latest-release
+
+
+---
+
 ## Data sources — detailed notes
 
 ### QPS Crime Statistics (Queensland)

@@ -59,6 +59,9 @@ DIVISION_RATES_URL = (
     "/Crime%20Statistics/division_Reported_Offences_Rates.csv"
 )
 
+import re
+_MONTH_YR = re.compile(r'^[A-Z]{3}(\d{2})$')
+
 CACHE_KEY = "qps_division_offence_rates"
 
 # Column names in the raw CSV that we aggregate into each output indicator.
@@ -153,11 +156,13 @@ class QPSCrimeFetcher(BaseFetcher):
                     continue
 
                 # Parse year from Month Year column
-                month_yr_raw = row.get("Month Year", "")
-                try:
-                    yr = int(str(month_yr_raw)[:4])
-                except (ValueError, TypeError):
+                # Format: "JAN01", "FEB24" (3-letter month + 2-digit year)
+                month_yr_raw = str(row.get("Month Year", "")).strip()
+                m = _MONTH_YR.match(month_yr_raw)
+                if not m:
                     continue
+                yr2 = int(m.group(1))
+                yr = 2000 + yr2 if yr2 <= 50 else 1900 + yr2
 
                 key = (division, yr)
 
