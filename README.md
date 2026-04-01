@@ -70,7 +70,7 @@ docker run -it --rm -v ${PWD}:/workspace -w /workspace ubuntu bash
 |------|--------|--------|--------|--------|
 | `income` | ATO Taxation Statistics Table 8 (data.gov.au) | CKAN API | All | ✓ Working |
 | `income_table6` | ATO Taxation Statistics Table 6 (data.gov.au) | CKAN API | All | TODO |
-| `population_ucl` | QGSO UCL Resident Population | QRIS web form | QLD | TODO |
+| `population_ucl` | QGSO UCL Resident Population | Direct CSV download | QLD | ✓ Working |
 | `population_erp` | ABS Estimated Resident Population (Narrabri) | ABS API | NSW | TODO |
 | `population_nrw` | QGSO Surat/Bowen Basin Population Reports | QGSO web | QLD | TODO |
 | `unemployment` | ABS Small Area Labour Markets (SALM) | data.gov.au | All | TODO |
@@ -193,14 +193,97 @@ Most sources are automatable. Rough difficulty rating:
 | ABS SALM unemployment | ✓ Easy | data.gov.au CKAN, quarterly xlsx |
 | ABS business counts 8165 | ✓ Easy | ABS API or data.gov.au |
 | BOM rainfall | ✓ Easy | BOM climate data API, station numbers known |
-| QGSO UCL population | ~ Medium | QRIS web form — check for direct CSV download URL |
+| QGSO UCL population | ✓ Easy | Direct CSV from qgso.qld.gov.au/issues/{N}/ — issue number increments each release, fetcher scrapes page as fallback |
 | QGSO NRW reports | ~ Medium | Annual xlsx on QGSO site, URL pattern predictable |
-| QPS crime rates | ~ Medium | Direct CSV download from QPS stats page |
+| QPS crime rates | ✓ Easy | S3 bucket: open-crime-data.s3-ap-southeast-2.amazonaws.com/Crime%20Statistics/division_Reported_Offences_Rates.csv — updated monthly, no auth |
 | BOCSAR crime (NSW) | ~ Medium | Web form download, may be scriptable with requests |
 | QGSO housing (QRIS) | ~ Hard | QRIS web form with region/date selections |
 | NSW housing (SCA) | ~ Hard | Quarterly xlsx, multiple files per year |
 | RACQ fuel prices | ✗ Manual | Annual PDF report — extract or maintain manually |
 | ACARA schools | ~ Medium | Annual xlsx on data portal, stable URL pattern |
+
+---
+
+## Data sources — detailed notes
+
+### QPS Crime Statistics (Queensland)
+
+**Dataset:** Reported Offence Rates per 100,000 persons by QPS Division, monthly from July 2001
+
+**Direct download URLs (no authentication required, updated monthly):**
+```
+Division rates:
+https://open-crime-data.s3-ap-southeast-2.amazonaws.com/Crime%20Statistics/division_Reported_Offences_Rates.csv
+
+QLD state benchmark:
+https://open-crime-data.s3-ap-southeast-2.amazonaws.com/Crime%20Statistics/QLD_Reported_Offences_Rates.csv
+```
+
+**Source page:** https://www.data.qld.gov.au/dataset/offence-rates-police-divisions-monthly-from-july-2001
+**Licence:** Creative Commons Attribution 3.0
+
+**Column mapping to website CSVs** (values are rates per 100,000 — divide by 100 to get per 1,000):
+
+| Website CSV | Source column | Notes |
+|---|---|---|
+| `Crime rate - all offences.csv` | Sum of all offence category columns | Annual = mean of 12 monthly rates |
+| `Drug offences.csv` | `Drug Offences` | Annual = mean of 12 monthly rates |
+| `Good order offences.csv` | `Good Order Offences` | Annual = mean of 12 monthly rates |
+| `Theft.csv` | `Other Theft (excl. Unlawful Entry)` | Annual = mean of 12 monthly rates |
+| `Traffic offences.csv` | `Traffic and Related Offences` | Annual = mean of 12 monthly rates |
+
+**QPS Division → Town mapping** (from towns.toml `qps_division` field):
+
+| Town | QPS Division |
+|---|---|
+| Roma | Roma |
+| Chinchilla | Dalby |
+| Dalby | Dalby |
+| Miles | Miles |
+| Tara | Tara |
+| Wandoan | Wandoan |
+| Wallumbilla | Wallumbilla |
+| Goondiwindi | Goondiwindi |
+| Moranbah | Moranbah |
+| Dysart | Dysart |
+| Toowoomba | Toowoomba |
+
+Note: Chinchilla shares the Dalby division. Toowoomba sub-areas all share the Toowoomba division.
+
+---
+
+### QGSO UCL Population (Queensland)
+
+**Dataset:** Estimated Resident Population by Urban Centre and Locality, Queensland, 2001–current
+
+**Direct download URL:**
+```
+https://www.qgso.qld.gov.au/issues/{N}/estimated-resident-population-urban-centre-locality-qld-2001-{year}p.csv
+```
+The issue number `{N}` increments with each annual release. The fetcher scrapes
+https://www.qgso.qld.gov.au/statistics/theme/population/population-estimates/state-regions
+as a fallback to find the current URL automatically.
+
+**Encoding:** latin-1 (file uses Windows cp1252 em-dash character)
+**Year suffix:** `p` = provisional, `r` = revised — both stripped to plain year in output
+
+---
+
+### ATO Taxation Statistics (National)
+
+**Table 8** — Median and average taxable income by postcode (all individuals)
+**Table 6A** — Selected items by taxable status and postcode (split by Taxable/Non-Taxable)
+**Table 6B** — Selected items combined totals by postcode
+
+**Source:** data.gov.au CKAN API
+```
+https://data.gov.au/data/api/3/action/package_show?id=taxation-statistics-{year}
+```
+Dataset slug pattern: `taxation-statistics-2022-23` (update year each cycle)
+
+ATO data lags ~18 months — 2022-23 is the most recent as of early 2026.
+Financial year YYYY-YY maps to calendar year YY+1 in output CSVs (e.g. 2022-23 → 2023).
+
 
 ---
 
