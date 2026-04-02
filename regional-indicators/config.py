@@ -8,6 +8,10 @@ downloaded before hitting a remote source.
 
 from __future__ import annotations
 
+# Year range for output CSVs
+YEAR_START = 2000
+YEAR_END   = 2025   # update each cycle
+
 import hashlib
 import json
 import os
@@ -52,6 +56,9 @@ class Town:
     sa3_code:         str
     lga:              str
     qps_division:     str        = ""
+    qgso_sa2:         str        = ""   # ASGS Ed 2 SA2 code used by QGSO files
+    qgso_lga:         str        = ""   # QGSO LGA identifier e.g. "LGA/34860"
+    bom_station:      str        = ""   # BOM rainfall station number
     csg_notice_year:  int        = 0
     benchmark:        bool       = False
     notes:            str        = ""
@@ -123,6 +130,9 @@ class Config:
                 sa3_code        = t.get("sa3_code", ""),
                 lga             = t.get("lga", ""),
                 qps_division    = t.get("qps_division", ""),
+                qgso_sa2        = t.get("qgso_sa2", ""),
+                qgso_lga        = t.get("qgso_lga", ""),
+                bom_station     = t.get("bom_station", ""),
                 csg_notice_year = t.get("csg_notice_year", 0),
                 benchmark       = t.get("benchmark", False),
                 notes           = t.get("notes", ""),

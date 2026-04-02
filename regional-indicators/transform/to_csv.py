@@ -266,6 +266,75 @@ def transform_crime_traffic(town: Town, dry_run: bool = False) -> bool:
     write_csv(town.output_dir / "Traffic offences.csv", values, dry_run=dry_run)
     return True
 
+
+
+# ── QGSO housing / unemployment / NRW / rainfall transformers ─────────────────
+
+def _load_qgso_series(town: Town, indicator: str) -> dict:
+    """
+    Load all cache/housing/{slug}_qgso_{year}.json files for a town,
+    merge across years into a single {year: value} dict.
+    """
+    cache_dir = CACHE_DIR / "housing"
+    values = {}
+    for fpath in sorted(cache_dir.glob(f"{town.slug}_qgso_*.json")):
+        with open(fpath) as f:
+            data = json.load(f)
+        for yr, val in data.get("indicators", {}).get(indicator, {}).items():
+            if val is not None and YEAR_START <= int(yr) <= YEAR_END:
+                values[str(yr)] = val
+    return values
+
+
+def _make_housing_transformer(indicator: str, filename: str):
+    """Factory for housing/NRW/rainfall transformer functions."""
+    def transformer(town: Town, dry_run: bool = False) -> bool:
+        values = _load_qgso_series(town, indicator)
+        if not values:
+            log.warning(f"  [{town.name}] qgso cache missing for {indicator}")
+            return False
+        write_csv(town.output_dir / filename, values, dry_run=dry_run)
+        return True
+    transformer.__name__ = f"transform_{indicator}"
+    return transformer
+
+
+transform_house_price   = _make_housing_transformer("house_price",  "House sale price (median).csv")
+transform_house_sales   = _make_housing_transformer("house_sales",  "House sales (number).csv")
+transform_rent          = _make_housing_transformer("rent",         "Rent (3-bedroom house; median).csv")
+transform_approvals     = _make_housing_transformer("approvals",    "Residential building approvals.csv")
+# Unemployment comes from SALM cache (not QGSO housing cache)
+def transform_unemployment(town: Town, dry_run: bool = False) -> bool:
+    """→ Unemployment rate.csv  (source: SALM or QGSO housing cache)"""
+    # Try SALM cache first (automated, national)
+    salm_file = CACHE_DIR / "unemployment" / f"{town.slug}_salm.json"
+    if salm_file.exists():
+        with open(salm_file) as f:
+            data = json.load(f)
+        values = {yr: val for yr, val in data.get("indicators", {}).get("unemployment", {}).items()
+                  if YEAR_START <= int(yr) <= YEAR_END}
+        if values:
+            write_csv(town.output_dir / "Unemployment rate.csv", values, dry_run=dry_run)
+            return True
+    # Fallback: QGSO housing cache (manual)
+    return _make_housing_transformer("unemployment", "Unemployment rate.csv")(town, dry_run)
+transform_nrw_town      = _make_housing_transformer("nrw_town",     "Non-resident workers in town.csv")
+transform_nrw_lga       = _make_housing_transformer("nrw_lga",      "Non-resident workers in local govt area.csv")
+# Rainfall comes from BOM cache (not QGSO housing cache)
+def transform_rainfall(town: Town, dry_run: bool = False) -> bool:
+    """→ Environment - total rainfall.csv  (source: BOM or QGSO housing cache)"""
+    bom_file = CACHE_DIR / "rainfall" / f"{town.slug}_bom_rainfall.json"
+    if bom_file.exists():
+        with open(bom_file) as f:
+            data = json.load(f)
+        values = {yr: val for yr, val in data.get("indicators", {}).get("rainfall", {}).items()
+                  if YEAR_START <= int(yr) <= YEAR_END}
+        if values:
+            write_csv(town.output_dir / "Environment - total rainfall.csv", values, dry_run=dry_run)
+            return True
+    # Fallback: QGSO housing cache (manual)
+    return _make_housing_transformer("rainfall", "Environment - total rainfall.csv")(town, dry_run)
+
 # ── Registry ───────────────────────────────────────────────────────────────────
 
 # Maps indicator key → transform function signature: fn(town, dry_run) -> bool
@@ -280,6 +349,14 @@ TRANSFORMERS: dict[str, callable] = {
     "crime_goodorder":     transform_crime_goodorder,
     "crime_theft":         transform_crime_theft,
     "crime_traffic":       transform_crime_traffic,
+    "house_price":         transform_house_price,
+    "house_sales":         transform_house_sales,
+    "rent":                transform_rent,
+    "approvals":           transform_approvals,
+    "unemployment":        transform_unemployment,
+    "nrw_town":            transform_nrw_town,
+    "nrw_lga":             transform_nrw_lga,
+    "rainfall":            transform_rainfall,
     # Future:
     # "population_town":  transform_population_ucl,
     # "population_lga":   transform_population_lga,

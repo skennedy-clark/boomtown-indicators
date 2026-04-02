@@ -38,12 +38,18 @@ from fetchers.fetch_income import ATOIncomeFetcher
 from fetchers.fetch_income_table6 import ATOTable6Fetcher
 from fetchers.fetch_population_ucl import QGSOPopulationUCLFetcher
 from fetchers.fetch_crime_qps import QPSCrimeFetcher
+from fetchers.fetch_qgso_housing import QGSOHousingFetcher
+from fetchers.fetch_salm_unemployment import SALMUnemploymentFetcher
+from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 
 FETCHER_REGISTRY: dict[str, type] = {
-    "income":       ATOIncomeFetcher,
+    "income":         ATOIncomeFetcher,
     "income_table6":  ATOTable6Fetcher,
     "population_ucl": QGSOPopulationUCLFetcher,
     "crime_qps":      QPSCrimeFetcher,
+    "salm_unemployment": SALMUnemploymentFetcher,
+    "bom_rainfall":      BOMRainfallFetcher,
+    "qgso_housing":      QGSOHousingFetcher,
     # "population":   ABSPopulationFetcher,       # TODO
     # "unemployment": ABSLabourFetcher,           # TODO
     # "housing":      QGSOHousingFetcher,         # TODO (QLD only, semi-manual)
