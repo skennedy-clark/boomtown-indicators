@@ -2,22 +2,25 @@
 fetchers/fetch_bom_rainfall.py
 --------------------------------
 Fetches annual rainfall totals from the Bureau of Meteorology (BOM)
-Climate Data Online for each town's weather station.
+using their anonymous FTP service.
 
-Source: BOM Climate Data Online — Annual climate statistics
-URL pattern: http://www.bom.gov.au/jsp/ncc/cdio/weatherData/av?
-             p_nccObsCode=139&p_display_type=dataFile&p_startYear=&
-             p_c=-17626285&p_stn_num={station}
+Source: BOM High-Quality Monthly Rainfall dataset
+FTP:    ftp://ftp.bom.gov.au/anon/home/ncc/www/change/HQmonthlyR/
+Info:   ftp://ftp.bom.gov.au/anon/home/ncc/www/change/HQmonthlyR/HQmonthlyR_info.pdf
+
+The FTP directory contains one zip per station:
+  {station_padded}.zip  e.g. 043091.zip
+Each zip contains a CSV with monthly totals:
+  {station_padded}.csv  e.g. 043091.csv
+  Columns: Station, Year, Jan, Feb, Mar, Apr, May, Jun,
+                          Jul, Aug, Sep, Oct, Nov, Dec, Annual
+
+Note: BOM's Climate Data Online website blocks programmatic HTTP access
+(robots.txt disallowed, CDO requires session cookies for zip downloads).
+The FTP service explicitly allows anonymous access for non-commercial use.
 
 Station numbers are stored in towns.toml as bom_station.
-
-The data file is a CSV with one row per year containing monthly totals
-and an annual total column.
-
-Coverage: All towns with a bom_station configured. Currently:
-  QLD: Roma, Chinchilla, Dalby, Miles, Tara, Wandoan, Wallumbilla,
-       Goondiwindi, Moranbah, Dysart, Toowoomba
-  NSW: Narrabri
+Coverage: All towns with a bom_station set.
 
 Website CSV produced:
   Environment - total rainfall.csv
@@ -28,8 +31,9 @@ from __future__ import annotations
 import csv
 import io
 import json
-import re
 import sys
+import zipfile
+from ftplib import FTP, error_perm
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -37,185 +41,215 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fetchers.base import BaseFetcher
 from config import CACHE_DIR
 
-try:
-    import requests
-except ImportError:
-    raise ImportError("pip install requests")
-
-
-# ── Configuration ──────────────────────────────────────────────────────────────
-
-# BOM Climate Data Online — Annual rainfall data file
-# p_nccObsCode=139 = annual rainfall
-BOM_URL_TEMPLATE = (
-    "http://www.bom.gov.au/jsp/ncc/cdio/weatherData/av"
-    "?p_nccObsCode=139&p_display_type=dataFile&p_startYear="
-    "&p_c=-17626285&p_stn_num={station}"
-)
-
-# Alternatively — the all-years annual summary CSV
-# This URL gives a single CSV with all years for one station
-BOM_ALL_YEARS_TEMPLATE = (
-    "http://www.bom.gov.au/jsp/ncc/cdio/weatherData/av"
-    "?p_nccObsCode=139&p_display_type=dataFile&p_startYear="
-    "&p_stn_num={station}"
-)
+BOM_FTP_HOST = "ftp.bom.gov.au"
+BOM_FTP_DIR  = "/anon/home/ncc/www/change/HQmonthlyR"
+FTP_TIMEOUT  = 30
 
 
 class BOMRainfallFetcher(BaseFetcher):
 
     SOURCE_NAME      = "bom_rainfall"
-    SUPPORTED_STATES = []   # covers any town with bom_station set
+    SUPPORTED_STATES = []
 
     def fetch_all(self):
-        for town in self.applicable_towns():
-            if not town.bom_station:
-                self.log.warning(f"  [{town.name}] no bom_station in towns.toml — skipping")
-                self.result.towns_skipped.append(town.name)
-                continue
-            self._fetch_town(town)
+        # ── Connect once and fetch all stations ───────────────────────────────
+        towns_with_station = [
+            t for t in self.applicable_towns() if t.bom_station
+        ]
+        towns_without = [
+            t for t in self.applicable_towns() if not t.bom_station
+        ]
 
-    def _fetch_town(self, town):
-        station = town.bom_station
-        url     = BOM_URL_TEMPLATE.format(station=station)
-        key     = f"bom_rainfall_{station}"
+        for t in towns_without:
+            self.log.warning(f"  [{t.name}] no bom_station in towns.toml — skipping")
+            self.result.towns_skipped.append(t.name)
 
-        path = self._download_bom(url, key)
-        if not path:
-            url2 = BOM_ALL_YEARS_TEMPLATE.format(station=station)
-            path = self._download_bom(url2, key)
-
-        if not path:
-            self.log.warning(f"  [{town.name}] BOM download failed for station {station}")
-            self.result.towns_failed.append(town.name)
+        if not towns_with_station:
             return
 
-        annual = self._parse_bom_csv(path, town.name, station)
+        try:
+            self.log.info(f"  Connecting to {BOM_FTP_HOST}...")
+            ftp = FTP(timeout=FTP_TIMEOUT)
+            ftp.connect(BOM_FTP_HOST)
+            ftp.login("anonymous", "boomtown-indicators@uq.edu.au")
+            ftp.cwd(BOM_FTP_DIR)
+            self.log.info(f"  Connected. Fetching {len(towns_with_station)} stations...")
+        except Exception as exc:
+            self.log.error(f"  FTP connection failed: {exc}")
+            self.result.add_error("ALL", f"FTP connection failed: {exc}")
+            return
+
+        for town in towns_with_station:
+            self._fetch_station(ftp, town)
+
+        try:
+            ftp.quit()
+        except Exception:
+            pass
+
+    def _fetch_station(self, ftp: FTP, town):
+        station     = town.bom_station
+        padded      = str(station).zfill(6)
+        zip_name    = f"{padded}.zip"
+        cache_path  = CACHE_DIR / f"bom_rainfall_{station}.zip"
+
+        # ── Download from FTP ─────────────────────────────────────────────────
+        if not cache_path.exists() or getattr(self, '_force', False):
+            try:
+                buf = io.BytesIO()
+                ftp.retrbinary(f"RETR {zip_name}", buf.write)
+                cache_path.write_bytes(buf.getvalue())
+                self.log.info(
+                    f"  [{town.name}] Downloaded {zip_name} "
+                    f"({cache_path.stat().st_size // 1024} KB)"
+                )
+            except error_perm as exc:
+                self.log.warning(
+                    f"  [{town.name}] Station {station} ({zip_name}) not found on FTP: {exc}"
+                )
+                self.result.towns_failed.append(town.name)
+                return
+            except Exception as exc:
+                self.log.warning(f"  [{town.name}] FTP download error: {exc}")
+                self.result.towns_failed.append(town.name)
+                return
+        else:
+            self.log.info(f"  [{town.name}] Using cached {zip_name}")
+
+        # ── Parse ─────────────────────────────────────────────────────────────
+        annual = self._parse_zip(cache_path, padded, town.name)
         if not annual:
-            self.log.warning(f"  [{town.name}] No rainfall data parsed from {path.name}")
             self.result.towns_failed.append(town.name)
             return
 
         self._write_cache(town, station, annual)
 
-    def _download_bom(self, url: str, cache_key: str) -> Path | None:
+    def _parse_zip(self, zip_path: Path, padded: str, town_name: str) -> dict:
         """
-        Download BOM Climate Data Online file with browser User-Agent.
-        BOM returns 403 to default requests/urllib user-agents.
-        """
-        from config import CACHE_DIR
-        out_path = CACHE_DIR / f"{cache_key}.csv"
-        if out_path.exists() and not getattr(self, '_force', False):
-            return out_path
-        try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                "Referer": "http://www.bom.gov.au/climate/data/",
-                "Accept":  "text/html,application/xhtml+xml,*/*",
-            }
-            self.log.info(f"  Downloading {url.split('?')[0]}?... → {out_path.name}")
-            resp = requests.get(url, headers=headers, timeout=30)
-            resp.raise_for_status()
+        Parse BOM HQ monthly rainfall zip.
 
-            # Check we got CSV not HTML
-            if b"<html" in resp.content[:200].lower():
-                self.log.warning(f"  Got HTML (not CSV) from BOM — URL may be wrong")
-                return None
-
-            with open(out_path, "wb") as f:
-                f.write(resp.content)
-            self.log.info(f"  Saved {out_path.stat().st_size // 1024} KB")
-            return out_path
-        except Exception as exc:
-            self.log.warning(f"  BOM download failed: {exc}")
-            return None
-
-    def _parse_bom_csv(self, path: Path, town_name: str, station: str) -> dict:
-        """
-        Parse BOM annual rainfall CSV.
-
-        BOM file format (typical):
-          Row 1: station header info
-          Row 2: column headers: Year, Jan, Feb, ..., Dec, Annual, ...
-          Row 3+: one row per year
+        CSV format:
+          Station, Year, Jan, Feb, Mar, Apr, May, Jun,
+                         Jul, Aug, Sep, Oct, Nov, Dec, Annual
 
         Returns { year_int: annual_mm }
+        Uses the "Annual" column directly; falls back to summing months.
+        Missing months are blank or contain special values.
         """
         try:
-            # Try UTF-8 first, then latin-1
-            for enc in ["utf-8", "latin-1"]:
-                try:
-                    with open(path, encoding=enc) as f:
-                        content = f.read()
-                    break
-                except UnicodeDecodeError:
-                    continue
+            with zipfile.ZipFile(zip_path) as zf:
+                # File is named {padded}.csv inside the zip
+                csv_name = f"{padded}.csv"
+                if csv_name not in zf.namelist():
+                    # Try any CSV
+                    csv_files = [n for n in zf.namelist() if n.endswith(".csv")]
+                    if not csv_files:
+                        self.log.error(
+                            f"  [{town_name}] No CSV in zip: {zf.namelist()}"
+                        )
+                        return {}
+                    csv_name = csv_files[0]
 
-            lines = content.splitlines()
+                with zf.open(csv_name) as f:
+                    text = f.read().decode("utf-8", errors="replace")
 
-            # Find header row containing 'Year' and 'Annual'
-            header_idx = None
-            for i, line in enumerate(lines):
-                if "Year" in line and "Annual" in line.upper():
-                    header_idx = i
-                    break
-
-            if header_idx is None:
-                # Try finding it differently — some BOM files have varied formats
-                for i, line in enumerate(lines):
-                    if re.search(r'\bYear\b', line, re.IGNORECASE):
-                        header_idx = i
-                        break
-
-            if header_idx is None:
-                self.log.error(f"  Could not find header row in BOM CSV for {town_name}")
-                return {}
-
-            reader = csv.reader(lines[header_idx:])
-            headers = [h.strip().lower() for h in next(reader)]
-
-            # Find year column and annual column
-            year_col   = next((i for i, h in enumerate(headers) if h == "year"), None)
-            annual_col = next((i for i, h in enumerate(headers) if "annual" in h), None)
-
-            if year_col is None or annual_col is None:
-                self.log.error(
-                    f"  Could not find Year/Annual columns in {path.name}. "
-                    f"Headers: {headers[:8]}"
-                )
-                return {}
-
-            result = {}
-            for row in reader:
-                if not row or len(row) <= annual_col:
-                    continue
-                yr_raw = row[year_col].strip()
-                if not yr_raw.isdigit():
-                    continue
-                year = int(yr_raw)
-                val  = row[annual_col].strip()
-                if val and val not in ("", "-", "N/A"):
-                    try:
-                        result[year] = round(float(val), 1)
-                    except ValueError:
-                        pass
-
-            if result:
-                yrs = sorted(result)
-                self.log.info(
-                    f"  {town_name} (station {station}): {len(result)} years, "
-                    f"{yrs[0]}-{yrs[-1]}, latest = {result[yrs[-1]]} mm"
-                )
-
-            return result
-
-        except Exception as exc:
-            self.log.error(f"BOM CSV parse error for {town_name}: {exc}", exc_info=True)
+        except zipfile.BadZipFile as exc:
+            self.log.error(f"  [{town_name}] Bad zip: {exc}")
             return {}
+
+        result = {}
+        reader = csv.reader(text.splitlines())
+
+        # Find header row
+        header = None
+        rows_iter = iter(reader)
+        for row in rows_iter:
+            if row and row[0].strip().lower() in ("station", "stn"):
+                header = [h.strip().lower() for h in row]
+                break
+            # Some files start straight with data — check if col 1 looks like a year
+            if row and len(row) > 1:
+                try:
+                    yr = int(row[1])
+                    if 1800 <= yr <= 2100:
+                        # No header — assume: station, year, jan..dec, annual
+                        header = ["station","year","jan","feb","mar","apr","may","jun",
+                                  "jul","aug","sep","oct","nov","dec","annual"]
+                        # Process this row too
+                        self._process_row(row, header, result)
+                        break
+                except (ValueError, IndexError):
+                    pass
+
+        if header is None:
+            self.log.error(f"  [{town_name}] Could not find header in CSV")
+            return {}
+
+        # Find column indices
+        try:
+            year_col   = header.index("year")
+            annual_col = next(
+                (i for i, h in enumerate(header) if "annual" in h), None
+            )
+            month_cols = [
+                header.index(m) for m in
+                ["jan","feb","mar","apr","may","jun",
+                 "jul","aug","sep","oct","nov","dec"]
+                if m in header
+            ]
+        except ValueError as exc:
+            self.log.error(f"  [{town_name}] Header parse error: {exc}  header={header}")
+            return {}
+
+        for row in rows_iter:
+            self._process_row(row, header, result,
+                              year_col, annual_col, month_cols)
+
+        if result:
+            yrs = sorted(result)
+            self.log.info(
+                f"  [{town_name}]: {len(result)} years, "
+                f"{yrs[0]}–{yrs[-1]}, latest={result[yrs[-1]]} mm"
+            )
+        return result
+
+    def _process_row(self, row, header, result,
+                     year_col=1, annual_col=None, month_cols=None):
+        """Parse one data row into result dict."""
+        if not row or len(row) <= year_col:
+            return
+        try:
+            year = int(row[year_col])
+        except (ValueError, IndexError):
+            return
+        if not (1800 <= year <= 2100):
+            return
+
+        # Try annual column first
+        if annual_col and annual_col < len(row):
+            val = row[annual_col].strip()
+            if val and val not in ("", "-9999", "99999.9"):
+                try:
+                    result[year] = round(float(val), 1)
+                    return
+                except ValueError:
+                    pass
+
+        # Fall back to summing months
+        if month_cols:
+            total = 0.0
+            valid = 0
+            for c in month_cols:
+                if c < len(row):
+                    v = row[c].strip()
+                    if v and v not in ("", "-9999", "99999.9"):
+                        try:
+                            total += float(v)
+                            valid += 1
+                        except ValueError:
+                            pass
+            if valid >= 10:   # at least 10 of 12 months present
+                result[year] = round(total, 1)
 
     def _write_cache(self, town, station: str, annual: dict):
         from config import YEAR_START, YEAR_END
@@ -223,9 +257,10 @@ class BOMRainfallFetcher(BaseFetcher):
             str(yr): val for yr, val in annual.items()
             if YEAR_START <= yr <= YEAR_END
         }
-
         if not values:
-            self.log.warning(f"  [{town.name}] no rainfall values in range {YEAR_START}-{YEAR_END}")
+            self.log.warning(
+                f"  [{town.name}] no rainfall in range {YEAR_START}–{YEAR_END}"
+            )
             self.result.towns_failed.append(town.name)
             return
 
@@ -233,9 +268,9 @@ class BOMRainfallFetcher(BaseFetcher):
             "town":        town.name,
             "state":       town.state,
             "bom_station": station,
-            "source":      "Bureau of Meteorology — Climate Data Online",
-            "source_url":  BOM_URL_TEMPLATE.format(station=station),
-            "note":        "Annual total rainfall in mm",
+            "source":      "Bureau of Meteorology — High-Quality Monthly Rainfall (HQmonthlyR)",
+            "source_url":  f"ftp://{BOM_FTP_HOST}{BOM_FTP_DIR}/{str(station).zfill(6)}.zip",
+            "note":        "Annual total rainfall in mm from HQ monthly dataset",
             "indicators":  {"rainfall": values},
         }
 

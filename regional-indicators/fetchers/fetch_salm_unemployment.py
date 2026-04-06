@@ -62,9 +62,9 @@ RESOURCE_PAGE  = (
 
 # Known-good URL from December quarter 2025 release (try first, fallback if 404)
 FALLBACK_CSV_URL = (
-    "https://www.dewr.gov.au/download/17070/"
+    "https://www.dewr.gov.au/download/17068/"
     "salm-smoothed-sa2-datafiles-asgs-2021-december-quarter-2025/"
-    "40501/salm-smoothed-sa2-datafiles-asgs-2021-december-quarter-2025/csv"
+    "42403/salm-smoothed-sa2-datafiles-asgs-2021-december-quarter-2025/csv"
 )
 
 CACHE_KEY = "salm_smoothed_sa2"
