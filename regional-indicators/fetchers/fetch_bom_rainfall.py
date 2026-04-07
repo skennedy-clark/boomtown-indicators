@@ -1,277 +1,443 @@
 """
 fetchers/fetch_bom_rainfall.py
 --------------------------------
-Fetches annual rainfall totals from the Bureau of Meteorology (BOM)
-using their anonymous FTP service.
+Fetches annual rainfall totals from the SILO API (Queensland Government).
 
-Source: BOM High-Quality Monthly Rainfall dataset
-FTP:    ftp://ftp.bom.gov.au/anon/home/ncc/www/change/HQmonthlyR/
-Info:   ftp://ftp.bom.gov.au/anon/home/ncc/www/change/HQmonthlyR/HQmonthlyR_info.pdf
+Source: SILO Patched Point Dataset
+API:    https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php
+Docs:   https://www.longpaddock.qld.gov.au/silo/
 
-The FTP directory contains one zip per station:
-  {station_padded}.zip  e.g. 043091.zip
-Each zip contains a CSV with monthly totals:
-  {station_padded}.csv  e.g. 043091.csv
-  Columns: Station, Year, Jan, Feb, Mar, Apr, May, Jun,
-                          Jul, Aug, Sep, Oct, Nov, Dec, Annual
+SILO hosts BOM station data through a clean HTTP API — no session cookies, no FTP.
+Requires only an email address as username (no registration).
 
-Note: BOM's Climate Data Online website blocks programmatic HTTP access
-(robots.txt disallowed, CDO requires session cookies for zip downloads).
-The FTP service explicitly allows anonymous access for non-commercial use.
+Config required in config.py:
+    SILO_EMAIL = "uqsken12@uq.edu.au"
 
-Station numbers are stored in towns.toml as bom_station.
-Coverage: All towns with a bom_station set.
+REQUEST FORMAT
+  URL: PatchedPointDataset.php?format=csv&comment=R&station={N}&start=YYYYMMDD&finish=YYYYMMDD&username={email}
+  format=csv + comment=R returns daily rainfall only (smaller response than alldata)
 
-Website CSV produced:
+ACTUAL CSV FORMAT (verified from real response 2026-04-07):
+  station,YYYY-MM-DD,daily_rain,daily_rain_source,metadata
+  41240,2001-01-01,    0.0,0,"name=HEREWARD"
+  41240,2001-01-02,    0.0,0,"latitude= -27.1858"
+  ...
+  Note: metadata column carries station info in first ~8 rows, then empty
+
+SOURCE CODES for daily_rain_source (verified):
+  0  = target station observed (ideal)
+  25 = nearby station observed (still real obs, not the target station)
+  15 = synthetic / interpolated from grid
+  Any year where >10% of days are code=15 is flagged in output notes.
+  Codes 0 and 25 are both treated as observed data.
+
+INVALID STATIONS
+  Some station numbers are not in the SILO Patched Point Dataset.
+  Confirmed invalid (2026-04-07): 42104 (Tara/Woodlea), 41559 (Goondiwindi WTP),
+  34035 (Moranbah Airport), 85151 (Yarram).
+  For these towns the fetcher attempts a SILO name search to find an alternative
+  station number in the SILO dataset, then retries.
+  If still not found, the town is marked failed with a clear message.
+  It does NOT fall back to DataDrill (grid interpolation) as that would produce
+  data from a different source that cannot be compared to booklet historical data
+  without disclosure — park it instead.
+
+AGGREGATION
+  Daily mm → monthly totals → annual total and summer/winter split
+  Summer = Jan, Feb, Mar, Oct, Nov, Dec
+  Winter = Apr, May, Jun, Jul, Aug, Sep
+  Historic average = mean of all complete years in the full SILO record
+  (All years with 12 complete months, not just YEAR_START–YEAR_END)
+
+DATA VALIDATION NOTE
+  Dalby (41240) 2024: SILO = 972.7mm, manual QGSO+BoM xlsx = 947.4mm
+  Difference (~2.5%) is expected — the manual xlsx had some missing days (None values).
+  SILO fills gaps from nearby stations; this is the preferred data source.
+
+Website CSVs produced:
   Environment - total rainfall.csv
+  Environment - summer rainfall.csv
+  Environment - winter rainfall.csv
 """
 
 from __future__ import annotations
 
 import csv
-import io
 import json
 import sys
-import zipfile
-from ftplib import FTP, error_perm
+from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fetchers.base import BaseFetcher
-from config import CACHE_DIR
+from config import CACHE_DIR, YEAR_START, YEAR_END
 
-BOM_FTP_HOST = "ftp.bom.gov.au"
-BOM_FTP_DIR  = "/anon/home/ncc/www/change/HQmonthlyR"
-FTP_TIMEOUT  = 30
+try:
+    import requests
+except ImportError:
+    raise ImportError("pip install requests")
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+
+SILO_BASE        = "https://www.longpaddock.qld.gov.au/cgi-bin/silo"
+SILO_STATION_URL = f"{SILO_BASE}/PatchedPointDataset.php"
+SILO_SOURCE      = "SILO Patched Point Dataset (Queensland Government / BOM)"
+SILO_SOURCE_URL  = "https://www.longpaddock.qld.gov.au/silo/"
+
+# Source codes in daily_rain_source column
+CODE_SYNTHETIC   = 15   # interpolated/patched — flag if >10% of year
+# Codes 0 and 25 are both real observations (0=target station, 25=nearby station)
+
+PATCH_THRESHOLD  = 0.10   # flag year if >this fraction of days are code=15
+
+SUMMER_MONTHS = frozenset({1, 2, 3, 10, 11, 12})
+WINTER_MONTHS = frozenset({4, 5, 6, 7, 8, 9})
+
+# Earliest year to fetch — gives full historic record for average calculation
+FETCH_FROM_YEAR = 2001
 
 
 class BOMRainfallFetcher(BaseFetcher):
 
     SOURCE_NAME      = "bom_rainfall"
-    SUPPORTED_STATES = []
+    SUPPORTED_STATES = []   # national
 
     def fetch_all(self):
-        # ── Connect once and fetch all stations ───────────────────────────────
-        towns_with_station = [
-            t for t in self.applicable_towns() if t.bom_station
-        ]
-        towns_without = [
-            t for t in self.applicable_towns() if not t.bom_station
-        ]
+        try:
+            from config import SILO_EMAIL
+        except ImportError:
+            SILO_EMAIL = None
+
+        if not SILO_EMAIL:
+            self.result.add_error(
+                "ALL",
+                "SILO_EMAIL not set in config.py — add: SILO_EMAIL = 'your.email@uq.edu.au'"
+            )
+            return
+
+        towns_with_station = [t for t in self.applicable_towns() if t.bom_station]
+        towns_without      = [t for t in self.applicable_towns() if not t.bom_station]
 
         for t in towns_without:
             self.log.warning(f"  [{t.name}] no bom_station in towns.toml — skipping")
             self.result.towns_skipped.append(t.name)
 
-        if not towns_with_station:
-            return
-
-        try:
-            self.log.info(f"  Connecting to {BOM_FTP_HOST}...")
-            ftp = FTP(timeout=FTP_TIMEOUT)
-            ftp.connect(BOM_FTP_HOST)
-            ftp.login("anonymous", "boomtown-indicators@uq.edu.au")
-            ftp.cwd(BOM_FTP_DIR)
-            self.log.info(f"  Connected. Fetching {len(towns_with_station)} stations...")
-        except Exception as exc:
-            self.log.error(f"  FTP connection failed: {exc}")
-            self.result.add_error("ALL", f"FTP connection failed: {exc}")
-            return
-
         for town in towns_with_station:
-            self._fetch_station(ftp, town)
+            self._fetch_town(town, SILO_EMAIL)
 
-        try:
-            ftp.quit()
-        except Exception:
-            pass
+    # ── Per-town fetch ─────────────────────────────────────────────────────────
 
-    def _fetch_station(self, ftp: FTP, town):
-        station     = town.bom_station
-        padded      = str(station).zfill(6)
-        zip_name    = f"{padded}.zip"
-        cache_path  = CACHE_DIR / f"bom_rainfall_{station}.zip"
+    def _fetch_town(self, town, email: str):
+        station    = str(town.bom_station)
+        cache_path = CACHE_DIR / f"silo_rainfall_{station}.csv"
 
-        # ── Download from FTP ─────────────────────────────────────────────────
         if not cache_path.exists() or getattr(self, '_force', False):
-            try:
-                buf = io.BytesIO()
-                ftp.retrbinary(f"RETR {zip_name}", buf.write)
-                cache_path.write_bytes(buf.getvalue())
-                self.log.info(
-                    f"  [{town.name}] Downloaded {zip_name} "
-                    f"({cache_path.stat().st_size // 1024} KB)"
-                )
-            except error_perm as exc:
-                self.log.warning(
-                    f"  [{town.name}] Station {station} ({zip_name}) not found on FTP: {exc}"
-                )
-                self.result.towns_failed.append(town.name)
-                return
-            except Exception as exc:
-                self.log.warning(f"  [{town.name}] FTP download error: {exc}")
-                self.result.towns_failed.append(town.name)
-                return
-        else:
-            self.log.info(f"  [{town.name}] Using cached {zip_name}")
+            ok, used_station = self._download_station(station, cache_path, town.name, email)
+            if not ok:
+                # Try SILO name search for an alternative station number
+                alt_station = self._find_alternative_station(town.name, email)
+                if alt_station and alt_station != station:
+                    self.log.info(f"  [{town.name}] Retrying with alternative station {alt_station}")
+                    alt_cache = CACHE_DIR / f"silo_rainfall_{alt_station}.csv"
+                    ok, used_station = self._download_station(alt_station, alt_cache, town.name, email)
+                    if ok:
+                        cache_path = alt_cache
+                        station    = alt_station
 
-        # ── Parse ─────────────────────────────────────────────────────────────
-        annual = self._parse_zip(cache_path, padded, town.name)
+                if not ok:
+                    self.log.warning(
+                        f"  [{town.name}] Station {town.bom_station} not in SILO Patched Point Dataset. "
+                        f"No valid alternative found. "
+                        f"Check https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php"
+                        f"?format=name&nameFrag={town.name.lower().split()[0]}"
+                    )
+                    self.result.towns_failed.append(town.name)
+                    return
+        else:
+            self.log.info(f"  [{town.name}] Using cached SILO data for station {station}")
+
+        # Parse → aggregate → write
+        monthly = self._parse_csv(cache_path, town.name)
+        if monthly is None:
+            self.result.towns_failed.append(town.name)
+            return
+
+        annual, patched_years, historic_avg = self._aggregate(monthly, town.name)
         if not annual:
             self.result.towns_failed.append(town.name)
             return
 
-        self._write_cache(town, station, annual)
+        self._write_cache(town, station, annual, patched_years, historic_avg)
 
-    def _parse_zip(self, zip_path: Path, padded: str, town_name: str) -> dict:
-        """
-        Parse BOM HQ monthly rainfall zip.
+    # ── Download ───────────────────────────────────────────────────────────────
 
-        CSV format:
-          Station, Year, Jan, Feb, Mar, Apr, May, Jun,
-                         Jul, Aug, Sep, Oct, Nov, Dec, Annual
-
-        Returns { year_int: annual_mm }
-        Uses the "Annual" column directly; falls back to summing months.
-        Missing months are blank or contain special values.
-        """
-        try:
-            with zipfile.ZipFile(zip_path) as zf:
-                # File is named {padded}.csv inside the zip
-                csv_name = f"{padded}.csv"
-                if csv_name not in zf.namelist():
-                    # Try any CSV
-                    csv_files = [n for n in zf.namelist() if n.endswith(".csv")]
-                    if not csv_files:
-                        self.log.error(
-                            f"  [{town_name}] No CSV in zip: {zf.namelist()}"
-                        )
-                        return {}
-                    csv_name = csv_files[0]
-
-                with zf.open(csv_name) as f:
-                    text = f.read().decode("utf-8", errors="replace")
-
-        except zipfile.BadZipFile as exc:
-            self.log.error(f"  [{town_name}] Bad zip: {exc}")
-            return {}
-
-        result = {}
-        reader = csv.reader(text.splitlines())
-
-        # Find header row
-        header = None
-        rows_iter = iter(reader)
-        for row in rows_iter:
-            if row and row[0].strip().lower() in ("station", "stn"):
-                header = [h.strip().lower() for h in row]
-                break
-            # Some files start straight with data — check if col 1 looks like a year
-            if row and len(row) > 1:
-                try:
-                    yr = int(row[1])
-                    if 1800 <= yr <= 2100:
-                        # No header — assume: station, year, jan..dec, annual
-                        header = ["station","year","jan","feb","mar","apr","may","jun",
-                                  "jul","aug","sep","oct","nov","dec","annual"]
-                        # Process this row too
-                        self._process_row(row, header, result)
-                        break
-                except (ValueError, IndexError):
-                    pass
-
-        if header is None:
-            self.log.error(f"  [{town_name}] Could not find header in CSV")
-            return {}
-
-        # Find column indices
-        try:
-            year_col   = header.index("year")
-            annual_col = next(
-                (i for i, h in enumerate(header) if "annual" in h), None
-            )
-            month_cols = [
-                header.index(m) for m in
-                ["jan","feb","mar","apr","may","jun",
-                 "jul","aug","sep","oct","nov","dec"]
-                if m in header
-            ]
-        except ValueError as exc:
-            self.log.error(f"  [{town_name}] Header parse error: {exc}  header={header}")
-            return {}
-
-        for row in rows_iter:
-            self._process_row(row, header, result,
-                              year_col, annual_col, month_cols)
-
-        if result:
-            yrs = sorted(result)
-            self.log.info(
-                f"  [{town_name}]: {len(result)} years, "
-                f"{yrs[0]}–{yrs[-1]}, latest={result[yrs[-1]]} mm"
-            )
-        return result
-
-    def _process_row(self, row, header, result,
-                     year_col=1, annual_col=None, month_cols=None):
-        """Parse one data row into result dict."""
-        if not row or len(row) <= year_col:
-            return
-        try:
-            year = int(row[year_col])
-        except (ValueError, IndexError):
-            return
-        if not (1800 <= year <= 2100):
-            return
-
-        # Try annual column first
-        if annual_col and annual_col < len(row):
-            val = row[annual_col].strip()
-            if val and val not in ("", "-9999", "99999.9"):
-                try:
-                    result[year] = round(float(val), 1)
-                    return
-                except ValueError:
-                    pass
-
-        # Fall back to summing months
-        if month_cols:
-            total = 0.0
-            valid = 0
-            for c in month_cols:
-                if c < len(row):
-                    v = row[c].strip()
-                    if v and v not in ("", "-9999", "99999.9"):
-                        try:
-                            total += float(v)
-                            valid += 1
-                        except ValueError:
-                            pass
-            if valid >= 10:   # at least 10 of 12 months present
-                result[year] = round(total, 1)
-
-    def _write_cache(self, town, station: str, annual: dict):
-        from config import YEAR_START, YEAR_END
-        values = {
-            str(yr): val for yr, val in annual.items()
-            if YEAR_START <= yr <= YEAR_END
+    def _download_station(
+        self, station: str, cache_path: Path, town_name: str, email: str
+    ) -> tuple[bool, str]:
+        """Download SILO CSV for a station. Returns (success, station_used)."""
+        params = {
+            "format":   "csv",
+            "comment":  "R",
+            "station":  station,
+            "start":    f"{FETCH_FROM_YEAR}0101",
+            "finish":   f"{YEAR_END}1231",
+            "username": email,
         }
-        if not values:
+        self.log.info(f"  [{town_name}] Downloading SILO station {station}...")
+        try:
+            resp = requests.get(
+                SILO_STATION_URL,
+                params=params,
+                timeout=60,
+                headers={"User-Agent": "boomtown-indicators/1.0 (UQ research pipeline)"},
+            )
+            resp.raise_for_status()
+            content = resp.text
+
+            # SILO returns a plain-text error (not HTTP error) for invalid stations
+            if "Invalid station" in content or "Sorry station" in content:
+                self.log.warning(
+                    f"  [{town_name}] Station {station} not in SILO: "
+                    f"{content[:120].strip()}"
+                )
+                return False, station
+
+            # Sanity check — should be CSV not HTML
+            if "<html" in content.lower()[:100]:
+                self.log.error(f"  [{town_name}] Got HTML response — unexpected error")
+                return False, station
+
+            cache_path.write_text(content, encoding="utf-8")
+            kb = cache_path.stat().st_size // 1024
+            lines = len(content.splitlines())
+            self.log.info(f"  [{town_name}] Saved {kb} KB ({lines} lines)")
+            return True, station
+
+        except Exception as exc:
+            self.log.error(f"  [{town_name}] SILO download failed: {exc}")
+            return False, station
+
+    def _find_alternative_station(self, town_name: str, email: str) -> str | None:
+        """
+        Search SILO by name fragment to find a station number that is in the
+        Patched Point Dataset.
+        """
+        # Use first word of town name as search fragment (e.g. "Goondiwindi" not "Goondiwindi WTP")
+        frag = town_name.lower().split()[0]
+        url  = f"{SILO_STATION_URL}?format=name&nameFrag={frag}"
+        try:
+            resp = requests.get(url, timeout=20,
+                                headers={"User-Agent": "boomtown-indicators/1.0"})
+            resp.raise_for_status()
+            lines = [l.strip() for l in resp.text.splitlines() if l.strip()]
+            if lines:
+                self.log.info(
+                    f"  [{town_name}] SILO name search for '{frag}' returned "
+                    f"{len(lines)} results:"
+                )
+                for line in lines[:5]:
+                    self.log.info(f"    {line}")
+                # Return the first result's station number (pipe-delimited)
+                first = lines[0].split("|")[0].strip()
+                if first.isdigit():
+                    return first
+        except Exception as exc:
+            self.log.warning(f"  [{town_name}] SILO name search failed: {exc}")
+        return None
+
+    # ── Parse ──────────────────────────────────────────────────────────────────
+
+    def _parse_csv(self, path: Path, town_name: str) -> dict | None:
+        """
+        Parse SILO CSV into:
+          { (year, month): [(rain_mm, source_code), ...] }
+
+        Actual SILO CSV format (comment=R):
+          station,YYYY-MM-DD,daily_rain,daily_rain_source,metadata
+          41240,2001-01-01,    0.0,0,"name=HEREWARD"
+          ...
+        """
+        try:
+            text  = path.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
+
+            if not lines:
+                self.log.error(f"  [{town_name}] Empty SILO CSV")
+                return None
+
+            # The first line IS the header — verify it looks right
+            header = lines[0].strip()
+            if "YYYY-MM-DD" not in header and "daily_rain" not in header:
+                self.log.error(
+                    f"  [{town_name}] Unexpected CSV header: {header[:100]}"
+                )
+                return None
+
+            reader  = csv.DictReader(lines)
+            monthly: dict[tuple, list] = defaultdict(list)
+            skipped = 0
+
+            for row in reader:
+                try:
+                    date_str = row["YYYY-MM-DD"].strip()
+                    # date format: YYYY-MM-DD
+                    year  = int(date_str[:4])
+                    month = int(date_str[5:7])
+                    rain  = float(row["daily_rain"].strip())
+                    src   = int(row["daily_rain_source"].strip())
+                    monthly[(year, month)].append((rain, src))
+                except (ValueError, KeyError):
+                    skipped += 1
+                    continue
+
+            if skipped:
+                self.log.debug(f"  [{town_name}] Skipped {skipped} unparseable rows")
+
+            if not monthly:
+                self.log.error(f"  [{town_name}] No data rows parsed from SILO CSV")
+                return None
+
+            years = sorted(set(k[0] for k in monthly))
+            self.log.info(
+                f"  [{town_name}] Parsed {len(monthly)} month-records "
+                f"({years[0]}–{years[-1]})"
+            )
+            return monthly
+
+        except Exception as exc:
+            self.log.error(f"  [{town_name}] CSV parse error: {exc}", exc_info=True)
+            return None
+
+    # ── Aggregate ──────────────────────────────────────────────────────────────
+
+    def _aggregate(
+        self,
+        monthly: dict,
+        town_name: str,
+    ) -> tuple[dict, set, float | None]:
+        """
+        Aggregate daily records into annual totals.
+
+        Returns:
+          annual        – { year: {"total": mm, "summer": mm, "winter": mm} }
+          patched_years – set of years where >PATCH_THRESHOLD days have code=15
+          historic_avg  – mean annual total across ALL complete years in record
+        """
+        # Summarise each (year, month) bucket
+        month_totals: dict[tuple, dict] = {}
+        for (year, month), days in monthly.items():
+            total_mm     = sum(d[0] for d in days)
+            synthetic    = sum(1 for d in days if d[1] == CODE_SYNTHETIC)
+            total_days   = len(days)
+            month_totals[(year, month)] = {
+                "mm":          round(total_mm, 1),
+                "synthetic":   synthetic,
+                "total_days":  total_days,
+            }
+
+        annual:         dict[int, dict] = {}
+        patched_years:  set[int]        = set()
+        all_year_totals: list[float]    = []
+
+        all_years = sorted(set(k[0] for k in month_totals))
+
+        for year in all_years:
+            months = {m: month_totals[(year, m)]
+                      for m in range(1, 13)
+                      if (year, m) in month_totals}
+
+            # Skip incomplete years (don't include in historic average either)
+            if len(months) < 12:
+                continue
+
+            total_mm  = sum(m["mm"] for m in months.values())
+            summer_mm = sum(m["mm"] for mo, m in months.items() if mo in SUMMER_MONTHS)
+            winter_mm = sum(m["mm"] for mo, m in months.items() if mo in WINTER_MONTHS)
+
+            total_synthetic = sum(m["synthetic"]  for m in months.values())
+            total_days      = sum(m["total_days"] for m in months.values())
+            patch_frac      = total_synthetic / total_days if total_days else 0
+
+            if patch_frac > PATCH_THRESHOLD:
+                patched_years.add(year)
+
+            all_year_totals.append(total_mm)
+            annual[year] = {
+                "total":  round(total_mm, 1),
+                "summer": round(summer_mm, 1),
+                "winter": round(winter_mm, 1),
+            }
+
+        historic_avg = (
+            round(sum(all_year_totals) / len(all_year_totals), 1)
+            if all_year_totals else None
+        )
+
+        if patched_years:
             self.log.warning(
-                f"  [{town.name}] no rainfall in range {YEAR_START}–{YEAR_END}"
+                f"  [{town_name}] {len(patched_years)} years >10% synthetic data: "
+                f"{sorted(patched_years)}"
+            )
+
+        return annual, patched_years, historic_avg
+
+    # ── Write cache ────────────────────────────────────────────────────────────
+
+    def _write_cache(
+        self,
+        town,
+        station: str,
+        annual:        dict,
+        patched_years: set,
+        historic_avg:  float | None,
+    ):
+        in_range = {yr: v for yr, v in annual.items() if YEAR_START <= yr <= YEAR_END}
+
+        if not in_range:
+            self.log.warning(
+                f"  [{town.name}] no complete years in range {YEAR_START}–{YEAR_END}"
             )
             self.result.towns_failed.append(town.name)
             return
 
+        # Build data quality note
+        patch_note = ""
+        flagged_in_range = sorted(y for y in patched_years if YEAR_START <= y <= YEAR_END)
+        if flagged_in_range:
+            patch_note = (
+                f" NOTE: >10% of daily values are SILO-interpolated (not direct station "
+                f"observations) in year(s): {flagged_in_range}."
+            )
+
+        original_station = str(town.bom_station)
+        station_note = ""
+        if station != original_station:
+            station_note = (
+                f" Data retrieved from alternative SILO station {station} "
+                f"(configured station {original_station} not in SILO dataset)."
+            )
+
         out = {
-            "town":        town.name,
-            "state":       town.state,
-            "bom_station": station,
-            "source":      "Bureau of Meteorology — High-Quality Monthly Rainfall (HQmonthlyR)",
-            "source_url":  f"ftp://{BOM_FTP_HOST}{BOM_FTP_DIR}/{str(station).zfill(6)}.zip",
-            "note":        "Annual total rainfall in mm from HQ monthly dataset",
-            "indicators":  {"rainfall": values},
+            "town":            town.name,
+            "state":           town.state,
+            "bom_station":     station,
+            "source":          SILO_SOURCE,
+            "source_url":      SILO_SOURCE_URL,
+            "note": (
+                f"Daily rainfall from SILO station {station}, aggregated to annual totals. "
+                f"Summer = Jan–Mar + Oct–Dec; Winter = Apr–Sep. "
+                f"Historic average = mean of {len(annual)} complete years in SILO record "
+                f"(from {min(annual)} to {max(annual)}). "
+                f"SILO source codes: 0=station obs, 25=nearby station obs, 15=interpolated."
+                f"{station_note}{patch_note}"
+            ),
+            "historic_avg_mm": historic_avg,
+            "indicators": {
+                "rainfall":        {str(yr): v["total"]  for yr, v in in_range.items()},
+                "rainfall_summer": {str(yr): v["summer"] for yr, v in in_range.items()},
+                "rainfall_winter": {str(yr): v["winter"] for yr, v in in_range.items()},
+            },
         }
 
         out_dir  = CACHE_DIR / "rainfall"
@@ -280,6 +446,13 @@ class BOMRainfallFetcher(BaseFetcher):
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=2)
 
+        latest_yr = max(in_range)
+        self.log.info(
+            f"  {town.name} (station {station}): "
+            f"{len(in_range)} years in range, "
+            f"latest ({latest_yr}) = {in_range[latest_yr]['total']} mm, "
+            f"historic avg = {historic_avg} mm"
+        )
         self.result.towns_ok.append(town.name)
 
 

@@ -1,0 +1,123 @@
+API Tutorial
+SILO provides an Application Programming Interface (API) that enables you to obtain point datasets by encoding your request in a URL. Once you have constructed the URL, the data can be downloaded:
+
+via a web browser
+using command line tools such as curl  or wget 
+directly to your application (for example, using the urllib  package in Python).
+This tutorial will get you up and running quickly with the API. Code snippets are in Python, however the same principles apply for other programming languages. Let's begin by testing the API in your browser. To get a list of stations with "Cairns" in the station name, type the following into your browser's address bar:
+
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=name&nameFrag=cairns
+The response should look similar to this (formatted here for readability):
+
+ 31010|CAIRNS POST OFFICE                       | -16.933| 145.783|QLD |    2.0|
+ 31011|CAIRNS AERO                              | -16.874| 145.746|QLD |    2.2|
+ 
+ If the lines are not displayed properly, you may need to right-click your mouse and select "View page source" (Chrome, Firefox) or "View source" (Internet Explorer), or press F12 (Microsoft Edge).
+
+The API provides tools for searching for stations. Once you have selected a station, you can get point data for the station by typing the data request into your browser's address bar. For example, to obtain data in “alldata” format for Cairns Post Office (station 31010) between 1 January 2011 and 10 January 2011:
+
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?start=20110101&finish=20110110&station=31010&format=alldata&username=<email_address>
+You will need to replace <email_address> with your email address. You should see a response which looks similar to this (formatted here for readability):
+
+Date       Day Date2      T.Max Smx T.Min Smn Rain   Srn  Evap Sev Radn   Ssl VP    Svp RHmaxT RHminT  FAO56  Mlake  Mpot   Mact   Mwet  Span   Ssp   EvSp Ses MSLPres Sp
+(yyyymmdd)  () (ddmmyyyy)  (oC)  ()  (oC)  ()   (mm)  ()  (mm)  () (MJ/m2) () (hPa)  ()   (%)    (%)    (mm)   (mm)   (mm)   (mm)   (mm)   (mm)  ()   (mm)  () (hPa)   ()
+20110101     1  1-01-2011  28.5  25  25.0  25   26.7  25   3.8  25   7.0   25  31.0  25   79.7   97.9    2.0    2.1    2.3    1.8    2.1    2.8  26    3.8  25 1008.5  25
+20110102     2  2-01-2011  28.0  25  23.5  25   80.2  25   1.6  25   7.0   25  30.0  25   79.4  100.0    1.9    2.1    2.1    2.0    2.0    2.8  26    1.6  25 1009.0  25
+20110103     3  3-01-2011  30.5  25  24.0  25    5.0  25   4.0  25  16.0   25  30.0  25   68.7  100.0    3.8    4.9    5.1    4.5    4.8    4.9  26    4.0  25 1009.5  25
+20110104     4  4-01-2011  31.0  25  23.0  25   29.2  25   5.0  25  22.0   25  28.0  25   62.3   99.7    4.9    6.5    6.7    5.9    6.3    6.2  26    5.0  25 1007.5  25
+20110105     5  5-01-2011  32.0  25  23.5  25    3.1  25   7.0  25  25.0   25  29.0  25   61.0  100.0    5.5    7.4    7.5    6.8    7.2    6.9  26    7.0  25 1006.5  25
+20110106     6  6-01-2011  32.0  25  24.5  25    0.0  25   3.2  25  20.0   25  29.0  25   61.0   94.4    4.8    6.2    6.8    5.3    6.1    6.1  26    3.2  25 1005.5  25
+20110107     7  7-01-2011  32.5  25  24.0  25    7.6  25   6.2  25  25.0   25  29.0  25   59.3   97.2    5.6    7.4    7.8    6.7    7.2    7.0  26    6.2  25 1003.5  25
+20110108     8  8-01-2011  32.0  25  24.5  25    0.5  25   5.2  25  24.0   25  30.0  25   63.1   97.6    5.4    7.2    7.4    6.7    7.0    6.6  26    5.2  25 1004.5  25
+20110109     9  9-01-2011  33.0  25  25.0  25    0.0  25   5.8  25  21.0   25  31.0  25   61.6   97.9    5.0    6.6    7.0    5.9    6.5    6.3  26    5.8  25 1002.5  25
+20110110    10 10-01-2011  31.5  25  24.0  25   15.4  25   5.6  25  25.0   25  28.0  25   60.6   93.9    5.5    7.3    7.7    6.5    7.1    6.9  26    5.6  25 1001.5  25
+If not, read the error message and ensure you have structured the request properly.
+
+As another example, to obtain data in “alldata” format for the grid point location 23 degrees South, 135 degrees East, between 1 January 2011 and 10 January 2011:
+
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/DataDrillDataset.php?start=20110101&finish=20110110&lat=-23.00&lon=135.00&format=alldata&username=<email_address>&password=apirequest
+You should see a response which looks similar to this (formatted here for readability):
+
+Date       Day Date2      T.Max Smx T.Min Smn Rain   Srn  Evap Sev Radn   Ssl VP    Svp RHmaxT RHminT  FAO56  Mlake  Mpot   Mact   Mwet  Span   Ssp   EvSp Ses MSLPres Sp
+(yyyymmdd)  () (ddmmyyyy)  (oC)  ()  (oC)  ()   (mm)  ()  (mm)  () (MJ/m2) () (hPa)  ()   (%)    (%)    (mm)   (mm)   (mm)   (mm)   (mm)   (mm)  ()   (mm)  () (hPa)   ()
+20110101     1  1-01-2011  32.0  25  23.0  25    4.5  25   4.2  25  17.0   25  27.0  25   56.8   96.1    4.4    5.4    6.3    4.3    5.3    6.8  26    4.2  25 1008.5  25
+20110102     2  2-01-2011  37.0  25  22.0  25    1.3  25   8.4  25  28.0   25  24.0  25   38.2   90.8    7.2    8.2    9.5    4.8    7.1   10.9  26    8.4  25 1009.0  25
+20110103     3  3-01-2011  38.5  25  20.0  25    0.0  25   9.8  25  30.0   25  16.0  25   23.5   68.5    8.1    8.3   11.7    2.5    7.1   12.7  26    9.8  25 1008.0  25
+20110104     4  4-01-2011  39.0  25  22.0  25    0.0  25  11.4  25  25.0   25  17.0  25   24.3   64.3    7.5    7.2   11.3    1.3    6.3   11.8  26   11.4  25 1005.5  25
+20110105     5  5-01-2011  35.5  25  22.5  25    0.1  25   9.8  25  23.0   25  17.0  25   29.4   62.4    6.7    6.6   10.1    1.3    5.7   10.3  26    9.8  25 1006.5  25
+20110106     6  6-01-2011  38.0  25  23.0  25    0.0  25  10.6  25  28.0   25  20.0  25   30.2   71.2    7.6    8.1   11.0    3.0    7.0   11.8  26   10.6  25 1006.0  25
+20110107     7  7-01-2011  37.0  25  23.5  25   13.5  25   8.8  25  26.0   25  19.0  25   30.3   65.6    7.3    7.5   10.8    2.3    6.5   11.2  26    8.8  25 1002.0  25
+20110108     8  8-01-2011  36.5  25  23.0  25    5.3  25  10.2  25  22.0   25  25.0  25   40.9   89.0    6.1    6.8    8.5    3.6    6.1    9.4  26   10.2  25 1002.5  25
+20110109     9  9-01-2011  33.0  25  22.0  25   26.3  25   6.4  25  22.0   25  26.0  25   51.7   98.4    5.4    6.5    7.4    5.2    6.3    8.2  26    6.4  25 1004.0  25
+20110110    10 10-01-2011  35.0  25  23.0  25    0.0  25   9.8  25  24.0   25  20.0  25   35.6   71.2    6.6    6.9    9.5    2.5    6.0   10.0  26    9.8  25 1001.5  25
+Most datasets can be requested using a single API call. The RAINMAN format however, consists of 6 datafiles and a Readme file containing metadata. The 7 files can be downloaded using an API call for each file:
+
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=rainman&comment=rain&start=20110101&finish=20110110&station=31010&username=<email_address>
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=rainman&comment=tmax&start=20110101&finish=20110110&station=31010&username=<email_address>
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=rainman&comment=tmin&start=20110101&finish=20110110&station=31010&username=<email_address>
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=rainman&comment=evap&start=20110101&finish=20110110&station=31010&username=<email_address>
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=rainman&comment=vp&start=20110101&finish=20110110&station=31010&username=<email_address>
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=rainman&comment=rad&start=20110101&finish=20110110&station=31010&username=<email_address>
+https://data.longpaddock.qld.gov.au/static/silo/resources/Readme.txt
+You can also customise your request instead of using one of our predefined formats. For example, to obtain data for maximum and minimum temperatures for Cairns Post Office (Station 31010) between 1 January 2011 and 10 January 2011:
+
+https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?start=20110101&finish=20110110&station=31010&format=json&comment=XN&username=<email_address>
+You should see a response which looks similar to this (formatted here for readability):
+
+{
+    "station": { "name": "CAIRNS POST OFFICE", "number": 31010, "latitude":  -16.9333, "longitude":  145.7833, "elevation":   2.0, "reference": "" },
+    "extracted":20190626,
+    "data": [
+        { "date": "2016-01-01", "variables": [
+            { "source": 25, "value":    28.5, "variable_code": "max_temp" },
+            { "source": 25, "value":    23.0, "variable_code": "min_temp" } ],
+        { "date": "2016-01-02", "variables": [
+            { "source": 25, "value":    30.5, "variable_code": "max_temp" },
+            { "source": 25, "value":    23.0, "variable_code": "min_temp" } ] }
+    ]
+}
+ In the example above, the "comment=XN" field in the API request was used to request maximum and minimum temperatures. The codes for requesting other variables are provided in the API reference.
+
+Now that we know the API is working, let's write a Python program to query it. We're going to use Python 3 to download print a small dataset.
+
+import urllib.request
+import urllib.parse
+
+api_url = 'https://www.longpaddock.qld.gov.au/cgi-bin/silo'
+
+params = {
+    'format': 'standard',
+    'lat': '-30.00',
+    'lon': '135.00',
+    'start': '20160101',
+    'finish': '20160105',
+    'username': <email_address>,
+    'password': 'apirequest'
+}
+url = api_url + '/DataDrillDataset.php?' + urllib.parse.urlencode(params)
+
+with urllib.request.urlopen(url) as remote:
+    data = remote.read()
+
+print(data)
+You can also obtain data using command line tools such as curl  or wget .
+
+#!/bin/bash
+
+api_url="https://www.longpaddock.qld.gov.au/cgi-bin/silo"
+begin="20160101"
+end="20160105"
+username=<email_address>
+password="apirequest"
+
+# Request "APSIM" data at a grid location
+lat="-30.00"
+lon="135.00"
+wget -O my_data -o my_log "$api_url/DataDrillDataset.php?lat=$lat&lon=$lon&start=$begin&finish=$end&format=apsim&username=$username&password=$password"
+
+# Note: the data will be stored in the "my_data" file, and the wget logging information stored in the "my_log" file.
+
+# Request vapour pressure data in CSV format at a station location
+station="1018"
+curl "$api_url/PatchedPointDataset?station=$station&start=$begin&finish=$end&format=csv&comment=V&username=$username"
+That's it! We recommend you also read the guide, which contains important information about the SILO Web API. For more details on the available resources, please consult the reference.

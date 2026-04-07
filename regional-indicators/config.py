@@ -29,6 +29,7 @@ except ImportError:
             "tomllib not found. On Python < 3.11 install with: pip install tomli"
         )
 
+SILO_EMAIL = "uqsken12@uq.edu.au"
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
