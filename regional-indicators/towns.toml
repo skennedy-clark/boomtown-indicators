@@ -118,14 +118,14 @@ postcodes        = ["4421"]
 sa2_code         = "307011178"   # ASGS 2021: Tara (was 307021352 in 2016)
 qgso_sa2         = "307011178"
 qgso_lga         = "LGA/37310"
-bom_station       = "42104"
+bom_station       = "41099"      # TARA TOWNSHIP — replaces 42104 (Woodlea, not in SILO dataset)
 sa2_name         = "Tara"
 sa3_code         = "30701"       # moved from SA3 30702 to 30701 in 2021 restructure
 lga              = "Western Downs"
 qps_division     = "Tara"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure"
+notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure. BOM station changed from 42104 (Woodlea, not in SILO) to 41099 (Tara Township, in SILO). Note: booklet data notes cited Woodlea station — data continuity not verified."
 
 [[towns]]
 name             = "Wandoan"
@@ -159,7 +159,7 @@ lga              = "Maranoa"
 qps_division     = "Roma"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 covers a wider area than the town; population figures are district-level"
+notes            = "⚠️ SA2 CODE NEEDS VERIFICATION: sa2_code 307011178 = Tara SA2, which is almost certainly wrong for Wallumbilla. Likely correct code is 307011177 (Roma Surrounds) or 307011176 (Roma) — qgso_sa2 is set to 307011176 suggesting QGSO used Roma SA2 for this town. Do not use SA2-level data for Wallumbilla until verified. BOM station 43043 (Yuleba Garden St) is in SILO but has >10% synthetic data 2009-2014 — flag in outputs."
 
 [[towns]]
 name             = "Goondiwindi"
@@ -169,14 +169,16 @@ postcodes        = ["4390"]
 sa2_code         = "307011173"   # ASGS 2021: Goondiwindi (was 307031358 in 2016)
 qgso_sa2         = "307011173"
 qgso_lga         = "LGA/33610"
-bom_station       = "41559"
+bom_station       = "41038"      # GOONDIWINDI POST OFFICE — replaces 41559 (WTP, not in SILO)
+                                 # Note: booklets used 41507 (New Kildonan) pre-2020, 41559 (WTP) from 2020
+                                 # Neither is in SILO; Post Office (41038) provides longest continuous record
 sa2_name         = "Goondiwindi"
 sa3_code         = "30701"       # moved from SA3 30703 to 30701 in 2021 restructure
 lga              = "Goondiwindi"
 qps_division     = "Goondiwindi"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure"
+notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure. BOM station changed to 41038 (Goondiwindi Post Office) — stations 41507 and 41559 used in previous booklets are not in SILO dataset. Data continuity vs previous booklets not verified."
 
 [[towns]]
 name             = "Moranbah"
@@ -186,14 +188,14 @@ postcodes        = ["4744"]
 sa2_code         = "312011341"   # ASGS 2021: Moranbah (was 318011429 in 2016)
 qgso_sa2         = "312011341"
 qgso_lga         = "LGA/33980"
-bom_station       = "34035"
+bom_station       = "34038"      # MORANBAH WATER TREATMENT PLANT — replaces 34035 (Airport, not in SILO)
 sa2_name         = "Moranbah"
 sa3_code         = "31201"       # corrected: was 31801 (Townsville) in error; Isaac is SA3 31201
 lga              = "Isaac"
 qps_division     = "Moranbah"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 renumbered in ASGS 2021; sa3_code corrected to 31201 (Isaac). Coal seam gas and coal mining town."
+notes            = "SA2 renumbered in ASGS 2021; sa3_code corrected to 31201 (Isaac). Coal seam gas and coal mining town. BOM station changed to 34038 (Moranbah WTP) — station 34035 (Airport) used in previous booklets is not in SILO dataset. Data continuity not verified."
 
 [[towns]]
 name             = "Dysart"
@@ -346,7 +348,7 @@ lga              = "Wellington"
 qps_division     = ""
 csg_notice_year  = 0
 benchmark        = false
-notes            = "VIC test town. SA2 code correct but absent from SALM smoothed dataset. Small population; some ATO data may be suppressed. Unemployment pending LGA-level fallback."
+notes            = "VIC test town. SA2 code correct but absent from SALM smoothed dataset. Small population; some ATO data may be suppressed. Unemployment pending LGA-level fallback. BOM station 85151 not in SILO dataset — rainfall data unavailable until alternative source found (SILO name search found no Yarram VIC match)."
 
 # ─────────────────────────────────────────────
 # DATA SOURCE CONFIGURATION
@@ -398,11 +400,13 @@ states         = ["VIC"]
 notes          = "Different geography (LGA/suburb) and year basis to QPS; needs mapping"
 
 [sources.bom_rainfall]
-# Bureau of Meteorology - rainfall by station
-# National; near real-time
-base_url       = "http://www.bom.gov.au/climate/data/"
-api_url        = "http://www.bom.gov.au/jsp/ncc/cdio/weatherData/av"
-notes          = "Use station ID per town; Roma = station 043091 (Roma Airport)"
+# Bureau of Meteorology rainfall data via SILO Patched Point Dataset (QLD Govt)
+# SILO serves BOM station data through a clean HTTP API — no session cookies required
+# Requires email address as username (no registration, just contact info for QLD Govt)
+# SILO_EMAIL must be set in config.py
+api_url        = "https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php"
+name_search    = "https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=name&nameFrag={fragment}"
+notes          = "format=csv&comment=R returns daily rainfall. Source codes: 0=station obs, 25=nearby station obs, 15=interpolated. Station numbers in towns.toml as bom_station. Not all BOM station numbers are in SILO — see individual town notes for substitutions made."
 
 [sources.fuel_prices]
 # Fuel prices - RULP (regular unleaded)
