@@ -1,416 +1,335 @@
 # towns.toml
 # Configuration for all towns tracked in the indicators project.
+# Auto-updated from uploaded towns.toml — April 2026
 #
-# Fields:
-#   name            - Display name used in output CSVs and reports
-#   state           - Australian state abbreviation
-#   postcode        - Primary postcode (used for ATO income data)
-#   postcodes       - All postcodes to aggregate (some towns span multiple)
-#   sa2_code        - ABS ASGS Edition 3 (2021) SA2 code — used by SALM unemployment fetcher
-#   sa2_name        - Official ABS SA2 name (may differ slightly from display name)
-#   sa3_code        - Parent SA3 code
-#   lga             - Local Government Area name
-#   qps_division    - QLD Police Service division (QLD towns only)
-#   csg_notice_year - Year CSG development was first noticed locally (if applicable)
-#   benchmark       - If true, used as state benchmark (not a study town)
-#   notes           - Any data quirks or boundary notes
-#
-# SA2 code history:
-#   All sa2_code values are ASGS 2021 Edition 3 (effective Jul 2021–Jun 2026).
-#   The 2021 restructure renumbered and renamed many western QLD SA2s relative
-#   to ASGS 2016. Original 2016 codes are noted in town comments where changed.
-#   qgso_sa2 is retained as a separate field for QGSO-specific lookups and may
-#   differ from sa2_code where QGSO uses a different aggregation boundary.
-#
-# SALM coverage notes:
-#   DEWR excludes SA2s with insufficient statistical reliability from the SALM
-#   smoothed dataset. The following towns have no SA2-level SALM data and use
-#   a proxy SA2 or are skipped pending an LGA-level fallback:
-#     Dalby      → proxy: Wambo (307021183); Dalby SA2 absent from SALM
-#     Dysart     → proxy: Broadsound - Nebo (312011338); Dysart merged in ASGS 2021
-#     Narrabri   → absent from SALM; LGA fallback TBD
-#     Shepparton → absent from SALM; LGA fallback TBD
-#     Yarram     → absent from SALM; LGA fallback TBD
+# BOOKLET FIELDS (added for booklet generation):
+#   slug         - used as folder name and Python identifier
+#   district     - text shown on booklet title page
+#   cover_photo  - filename in resources/images/towns/{slug}/
 
 [settings]
-output_dir  = "3 Web Content"
-raw_dir     = "raw"
-staging     = true          # write to staging/ before overwriting live CSVs
-asgs_edition = 2021         # ABS geography edition in use
+output_dir   = "3 Web Content"
+raw_dir      = "raw"
+staging      = true
+asgs_edition = 2021
 
-# ─────────────────────────────────────────────
-# QUEENSLAND TOWNS
-# ─────────────────────────────────────────────
 
-[[towns]]
+# ─── QUEENSLAND TOWNS ────────────────────────────────────────────────────────
+
+[towns.roma]
 name             = "Roma"
 state            = "QLD"
 postcode         = "4455"
 postcodes        = ["4455"]
-sa2_code         = "307011176"   # ASGS 2021: Roma (unchanged from 2016)
+sa2_code         = "307011176"
 qgso_sa2         = "307011176"
 qgso_lga         = "LGA/34860"
-bom_station       = "43091"
 sa2_name         = "Roma"
 sa3_code         = "30701"
 lga              = "Maranoa"
 qps_division     = "Roma"
+bom_station      = "43091"
 csg_notice_year  = 2009
 benchmark        = false
+district         = "Roma and District"
+cover_photo      = "cover.jpg"
 notes            = "UCL and SA2 boundaries are the same for Roma"
 
-[[towns]]
+[towns.chinchilla]
 name             = "Chinchilla"
 state            = "QLD"
 postcode         = "4413"
 postcodes        = ["4413"]
-sa2_code         = "307011172"   # ASGS 2021: Chinchilla (was 307021343 in 2016)
+sa2_code         = "307011172"
 qgso_sa2         = "307011172"
 qgso_lga         = "LGA/37310"
-bom_station       = "42078"
 sa2_name         = "Chinchilla"
-sa3_code         = "30701"       # moved from SA3 30702 to 30701 in 2021 restructure
+sa3_code         = "30701"
 lga              = "Western Downs"
 qps_division     = "Dalby"
+bom_station      = "42078"
 csg_notice_year  = 2009
 benchmark        = false
+district         = "Chinchilla and District"
+cover_photo      = "cover.jpg"
 notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure"
 
-[[towns]]
+[towns.dalby]
 name             = "Dalby"
 state            = "QLD"
 postcode         = "4405"
 postcodes        = ["4405"]
-sa2_code         = "307021183"   # ASGS 2021: Wambo — Dalby SA2 absent from SALM; Wambo is nearest proxy
+sa2_code         = "307021183"
 qgso_sa2         = "307021183"
 qgso_lga         = "LGA/37310"
-bom_station       = "41240"
-sa2_name         = "Wambo"       # ASGS 2021 name; covers Dalby area
+sa2_name         = "Wambo"
 sa3_code         = "30702"
 lga              = "Western Downs"
 qps_division     = "Dalby"
+bom_station      = "41240"
 csg_notice_year  = 2009
 benchmark        = false
+district         = "Dalby and District"
+cover_photo      = "cover.jpg"
 notes            = "Dalby has no SA2-level SALM entry; Wambo (307021183) used as proxy. Flag in outputs."
 
-[[towns]]
+[towns.miles]
 name             = "Miles"
 state            = "QLD"
 postcode         = "4415"
 postcodes        = ["4415"]
-sa2_code         = "307011175"   # ASGS 2021: Miles - Wandoan (was 307021348 in 2016)
+sa2_code         = "307011175"
 qgso_sa2         = "307011175"
 qgso_lga         = "LGA/37310"
-bom_station       = "42023"
 sa2_name         = "Miles - Wandoan"
-sa3_code         = "30701"       # moved from SA3 30702 to 30701 in 2021 restructure
+sa3_code         = "30701"
 lga              = "Western Downs"
 qps_division     = "Miles"
+bom_station      = "42023"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 renamed Miles - Wandoan and moved to SA3 30701 in ASGS 2021; Wandoan shares this SA2"
+district         = "Miles and District"
+cover_photo      = "cover.jpg"
+notes            = "SA2 renamed Miles - Wandoan in ASGS 2021; Wandoan shares this SA2"
 
-[[towns]]
+[towns.tara]
 name             = "Tara"
 state            = "QLD"
 postcode         = "4421"
 postcodes        = ["4421"]
-sa2_code         = "307011178"   # ASGS 2021: Tara (was 307021352 in 2016)
+sa2_code         = "307011178"
 qgso_sa2         = "307011178"
 qgso_lga         = "LGA/37310"
-bom_station       = "41099"      # TARA TOWNSHIP — replaces 42104 (Woodlea, not in SILO dataset)
 sa2_name         = "Tara"
-sa3_code         = "30701"       # moved from SA3 30702 to 30701 in 2021 restructure
+sa3_code         = "30701"
 lga              = "Western Downs"
 qps_division     = "Tara"
+bom_station      = "41099"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure. BOM station changed from 42104 (Woodlea, not in SILO) to 41099 (Tara Township, in SILO). Note: booklet data notes cited Woodlea station — data continuity not verified."
+district         = "Tara and District"
+cover_photo      = "cover.jpg"
+notes            = "BOM station changed from 42104 (Woodlea, not in SILO) to 41099 (Tara Township). Data continuity not verified."
 
-[[towns]]
+[towns.wandoan]
 name             = "Wandoan"
 state            = "QLD"
 postcode         = "4419"
 postcodes        = ["4419"]
-sa2_code         = "307011175"   # ASGS 2021: Miles - Wandoan (Wandoan merged with Miles; was 307021353 in 2016)
+sa2_code         = "307011175"
 qgso_sa2         = "307011175"
 qgso_lga         = "LGA/37310"
-bom_station       = "35029"
 sa2_name         = "Miles - Wandoan"
 sa3_code         = "30701"
 lga              = "Western Downs"
 qps_division     = "Wandoan"
+bom_station      = "35029"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "Wandoan no longer has its own SA2 in ASGS 2021; merged into Miles - Wandoan (307011175). Shares unemployment and population SA2 data with Miles."
+district         = "Wandoan and District"
+cover_photo      = "cover.jpg"
+notes            = "Wandoan merged into Miles - Wandoan (307011175) in ASGS 2021. Shares SA2 data with Miles."
 
-[[towns]]
+[towns.wallumbilla]
 name             = "Wallumbilla"
 state            = "QLD"
 postcode         = "4428"
 postcodes        = ["4428"]
-sa2_code         = "307011178"   # ASGS 2021 (unchanged)
+sa2_code         = "307011178"
 qgso_sa2         = "307011176"
 qgso_lga         = "LGA/34860"
-bom_station       = "43043"
-sa2_name         = "Wallumbilla - Surat Basin"
+sa2_name         = "Roma Surrounds"
 sa3_code         = "30701"
 lga              = "Maranoa"
 qps_division     = "Roma"
+bom_station      = "43043"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "⚠️ SA2 CODE NEEDS VERIFICATION: sa2_code 307011178 = Tara SA2, which is almost certainly wrong for Wallumbilla. Likely correct code is 307011177 (Roma Surrounds) or 307011176 (Roma) — qgso_sa2 is set to 307011176 suggesting QGSO used Roma SA2 for this town. Do not use SA2-level data for Wallumbilla until verified. BOM station 43043 (Yuleba Garden St) is in SILO but has >10% synthetic data 2009-2014 — flag in outputs."
+district         = "Wallumbilla and District"
+cover_photo      = "cover.jpg"
+notes            = "WARNING: sa2_code 307011178 may be incorrect (= Tara). qgso_sa2 set to Roma (307011176). Verify before publishing. BOM station 43043 has >10% synthetic data 2009-2014."
 
-[[towns]]
+[towns.goondiwindi]
 name             = "Goondiwindi"
 state            = "QLD"
 postcode         = "4390"
 postcodes        = ["4390"]
-sa2_code         = "307011173"   # ASGS 2021: Goondiwindi (was 307031358 in 2016)
+sa2_code         = "307011173"
 qgso_sa2         = "307011173"
 qgso_lga         = "LGA/33610"
-bom_station       = "41038"      # GOONDIWINDI POST OFFICE — replaces 41559 (WTP, not in SILO)
-                                 # Note: booklets used 41507 (New Kildonan) pre-2020, 41559 (WTP) from 2020
-                                 # Neither is in SILO; Post Office (41038) provides longest continuous record
 sa2_name         = "Goondiwindi"
-sa3_code         = "30701"       # moved from SA3 30703 to 30701 in 2021 restructure
+sa3_code         = "30701"
 lga              = "Goondiwindi"
 qps_division     = "Goondiwindi"
+bom_station      = "41038"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure. BOM station changed to 41038 (Goondiwindi Post Office) — stations 41507 and 41559 used in previous booklets are not in SILO dataset. Data continuity vs previous booklets not verified."
+district         = "Goondiwindi and District"
+cover_photo      = "cover.jpg"
+notes            = "BOM station changed to 41038 (Post Office). Stations 41507 and 41559 (used in prior booklets) not in SILO."
 
-[[towns]]
+[towns.moranbah]
 name             = "Moranbah"
 state            = "QLD"
 postcode         = "4744"
 postcodes        = ["4744"]
-sa2_code         = "312011341"   # ASGS 2021: Moranbah (was 318011429 in 2016)
+sa2_code         = "312011341"
 qgso_sa2         = "312011341"
 qgso_lga         = "LGA/33980"
-bom_station       = "34038"      # MORANBAH WATER TREATMENT PLANT — replaces 34035 (Airport, not in SILO)
 sa2_name         = "Moranbah"
-sa3_code         = "31201"       # corrected: was 31801 (Townsville) in error; Isaac is SA3 31201
+sa3_code         = "31201"
 lga              = "Isaac"
 qps_division     = "Moranbah"
+bom_station      = "34038"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "SA2 renumbered in ASGS 2021; sa3_code corrected to 31201 (Isaac). Coal seam gas and coal mining town. BOM station changed to 34038 (Moranbah WTP) — station 34035 (Airport) used in previous booklets is not in SILO dataset. Data continuity not verified."
+district         = "Moranbah and District"
+cover_photo      = "cover.jpg"
+notes            = "BOM station changed to 34038 (WTP). Station 34035 (Airport, used in prior booklets) not in SILO."
 
-[[towns]]
+[towns.dysart]
 name             = "Dysart"
 state            = "QLD"
 postcode         = "4745"
 postcodes        = ["4745"]
-sa2_code         = "312011338"   # ASGS 2021: Broadsound - Nebo — Dysart merged; was 318011426 in 2016
+sa2_code         = "312011338"
 qgso_sa2         = "312011338"
 qgso_lga         = "LGA/33980"
-bom_station       = "35109"
-sa2_name         = "Broadsound - Nebo"  # ASGS 2021 name; Dysart absorbed into this SA2
-sa3_code         = "31201"       # corrected: was 31801 in error
+sa2_name         = "Broadsound - Nebo"
+sa3_code         = "31201"
 lga              = "Isaac"
 qps_division     = "Dysart"
+bom_station      = "35109"
 csg_notice_year  = 2009
 benchmark        = false
-notes            = "Dysart no longer has its own SA2 in ASGS 2021; absorbed into Broadsound - Nebo (312011338). Unemployment figures cover a wide rural area. Flag in outputs."
+district         = "Dysart and District"
+cover_photo      = "cover.jpg"
+notes            = "Dysart absorbed into Broadsound - Nebo (312011338) in ASGS 2021. Unemployment figures cover a wide rural area. Flag in outputs."
 
-[[towns]]
+[towns.toowoomba]
 name             = "Toowoomba"
 state            = "QLD"
 postcode         = "4350"
 postcodes        = ["4350", "4352"]
-sa2_code         = "317011456"   # ASGS 2021: Toowoomba - Central (was 305031218 in 2016)
-qgso_sa2         = "317011456"
-qgso_lga         = "LGA/36910"
-bom_station       = "41529"
-sa2_name         = "Toowoomba - Central"
-sa3_code         = "31701"       # corrected: was 30503 in error
-lga              = "Toowoomba"
-qps_division     = "Toowoomba"
-csg_notice_year  = 2009
-benchmark        = false
-notes            = "Multiple SA2s cover Toowoomba; sa2_code set to Central as primary. Sub-areas tracked separately below."
-
-[[towns]]
-name             = "Toowoomba (Central)"
-state            = "QLD"
-postcode         = "4350"
-postcodes        = ["4350"]
-sa2_code         = "317011456"   # ASGS 2021: Toowoomba - Central (was 305031220 in 2016)
+sa2_code         = "317011456"
 qgso_sa2         = "317011456"
 qgso_lga         = "LGA/36910"
 sa2_name         = "Toowoomba - Central"
 sa3_code         = "31701"
 lga              = "Toowoomba"
 qps_division     = "Toowoomba"
+bom_station      = "41529"
 csg_notice_year  = 2009
 benchmark        = false
+district         = "Toowoomba and District"
+cover_photo      = "cover.jpg"
+notes            = "Multiple SA2s cover Toowoomba; sa2_code set to Central as primary. Building approvals use LGA/36910 boundary."
+
+[towns.toowoomba_central]
+name             = "Toowoomba (Central)"
+state            = "QLD"
+postcode         = "4350"
+postcodes        = ["4350"]
+sa2_code         = "317011456"
+qgso_sa2         = "317011456"
+qgso_lga         = "LGA/36910"
+sa2_name         = "Toowoomba - Central"
+sa3_code         = "31701"
+lga              = "Toowoomba"
+qps_division     = "Toowoomba"
+bom_station      = "41529"
+csg_notice_year  = 2009
+benchmark        = false
+district         = "Toowoomba (Central) and District"
+cover_photo      = "cover.jpg"
 notes            = "Central/CBD SA2 sub-area of Toowoomba"
 
-[[towns]]
+[towns.toowoomba_harlaxton]
 name             = "Toowoomba (Harlaxton)"
 state            = "QLD"
 postcode         = "4350"
 postcodes        = ["4350"]
-sa2_code         = "317011454"   # ASGS 2021: North Toowoomba - Harlaxton (was 305031216 in 2016)
+sa2_code         = "317011454"
 qgso_sa2         = "317011454"
 qgso_lga         = "LGA/36910"
 sa2_name         = "North Toowoomba - Harlaxton"
 sa3_code         = "31701"
 lga              = "Toowoomba"
 qps_division     = "Toowoomba"
+bom_station      = "41529"
 csg_notice_year  = 2009
 benchmark        = false
+district         = "Toowoomba (Harlaxton) and District"
+cover_photo      = "cover.jpg"
 notes            = "North Toowoomba / Harlaxton SA2 sub-area"
 
-[[towns]]
+[towns.toowoomba_west]
 name             = "Toowoomba (West)"
 state            = "QLD"
 postcode         = "4350"
 postcodes        = ["4350"]
-sa2_code         = "317011458"   # ASGS 2021: Toowoomba - West (was 305031220 in 2016)
+sa2_code         = "317011458"
 qgso_sa2         = "317011458"
 qgso_lga         = "LGA/36910"
 sa2_name         = "Toowoomba - West"
 sa3_code         = "31701"
 lga              = "Toowoomba"
 qps_division     = "Toowoomba"
+bom_station      = "41529"
 csg_notice_year  = 2009
 benchmark        = false
+district         = "Toowoomba (West) and District"
+cover_photo      = "cover.jpg"
 notes            = "West Toowoomba SA2 sub-area"
 
-# ─────────────────────────────────────────────
-# QUEENSLAND BENCHMARK
-# ─────────────────────────────────────────────
 
-[[towns]]
-name             = "Queensland (Benchmark)"
-state            = "QLD"
-postcode         = ""
-postcodes        = []
-sa2_code         = ""
-sa2_name         = "Queensland"
-sa3_code         = ""
-lga              = "Queensland"
-qps_division     = ""
-csg_notice_year  = 0
-benchmark        = true
-notes            = "State-level benchmark; use state totals from each data source"
+# ─── NEW SOUTH WALES TOWNS ──────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────
-# NEW SOUTH WALES TOWNS
-# ─────────────────────────────────────────────
-
-[[towns]]
+[towns.narrabri]
 name             = "Narrabri"
 state            = "NSW"
 postcode         = "2390"
 postcodes        = ["2390"]
-sa2_code         = "102021116"   # ASGS 2021: Narrabri — confirmed correct but absent from SALM; LGA fallback TBD
-bom_station       = "54038"
+sa2_code         = "102021116"
 sa2_name         = "Narrabri"
 sa3_code         = "10202"
 lga              = "Narrabri"
-qps_division     = ""
+bom_station      = "54038"
 csg_notice_year  = 2015
 benchmark        = false
-notes            = "NSW CSG town. SA2 code is correct ASGS 2021 but Narrabri is excluded from SALM smoothed dataset (below threshold). Unemployment data pending LGA-level fallback."
+district         = "Narrabri and District"
+cover_photo      = "cover.jpg"
+notes            = "NSW CSG town. Absent from SALM smoothed dataset. Unemployment data pending LGA-level fallback."
 
-# ─────────────────────────────────────────────
-# VICTORIA TOWNS (test cases)
-# ─────────────────────────────────────────────
 
-[[towns]]
+# ─── VICTORIA TOWNS ─────────────────────────────────────────────────────────
+
+[towns.shepparton]
 name             = "Shepparton"
 state            = "VIC"
 postcode         = "3630"
 postcodes        = ["3630", "3631"]
-sa2_code         = "213041536"   # ASGS 2021: Shepparton — confirmed correct but absent from SALM; LGA fallback TBD
-bom_station       = "81125"
+sa2_code         = "213041536"
 sa2_name         = "Shepparton"
 sa3_code         = "21304"
 lga              = "Greater Shepparton"
-qps_division     = ""
-csg_notice_year  = 0
+bom_station      = "81125"
 benchmark        = false
-notes            = "VIC test town. SA2 code correct but absent from SALM smoothed dataset. Crime data from Victoria Police, not QPS. Unemployment pending LGA-level fallback."
+district         = "Shepparton and District"
+cover_photo      = "cover.jpg"
+notes            = "VIC town. Absent from SALM. Crime data from Victoria Police, not QPS."
 
-[[towns]]
+[towns.yarram]
 name             = "Yarram"
 state            = "VIC"
 postcode         = "3971"
 postcodes        = ["3971"]
-sa2_code         = "212031483"   # ASGS 2021: Yarram — confirmed correct but absent from SALM; LGA fallback TBD
-bom_station       = "85151"
+sa2_code         = "212031483"
 sa2_name         = "Yarram"
 sa3_code         = "21203"
 lga              = "Wellington"
-qps_division     = ""
-csg_notice_year  = 0
+bom_station      = "85151"
 benchmark        = false
-notes            = "VIC test town. SA2 code correct but absent from SALM smoothed dataset. Small population; some ATO data may be suppressed. Unemployment pending LGA-level fallback. BOM station 85151 not in SILO dataset — rainfall data unavailable until alternative source found (SILO name search found no Yarram VIC match)."
-
-# ─────────────────────────────────────────────
-# DATA SOURCE CONFIGURATION
-# Per-source settings used by the fetch scripts
-# ─────────────────────────────────────────────
-
-[sources.ato]
-# ATO Taxation Statistics - individual income by postcode
-# Latest available: 2022-23 (released mid-2024); lags ~18 months
-base_url       = "https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/taxation-statistics/"
-table          = "Table 8"   # Median and average taxable income by postcode
-latest_year    = "2022-23"
-lag_years      = 2
-notes          = "Download Table 8 xlsx manually or via direct link; filter by postcode"
-
-[sources.abs_erp]
-# ABS Estimated Resident Population - national, by SA2
-# Updated annually, usually released ~12 months after reference year
-api_url        = "https://api.data.abs.gov.au/data/ABS,ERP_ASGS2021,1.0.0/"
-latest_year    = 2023
-notes          = "Use ABS Data Explorer API; filter by SA2 code"
-
-[sources.abs_labour]
-# ABS Small Area Labour Markets - unemployment by SA2
-# Quarterly; most recent usually 2-3 quarters behind
-api_url        = "https://api.data.abs.gov.au/data/ABS,SALM_ASGS2021,1.0.0/"
-notes          = "National source - works for QLD, NSW and VIC towns equally"
-
-[sources.qgso_housing]
-# QGSO Regional Database - house prices, rent, building approvals
-# QLD only; accessed via web form (semi-automated)
-base_url       = "https://statistics.qgso.qld.gov.au/report-viewer/run"
-states         = ["QLD"]
-notes          = "Requires browser interaction to select region and download; semi-automated only"
-
-[sources.qps_crime]
-# Queensland Police Service crime statistics
-# Annual; financial year basis; downloadable CSV
-base_url       = "https://www.police.qld.gov.au/maps-and-statistics"
-states         = ["QLD"]
-latest_year    = "2023-24"
-notes          = "CSV download available by police division; must map SA2/town to QPS division"
-
-[sources.vicpol_crime]
-# Victoria Police crime statistics
-# Annual; calendar year basis
-base_url       = "https://www.crimestatistics.vic.gov.au/crime-statistics/latest-victorian-crime-data/download-data"
-states         = ["VIC"]
-notes          = "Different geography (LGA/suburb) and year basis to QPS; needs mapping"
-
-[sources.bom_rainfall]
-# Bureau of Meteorology rainfall data via SILO Patched Point Dataset (QLD Govt)
-# SILO serves BOM station data through a clean HTTP API — no session cookies required
-# Requires email address as username (no registration, just contact info for QLD Govt)
-# SILO_EMAIL must be set in config.py
-api_url        = "https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php"
-name_search    = "https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php?format=name&nameFrag={fragment}"
-notes          = "format=csv&comment=R returns daily rainfall. Source codes: 0=station obs, 25=nearby station obs, 15=interpolated. Station numbers in towns.toml as bom_station. Not all BOM station numbers are in SILO — see individual town notes for substitutions made."
-
-[sources.fuel_prices]
-# Fuel prices - RULP (regular unleaded)
-# Source TBD - original booklets cited source unclear
-# Options: ACCC quarterly monitoring, state fuel price portals
-base_url       = "https://www.accc.gov.au/consumers/petrol-and-fuel/petrol-price-cycles"
-notes          = "ACCC data is metro/capital city focused; regional town data harder to source automatically"
+district         = "Yarram and District"
+cover_photo      = "cover.jpg"
+notes            = "VIC town. Absent from SALM. BOM station 85151 not in SILO — rainfall unavailable."

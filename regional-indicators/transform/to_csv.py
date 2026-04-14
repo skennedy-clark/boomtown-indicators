@@ -272,17 +272,34 @@ def transform_crime_traffic(town: Town, dry_run: bool = False) -> bool:
 
 def _load_qgso_series(town: Town, indicator: str) -> dict:
     """
-    Load all cache/housing/{slug}_qgso_{year}.json files for a town,
-    merge across years into a single {year: value} dict.
+    Load QGSO housing cache for a town.
+
+    Matches two filename patterns (both are produced by fetch_qgso_housing.py):
+      {slug}_qgso.json          ← current format (single file per town)
+      {slug}_qgso_*.json        ← legacy/split format (multiple files per town)
+
+    Values from all matching files are merged; later files win on key collisions.
     """
     cache_dir = CACHE_DIR / "housing"
     values = {}
-    for fpath in sorted(cache_dir.glob(f"{town.slug}_qgso_*.json")):
+
+    # Collect all matching files, deduplicated, in sorted order
+    matched: list[Path] = []
+    seen: set[Path] = set()
+    for pat in [f"{town.slug}_qgso.json", f"{town.slug}_qgso_*.json"]:
+        for fpath in sorted(cache_dir.glob(pat)):
+            if fpath not in seen:
+                matched.append(fpath)
+                seen.add(fpath)
+    matched.sort()
+
+    for fpath in matched:
         with open(fpath) as f:
             data = json.load(f)
         for yr, val in data.get("indicators", {}).get(indicator, {}).items():
             if val is not None and YEAR_START <= int(yr) <= YEAR_END:
                 values[str(yr)] = val
+
     return values
 
 
@@ -299,10 +316,24 @@ def _make_housing_transformer(indicator: str, filename: str):
     return transformer
 
 
-transform_house_price   = _make_housing_transformer("house_price",  "House sale price (median).csv")
-transform_house_sales   = _make_housing_transformer("house_sales",  "House sales (number).csv")
-transform_rent          = _make_housing_transformer("rent",         "Rent (3-bedroom house; median).csv")
-transform_approvals     = _make_housing_transformer("approvals",    "Residential building approvals.csv")
+transform_house_price = _make_housing_transformer(
+    "housing_median_price",          # JSON key in {slug}_qgso.json
+    "House sale price (median).csv",
+)
+transform_house_sales = _make_housing_transformer(
+    "housing_sales_count",           # JSON key in {slug}_qgso.json
+    "House sales (number).csv",
+)
+transform_rent = _make_housing_transformer(
+    "rent_3bed_median",              # JSON key in {slug}_qgso.json
+    "Rent (3-bedroom house; median).csv",
+)
+transform_approvals = _make_housing_transformer(
+    "building_approvals",            # JSON key in {slug}_qgso.json
+    "Residential building approvals.csv",
+)
+
+
 # Unemployment comes from SALM cache (not QGSO housing cache)
 def transform_unemployment(town: Town, dry_run: bool = False) -> bool:
     """→ Unemployment rate.csv  (source: SALM or QGSO housing cache)"""
@@ -318,11 +349,15 @@ def transform_unemployment(town: Town, dry_run: bool = False) -> bool:
             return True
     # Fallback: QGSO housing cache (manual)
     return _make_housing_transformer("unemployment", "Unemployment rate.csv")(town, dry_run)
-transform_nrw_town      = _make_housing_transformer("nrw_town",     "Non-resident workers in town.csv")
-transform_nrw_lga       = _make_housing_transformer("nrw_lga",      "Non-resident workers in local govt area.csv")
-# Rainfall comes from BOM cache (not QGSO housing cache)
+
+
+transform_nrw_town = _make_housing_transformer("nrw_town", "Non-resident workers in town.csv")
+transform_nrw_lga  = _make_housing_transformer("nrw_lga",  "Non-resident workers in local govt area.csv")
+
+
+# Rainfall comes from BOM/SILO cache (not QGSO housing cache)
 def transform_rainfall(town: Town, dry_run: bool = False) -> bool:
-    """→ Environment - total rainfall.csv  (source: BOM or QGSO housing cache)"""
+    """→ Environment - total rainfall.csv  (source: BOM/SILO or QGSO housing cache)"""
     bom_file = CACHE_DIR / "rainfall" / f"{town.slug}_bom_rainfall.json"
     if bom_file.exists():
         with open(bom_file) as f:
@@ -335,11 +370,12 @@ def transform_rainfall(town: Town, dry_run: bool = False) -> bool:
     # Fallback: QGSO housing cache (manual)
     return _make_housing_transformer("rainfall", "Environment - total rainfall.csv")(town, dry_run)
 
+
 # ── Registry ───────────────────────────────────────────────────────────────────
 
 # Maps indicator key → transform function signature: fn(town, dry_run) -> bool
 TRANSFORMERS: dict[str, callable] = {
-    "income": transform_income_table8,
+    "income":              transform_income_table8,
     "income_taxable":      transform_income_table6_taxable,
     "earners":             transform_earners,
     "wages":               transform_wages,
@@ -357,31 +393,8 @@ TRANSFORMERS: dict[str, callable] = {
     "nrw_town":            transform_nrw_town,
     "nrw_lga":             transform_nrw_lga,
     "rainfall":            transform_rainfall,
-    # Future:
-    # "population_town":  transform_population_ucl,
-    # "population_lga":   transform_population_lga,
-    # "population_district": transform_population_sa2,
-    # "nrw_town":         transform_nrw_ucl,
-    # "nrw_lga":          transform_nrw_lga,
-    # "unemployment":     transform_unemployment,
-    # "house_price":      transform_house_price,
-    # "house_sales":      transform_house_sales,
-    # "rent":             transform_rent,
-    # "building_approvals": transform_building_approvals,
-    # "crime_all":        transform_crime_all,
-    # "crime_drugs":      transform_crime_drugs,
-    # "crime_goodorder":  transform_crime_goodorder,
-    # "crime_theft":      transform_crime_theft,
-    # "crime_traffic":    transform_crime_traffic,
-    # "rainfall":         transform_rainfall,
-    # "business_npp_amount": transform_business_npp_amount,
-    # "business_pp_amount":  transform_business_pp_amount,
-    # "business_npp_number": transform_business_npp_number,
-    # "business_pp_number":  transform_business_pp_number,
-    # "earners":          transform_earners,
-    # "fuel":             transform_fuel,
-    # "schools":          transform_schools,
 }
+
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 

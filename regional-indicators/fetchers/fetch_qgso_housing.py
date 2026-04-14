@@ -2,57 +2,42 @@
 fetchers/fetch_qgso_housing.py
 -------------------------------
 Fetches housing indicators from the QGSO Regional Database (QRSIS).
-QLD only — all three collections are fetched in one session.
+QLD only.
 
 COLLECTIONS FETCHED:
-  1925  Residential land and dwelling sales   (Sep 2000 – Sep 2025, quarterly)
-  1929  Median rent                            (Dec 1989 – Mar 2026, quarterly)
-  2075  Building Approvals (Historical)        (Jul 2001 – Dec 2018, monthly)
-  2031  Building Approvals (Current)           (Jan 2019 – present, monthly)
+  1925  Residential land and dwelling sales   (Sep 2000 – Sep 2025, quarterly, SA2)
+  1929  Median rent                            (Dec 1989 – Mar 2026, quarterly, SA2)
+  2075  Building Approvals (Historical)        (Jul 2001 – Dec 2018, monthly, LGA)
+  2031  Building Approvals (Current)           (Jan 2019 – present, monthly, LGA)
 
 INDICATORS PRODUCED (per town, annual):
   housing_sales_count    Detached dwelling: number of sales
-                         Annual = Dec-quarter rolling total (already 12-month sum)
   housing_median_price   Detached dwelling: median sale price ($)
-                         Annual = mean of 4 quarterly medians
-  rent_3bed_median       House - 3 bedroom - median rent of lodgements ($/week)
-                         Annual = mean of 4 quarterly medians
-  building_approvals     Residential dwelling units (Private); New Houses
-                         Annual = sum of 12 monthly values
+  rent_3bed_median       House - 3 bedrooms - median rent of lodgements ($/week)
+  building_approvals     Residential dwelling units (Private); New Houses (Number)
 
-HOW THE SCRAPER WORKS:
-  QRSIS is an Oracle PL/SQL Web Toolkit multi-step wizard.
-  The udqctl_id is a server-side query handle assigned per session — it
-  changes every run and cannot be hardcoded.
+CRITICAL IMPLEMENTATION NOTES:
+  1. POST encoding: Oracle PL/SQL WebTK reads p_names/p_values as interleaved
+     parallel arrays. Must use list of (key,val) tuples — dicts group all
+     p_names first then all p_values which Oracle misreads. Use _q() helper.
 
-  Step flow per collection:
-    1. POST ProcessCollection   → assigns udqctl_id
-    2. GET  ProcessSeries (VIEW) → list available series
-    3. POST ProcessActions (->)  → move desired series to "Selected"
-    4. POST ProcessActions (Next)
-    5. POST ProcessActions (time) → set from/to date range (Next)
-    6. POST ProcessRegType (->)  → select SA2 region type
-    7. POST ProcessRegType (Next)
-    8. GET  ProcessRegions (VIEW) → list available regions
-    9. POST ProcessActions (->)  → move desired SA2 regions to "Selected"
-   10. POST ProcessActions (Next)
-   11. POST ProcessActions (QRSIS Query) → generate output HTML
-   12. Parse HTML table directly (no XLS download needed)
+  2. HTML parsing: QRSIS serves HTML with unclosed <OPTION> tags. BeautifulSoup's
+     html.parser merges option texts into one string. Must use lxml parser.
 
-  Region values are the full option text, e.g.:
-    "SA2/307021183 - Wambo (01/07/2011 - )"
+  3. udqctl_id extraction: Redirect URL uses interleaved format
+     ?p_names=udqctl_id&p_values=3908, not ?udqctl_id=3908.
 
-  Series values are the full option text, e.g.:
-    "Detached dwelling: number of sales (Number)"
+  4. Building approvals geography: SA2-level data not available for most small
+     QLD towns. Use LGA-level (qgso_lga field from towns.toml) instead.
+
+  5. Exact series names from QRSIS (verified from live session):
+     - 'Detached dwelling: number of sales (Number)'
+     - 'Detached dwelling: median sale price ($)'
+     - 'House - 3 bedrooms - median rent of lodgements ($/week)'
+     - 'Residential dwelling units (Private); New Houses (Number)'
 
 SOURCE:
   https://www.qgso.qld.gov.au/statistics/queensland-regions/regional-tools-statistics/queensland-regional-database
-
-Website CSVs produced:
-  House price.csv
-  House sales.csv
-  Rent.csv
-  Building approvals.csv
 """
 
 from __future__ import annotations
@@ -73,7 +58,7 @@ try:
     import requests
     from bs4 import BeautifulSoup
 except ImportError:
-    raise ImportError("pip install requests beautifulsoup4")
+    raise ImportError("pip install requests beautifulsoup4 lxml")
 
 
 # ── QRSIS constants ─────────────────────────────────────────────────────────────
@@ -81,7 +66,7 @@ except ImportError:
 BASE_URL     = "https://statistics.qgso.qld.gov.au/pls/qis_public/"
 PUBLIC_USER  = "edtert"
 ACCESS_LEVEL = "85"
-COLLGRP_ID   = "22"   # Housing group
+COLLGRP_ID   = "22"
 
 HEADERS = {
     "User-Agent": (
@@ -93,49 +78,79 @@ HEADERS = {
     "Origin":  "https://statistics.qgso.qld.gov.au",
 }
 
-# Rent series — try each in order until one matches
-RENT_SERIES_CANDIDATES = [
-    "House - 3 bedroom - median rent of lodgements ($/week)",
-    "3 bedroom house - median rent of lodgements ($/week)",
-    "3 Bedroom House: Median rent of lodgements ($/week)",
-]
-
-# ── Collection definitions ───────────────────────────────────────────────────────
-# Update to_date each year after QGSO releases new data.
+# Exact series names as returned by QRSIS (verified from live session)
+SERIES_SALES_COUNT = "Detached dwelling: number of sales (Number)"
+SERIES_SALES_PRICE = "Detached dwelling: median sale price ($)"
+SERIES_RENT        = "House - 3 bedrooms - median rent of lodgements ($/week)"
+SERIES_APPROVALS   = "Residential dwelling units (Private); New Houses (Number)"
 
 COLLECTIONS = {
     "sales": {
-        "id":        "1925",
-        "series":    [
-            "Detached dwelling: number of sales (Number)",
-            "Detached dwelling: median sale price ($)",
-        ],
-        "from_date": "Year Ended 30 Sep 2000",
-        "to_date":   "Year Ended 30 Sep 2025",
-        "period":    "Quarterly",
+        "id":         "1925",
+        "series":     [SERIES_SALES_COUNT, SERIES_SALES_PRICE],
+        "from_date":  "Year Ended 30 Sep 2000",
+        "to_date":    "Year Ended 30 Sep 2025",
+        "geo":        "SA2",       # region type to select
     },
     "rent": {
-        "id":        "1929",
-        "series":    RENT_SERIES_CANDIDATES[:1],   # first candidate; fallback in code
-        "from_date": "Year Ended 31 Dec 2000",
-        "to_date":   "Year Ended 31 Mar 2026",
-        "period":    "Quarterly",
+        "id":         "1929",
+        "series":     [SERIES_RENT],
+        "from_date":  "Year Ended 31 Dec 2000",
+        "to_date":    "Year Ended 31 Mar 2026",
+        "geo":        "SA2",
     },
     "approvals_hist": {
-        "id":        "2075",
-        "series":    ["Residential dwelling units (Private); New Houses"],
-        "from_date": "Jul 2001",
-        "to_date":   "Dec 2018",
-        "period":    "Monthly",
+        "id":         "2075",
+        "series":     [SERIES_APPROVALS],
+        "from_date":  "Jul 2001",
+        "to_date":    "Dec 2018",
+        "period":     "Monthly",
+        "date_fmt":   "M1",
+        "concorded":  "Y",
+        "geo":        "SA2",
+        "approvals":  True,
     },
     "approvals_curr": {
-        "id":        "2031",
-        "series":    ["Residential dwelling units (Private); New Houses"],
-        "from_date": "Jan 2019",
-        "to_date":   "Jan 2026",
-        "period":    "Monthly",
+        "id":         "2031",
+        "series":     [SERIES_APPROVALS],
+        "from_date":  "Jan 2019",
+        "to_date":    "Jan 2026",
+        "period":     "Monthly",
+        "date_fmt":   "M1",
+        "concorded":  "Y",
+        "geo":        "SA2",
+        "approvals":  True,
     },
 }
+
+
+
+# Toowoomba approvals use LGA boundary per previous booklets (not SA2)
+# All other towns use SA2. LGA code for Toowoomba = LGA/36910
+TOOWOOMBA_LGA_SLUGS = {"toowoomba", "toowoomba_central", "toowoomba_harlaxton", "toowoomba_west"}
+TOOWOOMBA_LGA_CODE  = "LGA/36910"
+
+def _q(*pairs) -> list[tuple]:
+    """Build interleaved p_names/p_values list from alternating (name, value) args."""
+    result = []
+    it = iter(pairs)
+    for name in it:
+        value = next(it)
+        result.append(("p_names", name))
+        result.append(("p_values", value))
+    return result
+
+
+def _parse_options(html: str, select_name: str) -> list[str]:
+    """
+    Parse <option> text values from a named <select>.
+    MUST use lxml — html.parser merges unclosed <OPTION> tags into one string.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    for sel in soup.find_all("select", {"name": select_name}):
+        opts = [o.get_text(strip=True) for o in sel.find_all("option")]
+        return [o for o in opts if o]
+    return []
 
 
 class QGSOHousingFetcher(BaseFetcher):
@@ -149,30 +164,49 @@ class QGSOHousingFetcher(BaseFetcher):
             self.log.info("No QLD towns configured — nothing to fetch")
             return
 
-        # Build SA2 code → town map using qgso_sa2 (preferred) or sa2_code
-        town_sa2_map: dict[str, object] = {}
+        # SA2 map: sa2_code → town (for sales/rent)
+        sa2_map: dict[str, list] = {}  # sa2_code → [town, ...] (multiple towns may share an SA2)
         for town in towns:
             sa2 = getattr(town, "qgso_sa2", None) or town.sa2_code
             if sa2:
-                town_sa2_map[str(sa2)] = town
-            else:
-                self.log.warning(f"  [{town.name}] no qgso_sa2 or sa2_code — skipping")
+                sa2_map.setdefault(str(sa2), []).append(town)
 
-        if not town_sa2_map:
+        if not sa2_map:
             self.result.add_error("ALL", "No SA2 codes available for QGSO lookup")
             return
 
-        # Fetch each collection and accumulate by town slug
+        # For building approvals: most towns use SA2, but Toowoomba uses LGA
+        # (per previous booklets: Roma/Chinchilla/etc = SA2, Toowoomba = LGA)
+        approvals_sa2_map: dict[str, list] = {}
+        approvals_lga_map: dict[str, list] = {}
+        for town in towns:
+            if town.slug in TOOWOOMBA_LGA_SLUGS:
+                approvals_lga_map.setdefault(TOOWOOMBA_LGA_CODE, []).append(town)
+            else:
+                sa2 = getattr(town, "qgso_sa2", None) or town.sa2_code
+                if sa2:
+                    approvals_sa2_map.setdefault(str(sa2), []).append(town)
+                    # Note: towns with shared SA2 (Roma+Wallumbilla, Miles+Wandoan)
+                    # both get added here so both receive the data
+
         all_data: dict[str, dict] = {}
 
         for coll_key, cfg in COLLECTIONS.items():
             self.log.info(f"  Collection: {coll_key} (id={cfg['id']})")
+            if cfg.get("approvals"):
+                # Merge SA2 and LGA region maps for approvals
+                region_map = {**{k: v for k, v in approvals_sa2_map.items()},
+                              **{k: v for k, v in approvals_lga_map.items()}}
+            else:
+                region_map = sa2_map  # values are already lists of towns
+            if not region_map:
+                self.log.warning(f"  No regions for {coll_key} — skipping")
+                continue
             try:
-                coll_data = self._fetch_collection(coll_key, cfg, town_sa2_map)
+                coll_data = self._fetch_collection(coll_key, cfg, region_map)
                 for slug, indicators in coll_data.items():
                     if slug not in all_data:
                         all_data[slug] = {}
-                    # For approvals, merge historical + current
                     for ind_name, values in indicators.items():
                         if ind_name in all_data[slug] and isinstance(values, dict):
                             all_data[slug][ind_name].update(values)
@@ -182,7 +216,6 @@ class QGSOHousingFetcher(BaseFetcher):
                 self.log.error(f"  Collection {coll_key} failed: {exc}", exc_info=True)
                 self.result.add_error("ALL", f"Collection {coll_key} failed: {exc}")
 
-        # Write cache JSON per town
         out_dir = CACHE_DIR / "housing"
         out_dir.mkdir(exist_ok=True)
 
@@ -204,7 +237,7 @@ class QGSOHousingFetcher(BaseFetcher):
                 "note": (
                     "Sales count = Dec-quarter rolling 12-month total. "
                     "Median price and rent = mean of 4 quarterly medians. "
-                    "Building approvals = sum of 12 monthly values."
+                    "Building approvals = sum of 12 monthly values (LGA level)."
                 ),
                 "indicators": indicators,
             }
@@ -213,245 +246,193 @@ class QGSOHousingFetcher(BaseFetcher):
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(out, f, indent=2)
 
-            summary = ", ".join(
-                f"{k}({len(v)}yr)" for k, v in indicators.items()
-            )
+            summary = ", ".join(f"{k}({len(v)}yr)" for k, v in indicators.items())
             self.log.info(f"  {town.name}: {summary}")
             self.result.towns_ok.append(town.name)
 
     # ── Per-collection fetch ─────────────────────────────────────────────────────
 
-    def _fetch_collection(
-        self,
-        coll_key: str,
-        cfg: dict,
-        town_sa2_map: dict,
-    ) -> dict[str, dict]:
-        """Run one QRSIS wizard session. Returns { slug: { indicator: {yr: val} } }."""
+    def _fetch_collection(self, coll_key, cfg, region_map) -> dict[str, dict]:
+        """
+        region_map: { region_code: [town, ...] }
+          For SA2: { "307011176": [roma_town] }
+          For LGA: { "LGA/34860": [roma_town, wallumbilla_town] }
+        """
         session = requests.Session()
         session.headers.update(HEADERS)
 
-        # Step 1: Select collection → get udqctl_id
+        # Step 1: select collection
         udqctl_id = self._select_collection(session, cfg["id"])
         if not udqctl_id:
             raise RuntimeError(f"Failed to get udqctl_id for collection {cfg['id']}")
         self.log.info(f"    udqctl_id={udqctl_id}")
 
-        # Step 2: Get available series, match, select
-        available_series = self._get_available_series(session, udqctl_id)
-        matched_series   = self._match_series(cfg["series"], available_series)
-        if not matched_series:
+        # Step 2: series — get available, match exact names, select
+        avail_series  = self._get_options(session, "QIS1110W$UDQSER.ProcessSeries",
+                                          udqctl_id, "infoser.htm", "p_new_multi")
+        self.log.info(f"    Available series: {avail_series}")
+        matched = self._match_series(cfg["series"], avail_series)
+        if not matched:
             raise RuntimeError(f"No series matched for collection {cfg['id']}")
-        self._select_series(session, udqctl_id, matched_series)
-        self.log.info(f"    Series selected: {matched_series}")
+        self._select_series(session, udqctl_id, matched)
+        self.log.info(f"    Series selected: {matched}")
 
-        # Step 3: Set time period
-        self._set_time_period(session, udqctl_id, cfg["id"], cfg["from_date"], cfg["to_date"])
+        # Step 3: time period
+        self._set_time_period(session, udqctl_id, cfg["id"], cfg)
 
-        # Step 4: Select SA2 region type
-        self._select_region_type(session, udqctl_id)
+        # Step 4: region type
+        # Determine which region type to select based on region codes
+        # For mixed SA2+LGA approvals, select both types
+        # Check if region_map contains LGA codes (for Toowoomba approvals)
+        has_lga = any(str(k).startswith("LGA/") for k in region_map)
+        has_sa2 = any(not str(k).startswith("LGA/") for k in region_map)
+        geo_label = "SA2 - Statistical Area Level 2"  # default
+        if has_sa2:
+            self._select_region_type(session, udqctl_id, "SA2 - Statistical Area Level 2")
+        if has_lga:
+            self._select_region_type(session, udqctl_id, "LGA - Local Government Area")
 
-        # Step 5: Get available regions, match our SA2s, select
-        available_regions = self._get_available_regions(session, udqctl_id)
-        matched_regions   = self._match_regions(town_sa2_map, available_regions)
+        # Step 5: regions
+        avail_regions   = self._get_options(session, "QIS1110W$UDQREG.ProcessRegions",
+                                            udqctl_id, "inforeg.htm", "p_new_multi")
+        matched_regions = self._match_regions(region_map, avail_regions, cfg["geo"])
         if not matched_regions:
-            raise RuntimeError("No SA2 regions matched in QRSIS region list")
+            raise RuntimeError(f"No {cfg['geo']} regions matched in QRSIS region list")
         self._select_regions(session, udqctl_id, matched_regions)
         self.log.info(f"    Regions selected: {len(matched_regions)}")
 
-        # Step 6: Submit and parse
+        # Step 6: submit
         html = self._submit_report(session, udqctl_id, cfg["id"])
-        if not html:
-            raise RuntimeError("Empty output from QRSIS report")
+        raw  = self._parse_output_html(html)
+        self.log.info(f"    Parsed data for {len(raw)} regions")
 
-        raw = self._parse_output_html(html)
-        self.log.info(f"    Parsed data for {len(raw)} SA2 regions")
-
-        return self._aggregate(coll_key, matched_series, raw, town_sa2_map)
+        return self._aggregate(coll_key, matched, raw, region_map, cfg["geo"])
 
     # ── QRSIS wizard steps ───────────────────────────────────────────────────────
 
-    def _select_collection(self, session: requests.Session, coll_id: str) -> Optional[str]:
-        """Step 1: POST to ProcessCollection, extract udqctl_id."""
+    def _select_collection(self, session, coll_id) -> Optional[str]:
         resp = session.post(
             BASE_URL + "QIS1110W$COLL.ProcessCollection",
-            data={
-                "p_names":  ["usr_id",    "access_lvl",  "coll_id", "collgrp_id", "sel_coll_name", "op_mode"],
-                "p_values": [PUBLIC_USER, ACCESS_LEVEL,  "",        COLLGRP_ID,   coll_id,          "Next"],
-            },
-            timeout=30,
-            allow_redirects=True,
+            data=_q("usr_id", PUBLIC_USER, "access_lvl", ACCESS_LEVEL,
+                    "coll_id", "", "collgrp_id", COLLGRP_ID,
+                    "sel_coll_name", coll_id, "op_mode", "Next"),
+            timeout=30, allow_redirects=True,
         )
         resp.raise_for_status()
         return self._extract_udqctl_id(resp.url, resp.text)
 
-    def _get_available_series(self, session: requests.Session, udqctl_id: str) -> list[str]:
-        """Step 2a: GET series page, return available option texts."""
+    def _get_options(self, session, proc, udqctl_id, info_page, select_name) -> list[str]:
+        """GET a QRSIS page and return the options from the named select."""
         resp = session.get(
-            BASE_URL + "QIS1110W$UDQSER.ProcessSeries",
-            params=[
-                ("p_names",  "op_mode"),    ("p_values", "VIEW"),
-                ("p_names",  "info_page"),  ("p_values", "infoser.htm"),
-                ("p_names",  "udqctl_id"),  ("p_values", udqctl_id),
-                ("p_names",  "error_msg"),  ("p_values", ""),
-            ],
+            BASE_URL + proc,
+            params=_q("op_mode", "VIEW", "info_page", info_page,
+                      "udqctl_id", udqctl_id, "error_msg", ""),
             timeout=30,
         )
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for sel in soup.find_all("select", {"name": "p_new_multi"}):
-            return [opt.get_text(strip=True) for opt in sel.find_all("option") if opt.get_text(strip=True)]
-        return []
+        return _parse_options(resp.text, select_name)
 
     def _match_series(self, wanted: list[str], available: list[str]) -> list[str]:
-        """Match wanted series against available, with rent fallbacks."""
         matched = []
         for want in wanted:
             if want in available:
                 matched.append(want)
-                continue
-            # Rent fallbacks
-            candidates = RENT_SERIES_CANDIDATES if "rent" in want.lower() or "bedroom" in want.lower() else []
-            found = False
-            for fb in candidates:
-                if fb in available:
-                    self.log.warning(f"    Series fallback: '{want}' → '{fb}'")
-                    matched.append(fb)
-                    found = True
-                    break
-            if not found:
-                # Loose partial match on first 25 chars
-                prefix = want[:25].lower()
-                for avail in available:
-                    if prefix in avail.lower():
-                        self.log.warning(f"    Series partial match: '{want}' → '{avail}'")
-                        matched.append(avail)
-                        found = True
-                        break
-            if not found:
-                self.log.error(f"    Series not found: '{want}'  Available (first 5): {available[:5]}")
+            else:
+                self.log.error(f"    Series not found: '{want}'")
+                self.log.error(f"    Available: {available}")
         return matched
 
-    def _select_series(self, session: requests.Session, udqctl_id: str, series: list[str]):
-        """Step 2b: Move each series to Selected, then click Next."""
+    def _select_series(self, session, udqctl_id, series):
         for s in series:
             session.post(
                 BASE_URL + "QIS1110W$UDQSER.ProcessActions",
-                data={
-                    "p_names":     ["udqctl_id", "info_page",   "error_msg", "op_mode"],
-                    "p_values":    [udqctl_id,   "infoser.htm", "",          "->"],
-                    "p_new_multi": s,
-                },
+                data=_q("udqctl_id", udqctl_id, "info_page", "infoser.htm",
+                        "error_msg", "", "op_mode", "->") + [("p_new_multi", s)],
                 timeout=30,
             )
             time.sleep(0.2)
-        # Next
         session.post(
             BASE_URL + "QIS1110W$UDQSER.ProcessActions",
-            data={
-                "p_names":  ["udqctl_id", "info_page",   "error_msg", "op_mode"],
-                "p_values": [udqctl_id,   "infoser.htm", "",          "Next"],
-            },
+            data=_q("udqctl_id", udqctl_id, "info_page", "infoser.htm",
+                    "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
 
-    def _set_time_period(
-        self, session: requests.Session, udqctl_id: str, coll_id: str, from_date: str, to_date: str
-    ):
-        """Step 3: POST time period selection."""
-        session.post(
-            BASE_URL + "QIS1110W$UDQCTL.ProcessActions",
-            data={
-                "p_names":  ["udqctl_id", "coll_id", "error_msg", "date_format", "period",    "p_concorded_data", "from_date", "to_date"],
-                "p_values": [udqctl_id,   coll_id,   "",          "Y1",          "Quarterly", "N",                from_date,   to_date],
-                "p_op_mode": "Next",
-            },
-            timeout=30,
-        )
+    def _set_time_period(self, session, udqctl_id, coll_id, cfg):
+        from_date  = cfg["from_date"]
+        to_date    = cfg["to_date"]
+        period     = cfg.get("period", "Quarterly")
+        date_fmt   = cfg.get("date_fmt", "Y1")
+        concorded  = cfg.get("concorded", "N")
+        data = _q("udqctl_id", udqctl_id, "coll_id", coll_id, "error_msg", "",
+                  "date_format", date_fmt, "period", period,
+                  "from_date", from_date, "to_date", to_date)
+        # concorded data: sales/rent use hidden field "N", approvals use checkbox "Y"
+        if concorded == "Y":
+            data.append(("p_concorded_data", "Y"))
+        data.append(("p_op_mode", "Next"))
+        session.post(BASE_URL + "QIS1110W$UDQCTL.ProcessActions", data=data, timeout=30)
 
-    def _select_region_type(self, session: requests.Session, udqctl_id: str):
-        """Step 4: Move SA2 to selected region type, then Next."""
+    def _select_region_type(self, session, udqctl_id, geo_label):
         session.post(
             BASE_URL + "QIS1110W$REGTYP.ProcessRegType",
-            data={
-                "p_names":  ["udqctl_id", "op_mode"],
-                "p_values": [udqctl_id,   "->"],
-                "p_multi":  "SA2 - Statistical Area Level 2",
-            },
+            data=_q("udqctl_id", udqctl_id, "op_mode", "->")
+                + [("p_multi", geo_label)],
             timeout=30,
         )
         time.sleep(0.2)
         session.post(
             BASE_URL + "QIS1110W$REGTYP.ProcessRegType",
-            data={
-                "p_names":  ["udqctl_id", "op_mode"],
-                "p_values": [udqctl_id,   "Next"],
-            },
+            data=_q("udqctl_id", udqctl_id, "op_mode", "Next"),
             timeout=30,
         )
 
-    def _get_available_regions(self, session: requests.Session, udqctl_id: str) -> list[str]:
-        """Step 5a: GET region page, return available option texts."""
-        resp = session.get(
-            BASE_URL + "QIS1110W$UDQREG.ProcessRegions",
-            params=[
-                ("p_names",  "op_mode"),    ("p_values", "VIEW"),
-                ("p_names",  "info_page"),  ("p_values", "inforeg.htm"),
-                ("p_names",  "udqctl_id"),  ("p_values", udqctl_id),
-                ("p_names",  "error_msg"),  ("p_values", ""),
-            ],
-            timeout=30,
-        )
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for sel in soup.find_all("select", {"name": "p_new_multi"}):
-            return [opt.get_text(strip=True) for opt in sel.find_all("option") if opt.get_text(strip=True)]
-        return []
-
-    def _match_regions(self, town_sa2_map: dict, available: list[str]) -> list[str]:
-        """Match SA2 codes against available region strings."""
+    def _match_regions(self, region_map, available, geo) -> list[str]:
+        if available:
+            self.log.info(f"    First available region: {available[0][:80]}")
         matched = []
-        for sa2_code, town in town_sa2_map.items():
-            prefix = f"SA2/{sa2_code}"
+        for code, towns in region_map.items():
+            town_names = [t.name for t in towns] if isinstance(towns, list) else [towns.name]
+            if str(code).startswith("LGA/"):
+                # Already has prefix
+                prefix = str(code)
+            elif geo == "SA3":
+                prefix = f"SA3/{code}"
+            elif geo == "LGA":
+                prefix = code  # already "LGA/NNNNN"
+            else:
+                prefix = f"SA2/{code}"
             hits = [r for r in available if r.startswith(prefix)]
             if hits:
                 matched.extend(hits)
-                self.log.info(f"    Matched {town.name}: {hits[0]}")
+                self.log.info(f"    Matched {'/'.join(town_names)}: {hits[0][:60]}")
             else:
-                self.log.warning(f"    [{town.name}] {prefix} not in QRSIS list")
+                self.log.warning(f"    [{'/'.join(town_names)}] {prefix} not in QRSIS list")
         return matched
 
-    def _select_regions(self, session: requests.Session, udqctl_id: str, regions: list[str]):
-        """Step 5b: Move all regions to Selected at once, then Next."""
+    def _select_regions(self, session, udqctl_id, regions):
         session.post(
             BASE_URL + "QIS1110W$UDQREG.ProcessActions",
-            data={
-                "p_names":     ["udqctl_id", "info_page",   "error_msg", "op_mode"],
-                "p_values":    [udqctl_id,   "inforeg.htm", "",          "->"],
-                "p_new_multi": regions,
-            },
+            data=_q("udqctl_id", udqctl_id, "info_page", "inforeg.htm",
+                    "error_msg", "", "op_mode", "->")
+                + [("p_new_multi", r) for r in regions],
             timeout=60,
         )
         time.sleep(0.5)
         session.post(
             BASE_URL + "QIS1110W$UDQREG.ProcessActions",
-            data={
-                "p_names":  ["udqctl_id", "info_page",   "error_msg", "op_mode"],
-                "p_values": [udqctl_id,   "inforeg.htm", "",          "Next"],
-            },
+            data=_q("udqctl_id", udqctl_id, "info_page", "inforeg.htm",
+                    "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
 
-    def _submit_report(self, session: requests.Session, udqctl_id: str, coll_id: str) -> str:
-        """Step 6: POST report parameters, return output HTML."""
+    def _submit_report(self, session, udqctl_id, coll_id) -> str:
         resp = session.post(
             BASE_URL + "QIS1110W$UDQCTL1.ProcessActions",
-            data={
-                "p_names":  ["udqctl_id", "coll_id", "error_msg", "ser_sort_col", "reg_sort_col",
-                             "display_style",                               "op_mode"],
-                "p_values": [udqctl_id,   coll_id,   "",          "Sort Number",  "Region Code",
-                             "For each Region display Time Period by Series", "QRSIS Query"],
-            },
+            data=_q("udqctl_id", udqctl_id, "coll_id", coll_id, "error_msg", "",
+                    "ser_sort_col", "Sort Number", "reg_sort_col", "Region Code",
+                    "display_style", "For each Region display Time Period by Series",
+                    "op_mode", "QRSIS Query"),
             timeout=120,
         )
         resp.raise_for_status()
@@ -460,17 +441,19 @@ class QGSOHousingFetcher(BaseFetcher):
     # ── Helpers ──────────────────────────────────────────────────────────────────
 
     def _extract_udqctl_id(self, url: str, html: str) -> Optional[str]:
-        """Extract udqctl_id from redirect URL or HTML hidden fields."""
-        for pattern in [
-            r'udqctl_id[=&](\d+)',
-            r'p_udqctl_id[=&](\d+)',
-            r'ProcessSeries[^"\']*udqctl_id[=&](\d+)',
-        ]:
-            m = re.search(pattern, url)
-            if m:
-                return m.group(1)
-        # Fall back to HTML
-        m = re.search(r'VALUE="(\d{3,6})"', html)
+        m = re.search(r'p_names=udqctl_id&p_values=(\d+)', url)
+        if m:
+            return m.group(1)
+        m = re.search(r'[?&]udqctl_id=(\d+)', url)
+        if m:
+            return m.group(1)
+        m = re.search(
+            r'NAME="p_names"\s+VALUE="udqctl_id"[^>]*>.*?NAME="p_values"\s+VALUE="(\d+)"',
+            html, re.IGNORECASE | re.DOTALL
+        )
+        if m:
+            return m.group(1)
+        m = re.search(r'udqctl_id.*?(\d{4,6})', url + html, re.DOTALL)
         if m:
             return m.group(1)
         return None
@@ -479,35 +462,35 @@ class QGSOHousingFetcher(BaseFetcher):
 
     def _parse_output_html(self, html: str) -> dict:
         """
-        Parse QRSIS output HTML into:
-          { sa2_code_str: { period_str: { series_name: float|None } } }
-
-        The output page contains one table per selected SA2, preceded by a
-        "Region : SA2/XXXXXXXXX - Name" heading.
+        Parse QRSIS output HTML. Returns:
+          { region_code: { period: { series_name: float|None } } }
+        Region code is the SA2 number or LGA code (e.g. "307011176" or "LGA/34860")
         """
         result: dict[str, dict] = {}
 
-        # Split on "Region : SA2/" occurrences — each section is one town
-        sections = re.split(r'Region\s*:\s*SA2/', html)
-        for section in sections[1:]:   # skip preamble before first region
-            sa2_match = re.match(r'(\d+)', section)
-            if not sa2_match:
+        # Output has sections like "Region : SA2/307011176 - Roma" or
+        # "Region : LGA/34860 - Maranoa (R)"
+        # Split on "Region :" to get one section per region
+        sections = re.split(r'Region\s*:\s*', html)
+        for section in sections[1:]:
+            # Extract region code — SA2/NNNNN, SA3/NNNNN or LGA/NNNNN
+            m = re.match(r'((?:SA2|SA3|SA4|LGA)/[\w]+)', section)
+            if not m:
                 continue
-            sa2_code = sa2_match.group(1)
+            region_code = m.group(1)
             region_data: dict[str, dict] = {}
 
-            soup = BeautifulSoup(section, "html.parser")
-            table = soup.find("table", attrs={"border": True}) or soup.find("table")
+            soup  = BeautifulSoup(section, "lxml")
+            table = soup.find("table", border=True) or soup.find("table")
             if not table:
-                result[sa2_code] = region_data
+                result[region_code] = region_data
                 continue
 
             rows = table.find_all("tr")
             if not rows:
-                result[sa2_code] = region_data
+                result[region_code] = region_data
                 continue
 
-            # Header: Period | Series1 | Series2 ...
             header_cells = rows[0].find_all(["th", "td"])
             series_names = [c.get_text(strip=True) for c in header_cells[1:]]
 
@@ -518,127 +501,113 @@ class QGSOHousingFetcher(BaseFetcher):
                 period = cells[0].get_text(strip=True)
                 if not period:
                     continue
-                period_data: dict[str, Optional[float]] = {}
+                period_data: dict = {}
                 for i, sname in enumerate(series_names, start=1):
                     if i < len(cells):
                         raw = cells[i].get_text(strip=True).replace(",", "").replace("$", "").strip()
                         try:
                             period_data[sname] = float(raw)
                         except ValueError:
-                            period_data[sname] = None   # suppressed (< 10 sales etc.)
+                            period_data[sname] = None
                 region_data[period] = period_data
 
-            result[sa2_code] = region_data
+            result[region_code] = region_data
 
         return result
 
     # ── Annual aggregation ───────────────────────────────────────────────────────
 
-    def _aggregate(
-        self,
-        coll_key: str,
-        matched_series: list[str],
-        raw: dict,
-        town_sa2_map: dict,
-    ) -> dict[str, dict]:
-        """Aggregate raw period data to annual indicators by town slug."""
+    def _aggregate(self, coll_key, matched_series, raw, region_map, geo) -> dict:
         from config import YEAR_START, YEAR_END
         import statistics as stats
 
         result: dict[str, dict] = {}
 
-        for sa2_code, town in town_sa2_map.items():
-            if sa2_code not in raw:
+        # Build region_code → list of towns
+        for code, towns in region_map.items():
+            if str(code).startswith("LGA/"):
+                region_key = str(code)
+            elif geo == "SA3":
+                region_key = f"SA3/{code}"
+            elif geo == "LGA":
+                region_key = code
+            else:
+                region_key = f"SA2/{code}"
+            periods = raw.get(region_key) or raw.get(code) or {}
+            if not periods:
                 continue
-            periods = raw[sa2_code]
-            slug    = town.slug
 
-            if coll_key == "sales":
-                count_series = "Detached dwelling: number of sales (Number)"
-                price_series = "Detached dwelling: median sale price ($)"
+            town_list = towns if isinstance(towns, list) else [towns]
 
-                # Sales count: Dec-quarter rolling total = calendar year total
-                count_by_year: dict[str, int] = {}
-                for period, vals in periods.items():
-                    if "31 Dec" not in period:
-                        continue
-                    year = self._parse_year(period)
-                    if year and YEAR_START <= year <= YEAR_END:
-                        v = vals.get(count_series)
+            for town in town_list:
+                slug = town.slug
+
+                if coll_key == "sales":
+                    count_yr: dict[str, int] = {}
+                    for period, vals in periods.items():
+                        if "31 Dec" not in period:
+                            continue
+                        yr = self._parse_year(period)
+                        if yr and YEAR_START <= yr <= YEAR_END:
+                            v = vals.get(SERIES_SALES_COUNT)
+                            if v is not None:
+                                count_yr[str(yr)] = int(v)
+
+                    price_yr: dict[str, list] = {}
+                    for period, vals in periods.items():
+                        yr = self._parse_year(period)
+                        if not yr or not (YEAR_START <= yr <= YEAR_END):
+                            continue
+                        v = vals.get(SERIES_SALES_PRICE)
                         if v is not None:
-                            count_by_year[str(year)] = int(v)
+                            price_yr.setdefault(str(yr), []).append(v)
+                    price_annual = {yr: round(stats.mean(vs)) for yr, vs in price_yr.items() if vs}
 
-                # Median price: mean of 4 quarterly medians per year
-                price_by_year: dict[str, list] = {}
-                for period, vals in periods.items():
-                    year = self._parse_year(period)
-                    if not year or not (YEAR_START <= year <= YEAR_END):
-                        continue
-                    v = vals.get(price_series)
-                    if v is not None:
-                        price_by_year.setdefault(str(year), []).append(v)
-                price_annual = {yr: round(stats.mean(vs)) for yr, vs in price_by_year.items() if vs}
+                    result[slug] = {
+                        "housing_sales_count":  count_yr,
+                        "housing_median_price": price_annual,
+                    }
 
-                result[slug] = {
-                    "housing_sales_count":  count_by_year,
-                    "housing_median_price": price_annual,
-                }
+                elif coll_key == "rent":
+                    rent_yr: dict[str, list] = {}
+                    for period, vals in periods.items():
+                        yr = self._parse_year(period)
+                        if not yr or not (YEAR_START <= yr <= YEAR_END):
+                            continue
+                        v = vals.get(SERIES_RENT)
+                        if v is not None:
+                            rent_yr.setdefault(str(yr), []).append(v)
+                    result[slug] = {"rent_3bed_median": {yr: round(stats.mean(vs)) for yr, vs in rent_yr.items() if vs}}
 
-            elif coll_key == "rent":
-                # Find whichever series is present
-                series = None
-                for period_vals in periods.values():
-                    for s in RENT_SERIES_CANDIDATES:
-                        if s in period_vals:
-                            series = s
-                            break
-                    if series:
-                        break
-                if not series and matched_series:
-                    series = matched_series[0]
-
-                rent_by_year: dict[str, list] = {}
-                for period, vals in periods.items():
-                    year = self._parse_year(period)
-                    if not year or not (YEAR_START <= year <= YEAR_END):
-                        continue
-                    v = vals.get(series) if series else None
-                    if v is not None:
-                        rent_by_year.setdefault(str(year), []).append(v)
-                rent_annual = {yr: round(stats.mean(vs)) for yr, vs in rent_by_year.items() if vs}
-
-                result[slug] = {"rent_3bed_median": rent_annual}
-
-            elif coll_key in ("approvals_hist", "approvals_curr"):
-                series = matched_series[0] if matched_series else None
-                approvals_by_year: dict[str, int] = {}
-                for period, vals in periods.items():
-                    parsed = self._parse_month_year(period)
-                    if not parsed:
-                        continue
-                    year, _month = parsed
-                    if not (YEAR_START <= year <= YEAR_END):
-                        continue
-                    v = vals.get(series) if series else None
-                    if v is not None:
-                        approvals_by_year[str(year)] = approvals_by_year.get(str(year), 0) + int(v)
-                result[slug] = {"building_approvals": approvals_by_year}
+                elif coll_key in ("approvals_hist", "approvals_curr"):
+                    app_yr: dict[str, int] = {}
+                    for period, vals in periods.items():
+                        parsed = self._parse_month_year(period)
+                        if not parsed:
+                            continue
+                        yr, _ = parsed
+                        if not (YEAR_START <= yr <= YEAR_END):
+                            continue
+                        v = vals.get(SERIES_APPROVALS)
+                        if v is not None:
+                            app_yr[str(yr)] = app_yr.get(str(yr), 0) + int(v)
+                    # Merge into existing if present (hist + curr)
+                    if slug in result and "building_approvals" in result[slug]:
+                        result[slug]["building_approvals"].update(app_yr)
+                    else:
+                        result.setdefault(slug, {})["building_approvals"] = app_yr
 
         return result
 
     @staticmethod
     def _parse_year(period: str) -> Optional[int]:
-        """Extract year from 'Year Ended 31 Dec 2024' etc."""
         m = re.search(r'\b(20\d{2}|19\d{2})\b', period)
         return int(m.group(1)) if m else None
 
     @staticmethod
     def _parse_month_year(period: str) -> Optional[tuple[int, int]]:
-        """Parse 'Jul 2001' → (2001, 7)."""
-        months = {
-            "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
-            "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
-        }
+        months = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,
+                  "Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
         m = re.match(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})', period.strip())
         return (int(m.group(2)), months[m.group(1)]) if m else None
 
