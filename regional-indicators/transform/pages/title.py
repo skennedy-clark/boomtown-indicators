@@ -18,7 +18,9 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+_BOOKLET_DIR = Path(__file__).resolve().parent.parent
+if str(_BOOKLET_DIR) not in sys.path:
+    sys.path.insert(0, str(_BOOKLET_DIR))
 from common import (
     SHARED_IMG, PURPLE, WHITE, GREY_DARK,
     CONTENT_W_MM,

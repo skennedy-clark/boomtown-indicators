@@ -13,7 +13,9 @@ from docx import Document
 from docx.shared import Pt, Inches, RGBColor, Emu, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+_BOOKLET_DIR = Path(__file__).resolve().parent.parent
+if str(_BOOKLET_DIR) not in sys.path:
+    sys.path.insert(0, str(_BOOKLET_DIR))
 from common import (
     SHARED_IMG, TOWNS_IMG, PURPLE, WHITE, GREY_DARK,
     MARGIN_MM, CONTENT_W_MM,

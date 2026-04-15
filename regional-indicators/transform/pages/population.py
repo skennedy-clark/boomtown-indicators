@@ -18,7 +18,9 @@ from docx.oxml import OxmlElement
 import json
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+_BOOKLET_DIR = Path(__file__).resolve().parent.parent
+if str(_BOOKLET_DIR) not in sys.path:
+    sys.path.insert(0, str(_BOOKLET_DIR))
 from common import (
     OUTPUT_DIR, REPO_ROOT, PURPLE, TEAL, WHITE, GREY_DARK, GREY_LIGHT,
     HEX_PURPLE, HEX_TEAL, HEX_WHITE, HEX_GREY_LIGHT, HEX_GREY_MED,

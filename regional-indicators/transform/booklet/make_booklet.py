@@ -29,9 +29,13 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.enum.section import WD_ORIENTATION
 
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT  = SCRIPT_DIR.parent.parent
-sys.path.insert(0, str(SCRIPT_DIR))
+
+# Ensure the booklet directory is on sys.path so 'common' and 'pages'
+# are importable regardless of which directory the script is run from.
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from common import BOOKLETS, MARGIN_MM
 from pages.cover      import build_cover_page
