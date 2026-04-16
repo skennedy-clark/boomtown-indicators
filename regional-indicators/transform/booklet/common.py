@@ -67,10 +67,15 @@ def add_para(doc, text, size_pt, bold=False, italic=False, colour=None,
     return p
 
 def add_spacer(doc, points=12):
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(0)
-    p.paragraph_format.line_spacing = Pt(points)
+    """Fixed-height blank paragraph. Uses EXACT line spacing to prevent
+    Word's default 'Multiple 1.08' style from inflating the height."""
+    from docx.enum.text import WD_LINE_SPACING
+    p  = doc.add_paragraph()
+    pf = p.paragraph_format
+    pf.space_before      = Pt(0)
+    pf.space_after       = Pt(0)
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing      = Pt(points)
     return p
 
 # ── Table helpers ──────────────────────────────────────────────────────────────

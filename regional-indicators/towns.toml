@@ -33,6 +33,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Roma and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-roma.pdf"
 notes            = "UCL and SA2 boundaries are the same for Roma"
 
 [towns.chinchilla]
@@ -52,6 +53,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Chinchilla and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-chinchilla.pdf"
 notes            = "SA2 renumbered and moved to SA3 30701 in ASGS 2021 restructure"
 
 [towns.dalby]
@@ -71,6 +73,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Dalby and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-wambo.pdf"
 notes            = "Dalby has no SA2-level SALM entry; Wambo (307021183) used as proxy. Flag in outputs."
 
 [towns.miles]
@@ -90,6 +93,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Miles and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-miles-wandoan.pdf"
 notes            = "SA2 renamed Miles - Wandoan in ASGS 2021; Wandoan shares this SA2"
 
 [towns.tara]
@@ -109,6 +113,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Tara and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-tara.pdf"
 notes            = "BOM station changed from 42104 (Woodlea, not in SILO) to 41099 (Tara Township). Data continuity not verified."
 
 [towns.wandoan]
@@ -128,6 +133,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Wandoan and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-miles-wandoan.pdf"
 notes            = "Wandoan merged into Miles - Wandoan (307011175) in ASGS 2021. Shares SA2 data with Miles."
 
 [towns.wallumbilla]
@@ -147,6 +153,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Wallumbilla and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-roma-surrounds.pdf"
 notes            = "WARNING: sa2_code 307011178 may be incorrect (= Tara). qgso_sa2 set to Roma (307011176). Verify before publishing. BOM station 43043 has >10% synthetic data 2009-2014."
 
 [towns.goondiwindi]
@@ -166,6 +173,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Goondiwindi and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-goondiwindi.pdf"
 notes            = "BOM station changed to 41038 (Post Office). Stations 41507 and 41559 (used in prior booklets) not in SILO."
 
 [towns.moranbah]
@@ -185,6 +193,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Moranbah and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-moranbah.pdf"
 notes            = "BOM station changed to 34038 (WTP). Station 34035 (Airport, used in prior booklets) not in SILO."
 
 [towns.dysart]
@@ -204,6 +213,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Dysart and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-broadsound-nebo.pdf"
 notes            = "Dysart absorbed into Broadsound - Nebo (312011338) in ASGS 2021. Unemployment figures cover a wide rural area. Flag in outputs."
 
 [towns.toowoomba]
@@ -223,6 +233,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Toowoomba and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-toowoomba-central.pdf"
 notes            = "Multiple SA2s cover Toowoomba; sa2_code set to Central as primary. Building approvals use LGA/36910 boundary."
 
 [towns.toowoomba_central]
@@ -242,6 +253,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Toowoomba (Central) and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-toowoomba-central.pdf"
 notes            = "Central/CBD SA2 sub-area of Toowoomba"
 
 [towns.toowoomba_harlaxton]
@@ -261,6 +273,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Toowoomba (Harlaxton) and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-north-toowoomba-harlaxton.pdf"
 notes            = "North Toowoomba / Harlaxton SA2 sub-area"
 
 [towns.toowoomba_west]
@@ -280,6 +293,7 @@ csg_notice_year  = 2009
 benchmark        = false
 district         = "Toowoomba (West) and District"
 cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-toowoomba-west.pdf"
 notes            = "West Toowoomba SA2 sub-area"
 
 
