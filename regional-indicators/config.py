@@ -120,7 +120,11 @@ class Config:
 
     def _load_towns(self, raw: dict) -> list[Town]:
         towns = []
-        for t in raw.get("towns", []):
+        # towns.toml uses [towns.slug] dict-of-tables syntax, so raw["towns"]
+        # parses to {"roma": {...}, "chinchilla": {...}, ...} -- iterate
+        # .values() for the per-town dicts, not the dict itself (which
+        # would just yield the slug strings, e.g. "roma", "chinchilla").
+        for t in raw.get("towns", {}).values():
             towns.append(Town(
                 name            = t["name"],
                 state           = t["state"],
