@@ -1,0 +1,42 @@
+[project]
+name = "boomtown-indicators"
+version = "0.1.0"
+description = "Data pipeline for the UQ Centre for Natural Gas regional indicators project"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "beautifulsoup4",
+    "pandas",
+    "openpyxl",
+    "lxml",
+    "pypdfium2",
+    "Pillow",
+    "python-docx",
+    "tomli; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "pytest-mock",
+    "responses",
+]
+geo = [
+    "duckdb",
+]
+
+# NOTE: this intentionally does NOT declare a [build-system] / packaging table
+# yet. The regional-indicators/ folder is not currently an importable package
+# (hyphens aren't valid in a Python package name) -- fetchers/base.py adds it
+# to sys.path directly instead. Renaming it to regional_indicators/ and making
+# this a proper installable package (pip install -e .) is on TODO.md under
+# Infrastructure. Until then, this file's job is just: pin dependencies in one
+# place, and configure pytest below.
+
+[tool.pytest.ini_options]
+# Lets tests do `from config import get_config` etc, the same way the
+# fetchers themselves import, without duplicating a sys.path hack in every
+# test file.
+pythonpath = ["regional-indicators"]
+testpaths = ["tests"]
