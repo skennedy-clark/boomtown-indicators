@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fetchers.base import BaseFetcher
+from fetchers.ato_release import discover_latest_ato_release
 
 try:
     import pandas as pd
@@ -43,15 +44,6 @@ except ImportError:
 
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-
-LATEST_YEAR  = "2022-23"
-
-# data.gov.au dataset slugs by year — update when ATO publishes new year
-DATASET_SLUGS = {
-    "2022-23": "taxation-statistics-2022-23",
-    "2021-22": "taxation-statistics-2021-22",
-    "2020-21": "taxation-statistics-2020-21",
-}
 
 # CKAN API endpoint — note: data.gov.au uses /data/api/ not /api/
 CKAN_API = "https://data.gov.au/data/api/3/action/package_show?id={slug}"
@@ -67,11 +59,19 @@ class ATOIncomeFetcher(BaseFetcher):
     SUPPORTED_STATES = []   # ATO covers all states
 
     def fetch_all(self):
-        year = LATEST_YEAR
-        slug = DATASET_SLUGS.get(year)
-        if not slug:
-            self.result.add_error("ALL", f"No dataset slug configured for year {year}")
+        try:
+            release = discover_latest_ato_release()
+        except RuntimeError as exc:
+            self.result.add_error("ALL", str(exc))
             return
+
+        year = release.financial_year
+        slug = release.slug
+
+        self.log.info(
+            f"Using ATO Taxation Statistics {year} "
+            f"(package modified {release.modified or 'unknown'})"
+        )
 
         # ── Step 1: Resolve Table 8 URL via CKAN API ──────────────────────────
         t8_url = self._find_table8_url(slug, year)

@@ -188,7 +188,7 @@ def main():
     try:
         config = get_config()
         log.info(f"Loaded: {config}")
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, TypeError) as exc:
         log.error(f"Config error: {exc}")
         sys.exit(1)
 
@@ -246,7 +246,7 @@ def main():
         log.info(f"{'─' * 40}")
 
         try:
-            fetcher = FetcherClass()
+            fetcher = FetcherClass(force=args.force)
 
             # Apply --towns filter if specified
             if args.towns:

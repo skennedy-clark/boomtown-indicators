@@ -132,7 +132,7 @@ class BOMRainfallFetcher(BaseFetcher):
         station    = str(town.bom_station)
         cache_path = CACHE_DIR / f"silo_rainfall_{station}.csv"
 
-        if not cache_path.exists() or getattr(self, '_force', False):
+        if not cache_path.exists() or self.force:
             ok, used_station = self._download_station(station, cache_path, town.name, email)
             if not ok:
                 # Try SILO name search for an alternative station number

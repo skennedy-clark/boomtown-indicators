@@ -88,9 +88,10 @@ class BaseFetcher(ABC):
     SOURCE_NAME:      str       = "base"
     SUPPORTED_STATES: list[str] = []   # empty = all states
 
-    def __init__(self):
+    def __init__(self, force: bool = False):
         self.config: Config     = get_config()
         self.cache:  CacheIndex = get_cache()
+        self.force:  bool       = force
         self.log = get_child_logger("regional-indicators", self.SOURCE_NAME)
         self.result = FetchResult(source=self.SOURCE_NAME, success=False)
 
@@ -156,7 +157,7 @@ class BaseFetcher(ABC):
         """
         import requests
 
-        if not force and self.is_cached(cache_key):
+        if not force and not self.force and self.is_cached(cache_key):
             path = self.cache.get_path(cache_key)
             self.log.debug(f"Cache hit: {cache_key} → {path}")
             return path

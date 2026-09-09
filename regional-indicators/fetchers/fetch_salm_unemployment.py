@@ -102,7 +102,7 @@ class SALMUnemploymentFetcher(BaseFetcher):
         """Download with browser User-Agent to bypass bot detection."""
         from config import CACHE_DIR
         out_path = CACHE_DIR / f"{cache_key}.csv"
-        if out_path.exists() and not getattr(self, '_force', False):
+        if out_path.exists() and not self.force:
             self.log.info(f"  Using cached: {out_path.name}")
             return out_path
         try:

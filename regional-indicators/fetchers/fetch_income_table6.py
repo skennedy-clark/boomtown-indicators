@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fetchers.base import BaseFetcher
+from fetchers.ato_release import discover_latest_ato_release
 
 try:
     import openpyxl
@@ -45,10 +46,6 @@ except ImportError:
     raise ImportError("pip install openpyxl requests")
 
 
-LATEST_YEAR   = "2022-23"
-DATASET_SLUGS = {
-    "2022-23": "taxation-statistics-2022-23",
-}
 CKAN_API = "https://data.gov.au/data/api/3/action/package_show"
 
 
@@ -69,11 +66,19 @@ class ATOTable6Fetcher(BaseFetcher):
     SUPPORTED_STATES = []
 
     def fetch_all(self):
-        year = LATEST_YEAR
-        slug = DATASET_SLUGS.get(year)
-        if not slug:
-            self.log.error(f"No dataset slug for year {year}")
+        try:
+            release = discover_latest_ato_release()
+        except RuntimeError as exc:
+            self.result.add_error("ALL", str(exc))
             return
+
+        year = release.financial_year
+        slug = release.slug
+
+        self.log.info(
+            f"Using ATO Taxation Statistics {year} "
+            f"(package modified {release.modified or 'unknown'})"
+        )
 
         try:
             resp = requests.get(CKAN_API, params={"id": slug}, timeout=30)

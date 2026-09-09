@@ -119,25 +119,69 @@ class Config:
     # ── Loading ────────────────────────────────────────────────────────────────
 
     def _load_towns(self, raw: dict) -> list[Town]:
-        towns = []
-        for t in raw.get("towns", []):
-            towns.append(Town(
-                name            = t["name"],
-                state           = t["state"],
-                postcode        = t.get("postcode", ""),
-                postcodes       = t.get("postcodes", []),
-                sa2_code        = t.get("sa2_code", ""),
-                sa2_name        = t.get("sa2_name", ""),
-                sa3_code        = t.get("sa3_code", ""),
-                lga             = t.get("lga", ""),
-                qps_division    = t.get("qps_division", ""),
-                qgso_sa2        = t.get("qgso_sa2", ""),
-                qgso_lga        = t.get("qgso_lga", ""),
-                bom_station     = t.get("bom_station", ""),
-                csg_notice_year = t.get("csg_notice_year", 0),
-                benchmark       = t.get("benchmark", False),
-                notes           = t.get("notes", ""),
-            ))
+        raw_towns = raw.get("towns", {})
+
+        # Support the current TOML structure:
+        #
+        # [towns.roma]
+        # name = "Roma"
+        #
+        # tomllib loads this as a dictionary keyed by "roma".
+        if isinstance(raw_towns, dict):
+            town_records = raw_towns.items()
+
+        # Also tolerate an array-of-tables structure if one is used later:
+        #
+        # [[towns]]
+        # name = "Roma"
+        elif isinstance(raw_towns, list):
+            town_records = (
+                (f"entry_{index}", town)
+                for index, town in enumerate(raw_towns)
+            )
+
+        else:
+            raise TypeError(
+                "'towns' in towns.toml must be either a table of named towns "
+                "or an array of town tables"
+            )
+
+        towns: list[Town] = []
+
+        for config_key, t in town_records:
+            if not isinstance(t, dict):
+                raise TypeError(
+                    f"Town '{config_key}' must be a TOML table, "
+                    f"but found {type(t).__name__}"
+                )
+
+            try:
+                town = Town(
+                    name=t["name"],
+                    state=t["state"],
+                    postcode=t.get("postcode", ""),
+                    postcodes=t.get("postcodes", []),
+                    sa2_code=t.get("sa2_code", ""),
+                    sa2_name=t.get("sa2_name", ""),
+                    sa3_code=t.get("sa3_code", ""),
+                    lga=t.get("lga", ""),
+                    qps_division=t.get("qps_division", ""),
+                    qgso_sa2=t.get("qgso_sa2", ""),
+                    qgso_lga=t.get("qgso_lga", ""),
+                    bom_station=t.get("bom_station", ""),
+                    csg_notice_year=t.get("csg_notice_year", 0),
+                    benchmark=t.get("benchmark", False),
+                    notes=t.get("notes", ""),
+                )
+            except KeyError as exc:
+                missing_field = exc.args[0]
+                raise ValueError(
+                    f"Town '{config_key}' is missing required field "
+                    f"'{missing_field}'"
+                ) from exc
+
+            towns.append(town)
+
         return towns
 
     def _load_sources(self, raw: dict) -> dict[str, SourceConfig]:
