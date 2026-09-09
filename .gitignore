@@ -57,5 +57,13 @@ desktop.ini
 *.xlsx
 *.xls
 *.csv
+assemble_maps/**/*.shp
+assemble_maps/**/*.shx
+assemble_maps/**/*.dbf
+assemble_maps/**/*.prj
+assemble_maps/**/*.sbn
+assemble_maps/**/*.sbx
+assemble_maps/**/*.cpg
+assemble_maps/**/*.shp.xml
 # Exception: towns.toml config IS committed — it's source, not data
 !towns.toml
