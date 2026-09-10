@@ -110,33 +110,144 @@ verification standard as the QLD tenure ArcGIS service.
       for towns with less documented history
 
 - [ ] **Connects to `csg_notice_year`:** `Town` in `config.py` already has
-      a `csg_notice_year` field (currently set by hand in `towns.toml`),
-      which presumably drives the vertical "CSG activity started" line
-      already present on many of the workbook's charts. Once the borehole
-      spatial-join method above is confirmed for a town, the natural next
-      step is treating its output as a *candidate* value for
-      `csg_notice_year` — worth deciding whether it replaces the manual
-      entry outright or is surfaced as a suggestion for someone to confirm
-      (Steve: you cut off mid-thought here — "looking at borehole
-      activities in ___" — worth finishing that when you're back at it,
-      in case there's a specific dataset/scope in mind beyond what's
-      already listed above)
+      a `csg_notice_year` field, currently set by hand in `towns.toml` —
+      **decision: leave it manual for now.** Revisit borehole-based
+      automation only once Extension 2/3 (QLD-wide, then Australia-wide
+      spatial work) is actually underway, not before — no point building
+      the detection method against one town's worth of context when the
+      whole point of doing it is to scale past hand-entry.
 
 ## XLSX data/chart update (Extension 1, item e — current MVP target)
+**MVP milestone reached (2026-09-10):** first real, live, end-to-end run —
+`update_population_ucl.py` against the real 2025→2026 workbook, all 11
+towns with UCL cache data updated correctly (Chinchilla, Dalby, Dysart,
+Goondiwindi, Miles, Moranbah, Roma, Tara, Toowoomba, Wallumbilla, Wandoan).
+**UPDATE: the openpyxl-produced file was found to be corrupted (see
+below) — pivoted to xlwings (Excel COM automation), re-confirmed working
+on real data with no repair prompt on 2026-09-10. Milestone genuinely
+reached.**
+
 Goal per project_proposal.md: idempotently update Indicators_Data-Charts.xlsx
 starting from last year's file, one indicator at a time. Two separate
 sub-problems, deliberately sequenced:
 
-- [x] **Data-writing, stage 1:** `update_indicator_value()` prototyped and
+- [x] **Data-writing, stage 1 (openpyxl version — SUPERSEDED, see critical
+      finding below):** `update_indicator_value()` prototyped and
       tested against the real workbook structure — finds (town, indicator,
       year) cell, overwrites in place if the year column exists, appends a
       new year column (both header rows) if it doesn't. Confirmed idempotent
       (repeat calls don't duplicate columns) and confirmed all 227 charts
       across every sheet survive a save unchanged. Not yet wired to real
       fetcher output — currently tested with hand-supplied values only.
-- [ ] Wire `update_indicator_value()` to actual fetcher/to_csv output for a
-      first real indicator (Population ERP is the natural pilot — already
-      has a working fetcher and the cell layout is mapped)
+- [x] **CRITICAL FINDING — openpyxl corrupts this workbook, confirmed
+      unrecoverable.** Real run against the real workbook produced a file
+      Excel flagged as needing repair — and Excel's own repair failed to
+      open it at all. Diffing raw OOXML parts (before/after) confirmed
+      real, permanent data loss on every openpyxl save: all 231 charts'
+      style/colour XML, external links, threaded comments + author
+      metadata (downgraded to legacy comments), custom XML parts, an
+      embedded image, printer settings. This is a documented openpyxl
+      limitation, not fixable by patching around individual parts.
+      **Decision: openpyxl is retired for this task entirely.**
+      `base_openpyxl_DEPRECATED.py` kept for reference only — do not use
+      it against the real workbook.
+- [x] **Pivoted to xlwings (Excel COM automation)** — `base.py` and
+      `update_population_ucl.py` rewritten to drive real Excel directly
+      rather than reconstruct the file, which structurally eliminates
+      this entire class of problem (Excel saves its own file the way it
+      always does; nothing is reconstructed by a third party). Every
+      xlwings API call used was confirmed to genuinely exist in the
+      library.
+- [x] **CONFIRMED WORKING on real data (2026-09-10).** Ran against a
+      real workbook copy with `--visible`: all 11 towns updated
+      correctly, file reopened cleanly afterward with **no repair
+      prompt** — the thing that failed under openpyxl. This is the real
+      MVP milestone, now genuinely reached (not just the logic — the
+      actual file).
+- [x] **Formatting bug found and fixed:** a newly-written value inherited
+      a percentage format from an adjacent cell (Excel's own behaviour,
+      not an xlwings bug) — at least one town's population figure showed
+      as a percentage instead of a plain number. Fixed by explicitly
+      setting `number_format = "General"` on every cell written,
+      including the two header cells created for a brand-new year
+      column — relying on whatever format Excel happens to carry over
+      isn't safe.
+- [ ] Once xlwings is confirmed working: revisit performance at full
+      scale (17 towns × multiple indicators × multiple sheets) — COM
+      calls are slower than openpyxl's in-memory model even with the
+      bulk-range-read optimisation already applied; worth timing a real
+      full run before assuming it's fast enough for comfortable everyday
+      use, especially by a future non-technical user running this
+      unattended.
+- [ ] `docs/manual_processes.md` / the eventual non-technical runbook
+      needs "Excel must be installed and closed before running this" as
+      an explicit prerequisite — xlwings drives a real Excel process,
+      which is a meaningfully different requirement than a pure-Python
+      script, and worth stating plainly for someone who isn't
+      technical.
+- [x] **Critical finding — sheet has THREE parallel geography sections
+      (LGA / SA2 / UCL), not one flat structure.** Confirmed by Steve
+      reading column A directly: each section can contain a town of the
+      SAME name with the SAME indicator name — `Population (ERP)` exists
+      under both LGA and SA2 for Goondiwindi, with genuinely different
+      values (LGA=10,219 vs SA2=5,873, a 42% difference). The old
+      `_find_town_indicator_row` returned the first match found, which
+      would have silently picked an arbitrary geography level with zero
+      warning. **Fixed:** now scans the whole sheet and raises a clear
+      "AMBIGUOUS" error naming every matching row when more than one
+      match exists, instead of guessing. Confirmed via real test: raises
+      correctly on the Goondiwindi collision, and the already-working UCL
+      matches (unique indicator name, no collision) are unaffected.
+- [ ] **Still needed — proper `section` parameter.** The current fix
+      converts silent-wrong-answer into loud-error, which is the right
+      immediate safety net, but it doesn't let you actually WRITE to
+      Goondiwindi's LGA or SA2 row — every ambiguous case currently just
+      stops. Real fix: `update_indicator_value(..., section="SA2")` (or
+      LGA/UCL) as an explicit, required disambiguator whenever a sheet
+      has multiple sections, scanning section-by-section rather than
+      whole-sheet.
+- [ ] **Name-mapping gap found in the same read-through:** the SA2
+      section's row labels are actual ABS SA2 names, which don't map 1:1
+      onto `Town.name` in towns.toml. Concretely: `Toowoomba (Central)` /
+      `(Harlaxton)` / `(West)` in towns.toml need to match `"Toowoomba -
+      Central"`, `"North Toowoomba - Harlaxton"`, `"Toowoomba - West"` in
+      the sheet — different strings entirely. Also `"Miles-Wandoan"` is a
+      single shared SA2 row covering both the Miles and Wandoan towns —
+      a genuine one-SA2-to-two-towns case, not a bug, but something the
+      eventual SA2 ERP fetcher/wiring needs to know about explicitly.
+      Worth checking whether `Town.sa2_name` in config.py already holds
+      the correct SA2 label for this mapping before building anything new
+      — it may already solve this.
+- [ ] `fetch_population_erp.py` scope needs revisiting given all of the
+      above — it's not just NSW/VIC towns (as currently scoped in
+      Fetchers section), every QLD study town needs it too for the main
+      `Population (ERP)` row, and it needs both LGA and SA2 variants
+      depending on town, with the section-parameter and name-mapping work
+      above as prerequisites before this can be wired up safely
+- [ ] **Handling genuinely-new rows — DEPRIORITISED.** Confirmed by
+      comparing the real 2025 vs 2026 workbooks that row/column counts
+      shift year to year, so this is real, but **explicitly not the
+      current job.** Steve's priority: update existing towns/indicators
+      with one more year of data, no new rows, no new towns — that's the
+      whole of what "updating the workbook" needs to do right now.
+      Revisit only once the update-existing-data path is solid and in
+      regular use.
+- [ ] **Non-technical runbook — ELEVATED to a first-class requirement,
+      not an afterthought.** The real continuity risk: Steve may not be
+      at the workplace next year, and someone non-technical or only
+      moderately technical needs to be able to follow a written recipe to
+      update the xlsx (manual process currently takes many 10s of hours).
+      This means "the code works" is not sufficient on its own — a
+      plain-language, step-by-step document (not a developer README) is
+      an equally required deliverable alongside the update tooling itself,
+      not something to write up afterward once the code is "done."
+- [ ] **Validated against the real 2025 file, not just synthetic test
+      data:** `update_population_ucl.py` (fixed `xlsx_update.base` import)
+      ran successfully against the actual uploaded `Indicators_Data-
+      Charts_2025.xlsx`, correctly wrote Chinchilla and Toowoomba's 2025
+      UCL values, and all charts (including this file's known-messier
+      ones — Toowoomba has one fewer chart than the 2026 version) survived
+      unchanged.
 - [ ] Repeat for a small set of indicators across sheets (Income, Crime,
       Housing) to confirm the row-finding logic generalises — the "town
       name row has empty column B" heuristic for locating blocks needs
