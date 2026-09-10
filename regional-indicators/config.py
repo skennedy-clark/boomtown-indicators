@@ -119,28 +119,15 @@ class Config:
     # ── Loading ────────────────────────────────────────────────────────────────
 
     def _load_towns(self, raw: dict) -> list[Town]:
-<<<<<<< HEAD
         raw_towns = raw.get("towns", {})
 
-        # Support the current TOML structure:
-        #
-        # [towns.roma]
-        # name = "Roma"
-        #
-        # tomllib loads this as a dictionary keyed by "roma".
         if isinstance(raw_towns, dict):
             town_records = raw_towns.items()
-
-        # Also tolerate an array-of-tables structure if one is used later:
-        #
-        # [[towns]]
-        # name = "Roma"
         elif isinstance(raw_towns, list):
             town_records = (
                 (f"entry_{index}", town)
                 for index, town in enumerate(raw_towns)
             )
-
         else:
             raise TypeError(
                 "'towns' in towns.toml must be either a table of named towns "
@@ -183,31 +170,6 @@ class Config:
 
             towns.append(town)
 
-=======
-        towns = []
-        # towns.toml uses [towns.slug] dict-of-tables syntax, so raw["towns"]
-        # parses to {"roma": {...}, "chinchilla": {...}, ...} -- iterate
-        # .values() for the per-town dicts, not the dict itself (which
-        # would just yield the slug strings, e.g. "roma", "chinchilla").
-        for t in raw.get("towns", {}).values():
-            towns.append(Town(
-                name            = t["name"],
-                state           = t["state"],
-                postcode        = t.get("postcode", ""),
-                postcodes       = t.get("postcodes", []),
-                sa2_code        = t.get("sa2_code", ""),
-                sa2_name        = t.get("sa2_name", ""),
-                sa3_code        = t.get("sa3_code", ""),
-                lga             = t.get("lga", ""),
-                qps_division    = t.get("qps_division", ""),
-                qgso_sa2        = t.get("qgso_sa2", ""),
-                qgso_lga        = t.get("qgso_lga", ""),
-                bom_station     = t.get("bom_station", ""),
-                csg_notice_year = t.get("csg_notice_year", 0),
-                benchmark       = t.get("benchmark", False),
-                notes           = t.get("notes", ""),
-            ))
->>>>>>> 9e09e999925363c92c29689d9a1859053bbd54d2
         return towns
 
     def _load_sources(self, raw: dict) -> dict[str, SourceConfig]:
