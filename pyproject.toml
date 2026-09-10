@@ -8,6 +8,10 @@ dependencies = [
     "beautifulsoup4",
     "pandas",
     "openpyxl",
+    "xlwings",  # drives real Excel via COM for xlsx_update/ -- openpyxl was
+                # confirmed to corrupt the real workbook on save (see TODO.md),
+                # so xlwings is required, not optional, for that module.
+                # Requires a real Excel installation (Windows or Mac).
     "lxml",
     "pypdfium2",
     "Pillow",
