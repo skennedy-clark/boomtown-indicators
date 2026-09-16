@@ -158,6 +158,68 @@ _(untriaged — add here, sort later)_
       requires its real source code, not available in the sandbox this
       was investigated in after a reset. Get that file into the next
       session before attempting the live-API build.
+- [x] **Got the real source, fully understood the query mechanism
+      (2026-09-16, same session as above).** `fetch_qgso_housing.py`'s
+      constants: `COLLGRP_ID = "22"` for housing specifically —
+      confirms each subject area has its own group id, and Population's
+      is genuinely unknown. Its `_select_collection()` POSTs a
+      *known* `coll_id` (e.g. `1925`) straight to
+      `QIS1110W$COLL.ProcessCollection` — it never demonstrates how to
+      browse/discover collections within a group; that was presumably
+      done once, manually, the same way originally for housing. No
+      public documentation of QRSIS's internal `collgrp_id`/`coll_id`
+      values exists anywhere searched. **Precise remaining gap:** the
+      `collgrp_id` and `coll_id` for "Population Estimates" / "Population
+      (ERP)(a) persons only". Everything else in the query mechanism
+      (series selection, time period, region matching, submission,
+      output parsing) is already proven working code, directly reusable
+      once those two numbers are known. **Fastest way to get them:**
+      one short devtools session — Network tab, select the collection
+      in the wizard, find the POST to `QIS1110W$COLL.ProcessCollection`,
+      read `collgrp_id` and `coll_id`/`sel_coll_name` from its form
+      data. Full step-by-step given to Steve in chat.
+- [x] **Steve found the real values directly from the live wizard HTML
+      (2026-09-16):** `collgrp_id="1"` (Population group), `coll_id="1961"`
+      ("Population (ERP)(a) persons only", 1991-2025, **ASGS 2021**
+      boundaries — newer than the 2016 ASGS version the earlier catalog
+      index suggested; older ASGS-2016 (id 1298) and ASGS-2011 versions
+      also exist, deliberately not used). `fetch_population_erp.py`
+      rewritten to use these — full live QRSIS query, reusing
+      `fetch_qgso_housing.py`'s exact proven wire format (duplicated for
+      now rather than shared, to avoid risking the working housing
+      fetcher without live-testing capability — worth extracting into a
+      shared module once this one's also confirmed working). Falls back
+      to the manual-file path automatically if the live query fails —
+      though that's now a pure safety net rather than the primary path.
+- [x] **CONFIRMED WORKING LIVE END-TO-END (2026-09-16).** `population_erp`
+      now fully automated, no manual file needed at all. First attempt
+      with guessed `period="Annual"`/bare-year dates failed silently
+      (empty region list, no visible error — a real gap, fixed by adding
+      response logging to the time-period and region-type steps).
+      Corrected hypothesis — ABS ERP is published as-at-30-June, QGSO's
+      own catalog labels the frequency "Financial Year" — confirmed
+      correct on the very next run: **`period="Financial Year"`,
+      `from_date="Year Ended 30 Jun 2001"`, `to_date="Year Ended 30 Jun
+      2025"`, `date_fmt="Y1"`.** Real series name confirmed:
+      `'Persons (Persons)'`. 14/14 towns fetched real 2025 SA2-level ERP
+      figures, including genuinely distinct values for all three
+      Toowoomba sub-areas (14,434 / 6,596 / 17,905) — **resolves the
+      oldest open SA2 name-mapping gap in the project**, flagged weeks
+      ago as blocking this exact indicator. Also found and fixed a
+      false-positive in the new error-detection logging: generic
+      frameset-fallback HTML ("upgrade your browser") was matching a
+      crude "error|invalid" pattern — tightened to look for actual
+      QRSIS/Oracle error markers (`ORA-NNNNN`, `no data found`, etc.)
+      instead of generic English words.
+- [ ] **Next: wire this into the workbook.** Targets the SA2-section
+      `Population (ERP)` row — the exact same indicator name/section
+      already confirmed to collide with the LGA-section version for
+      Goondiwindi (42% value difference, LGA=10,219 vs SA2=5,873) —
+      the still-outstanding `section` parameter for
+      `_find_town_indicator_row` (see XLSX data/chart update section)
+      is a real prerequisite here, not optional, since every write for
+      this indicator needs to land in the SA2 section specifically,
+      not whichever section happens to match first.
 - [x] **`qgso_housing` status corrected (2026-09-16):** a full fetcher
       sweep showed this is NOT "0 towns ok" as previously recorded —
       sales and rent collections both work correctly end-to-end (11
@@ -494,6 +556,36 @@ sub-problems, deliberately sequenced:
 - [ ] Update SALM fallback URL each quarter (`fetch_salm_unemployment.py`)
 - [ ] Verify Tara/Goondiwindi/Moranbah BOM station substitutions against previous
       booklets before next publication
+- [x] **"Will this work next year?" audit prompted by Steve (2026-09-16)
+      — found and fixed one real bug, flagged one pre-existing one.**
+      Fixed: `fetch_population_erp.py`'s `TO_DATE` was hardcoded to
+      `"Year Ended 30 Jun 2025"` — would have silently capped the
+      fetcher at 2025 forever, never erroring, just quietly going
+      stale. Now computed as `datetime.now().year + 1`, confirmed to
+      evaluate correctly (`Year Ended 30 Jun 2027` as of this date) —
+      a RANGE query, so asking one year ahead is safe and self-
+      maintaining, never needs a manual date bump again.
+      **Not fixed, deliberately left alone:** `fetch_qgso_housing.py`
+      has the exact same pattern, in currently-working, proven code —
+      `sales.to_date = "Year Ended 30 Sep 2025"`, `rent.to_date =
+      "Year Ended 31 Mar 2026"`, `approvals_curr.to_date = "Jan 2026"`
+      are all hardcoded literals that will silently stop capturing new
+      years once those dates pass. Not touched here since it can't be
+      live-tested from this environment and the risk of breaking
+      working code outweighs fixing it blind — needs the same
+      `datetime.now()`-based fix, applied and tested on a machine that
+      can actually run it against the live QRSIS endpoint.
+- [ ] Same question worth asking of every other fetcher in the project,
+      not just these two — `fetch_population_nrw.py`'s hardcoded issue
+      numbers (Surat Basin 6606, Bowen Basin 3341) are a related but
+      different risk: not a wrong date range, but a URL that will
+      eventually 404 once QGSO issues next year's report under a new
+      issue number. It already has a page-scrape fallback for exactly
+      this (`_scrape_for_url`), but that fallback itself has never been
+      proven working — only the hardcoded direct URLs have been tested
+      live. Worth deliberately testing the fallback path (e.g.
+      temporarily pointing at a wrong issue number) before trusting it
+      to actually work when the real URLs do go stale.
 
 ## Research / academic input needed
 - [ ] **A.** Building approvals: adopt calendar-year aggregation throughout, or
