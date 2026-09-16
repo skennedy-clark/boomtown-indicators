@@ -1,5 +1,6 @@
 """
-update_population_ucl.py -- reads fetch_population_ucl.py's cached output
+regional-indicators/transform/xlsx_update/update_population_ucl.py -- reads
+fetch_population_ucl.py's cached output
 (cache/population/{slug}_population_ucl.json) and writes each town's
 LATEST year into Indicators_Data-Charts.xlsx's "UCL" section on the
 Population sheet.
@@ -9,12 +10,19 @@ was confirmed to corrupt this specific workbook badly enough that even
 Excel's own repair couldn't recover the result. See base.py's docstring
 for the full explanation.
 
+Runs the pre-write audits from audit.py on every town before writing --
+this workbook has been hand-edited for years and is known to contain
+crud (stray values, leftover formulas from ad-hoc analysis) in cells
+this script writes into, and its existing historical data has not been
+independently verified. A clean-looking write can still be wrong if it
+lands in the wrong row, or right if a "flagged" cell turns out to be a
+real, correctly-revised figure -- the audits surface exactly that
+ambiguity for a human to resolve, they don't resolve it themselves.
+
 *** NOT YET TESTED against a live Excel instance *** -- same caveat as
 base.py. Test against a throwaway copy first.
 
-Opens ONE Excel session for the whole run (not one per town) -- starting
-and stopping Excel per town would be needlessly slow for a run covering
-17 towns.
+Opens ONE Excel session for the whole run (not one per town).
 
 Deliberately targets the "UCL" block (indicator name "Estimated resident
 population (a) by urban centre and locality") and NOT each town's main
@@ -31,8 +39,9 @@ Usage:
 --visible runs Excel on-screen rather than in the background -- worth
 using for your first real run, so you can watch it happen.
 
-Writes the file in place (saves the same path it opened). Run
-fetch_population_ucl.py first so the cache JSON files actually exist.
+Writes the file in place for every town that passes both audits clean.
+Flagged towns are NOT written -- rerun after resolving what the report
+says, rather than this script guessing on your behalf.
 """
 
 from __future__ import annotations
@@ -43,7 +52,8 @@ from pathlib import Path
 
 import xlwings as xw
 
-from base import _find_year_column, _find_town_indicator_row
+from base import _find_year_column, _find_town_indicator_row, read_existing_series
+from audit import audit_cell, audit_series, WriteAuditReport
 
 INDICATOR_NAME = "Estimated resident population (a) by urban centre and locality"
 SHEET_NAME = "Population"
@@ -51,8 +61,10 @@ SHEET_NAME = "Population"
 
 def update_population_ucl(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
     """Update every town found in cache_dir's *_population_ucl.json files
-    with its latest available year, in a single Excel session. Returns a
-    list of human-readable result lines for logging/review.
+    with its latest available year, auditing each one before writing.
+    Returns a list of human-readable result lines -- written towns show
+    the cell they landed in, flagged towns show why they were skipped
+    and nothing about them was changed.
     """
     cache_files = sorted(cache_dir.glob("*_population_ucl.json"))
     if not cache_files:
@@ -62,12 +74,16 @@ def update_population_ucl(xlsx_path: Path, cache_dir: Path, visible: bool = Fals
         )
 
     results = []
+    written_count = 0
+    flagged_count = 0
+
     app = xw.App(visible=visible, add_book=False)
     app.display_alerts = False
     try:
         wb = app.books.open(str(xlsx_path))
         try:
             sheet = wb.sheets[SHEET_NAME]
+            any_written = False
 
             for path in cache_files:
                 with open(path, encoding="utf-8") as f:
@@ -79,9 +95,6 @@ def update_population_ucl(xlsx_path: Path, cache_dir: Path, visible: bool = Fals
                     results.append(f"{town}: no data in cache file, skipped")
                     continue
 
-                # Latest year determined from the data itself, never
-                # hardcoded -- correct in 2026, 2027, or any future year
-                # without a code change.
                 latest_year_str = max(year_vals, key=int)
                 latest_value = year_vals[latest_year_str]
                 latest_year = int(latest_year_str)
@@ -89,26 +102,38 @@ def update_population_ucl(xlsx_path: Path, cache_dir: Path, visible: bool = Fals
                 try:
                     col = _find_year_column(sheet, latest_year)
                     row = _find_town_indicator_row(sheet, town, INDICATOR_NAME, sub_label=None)
-                    cell = sheet.cells(row, col)
-                    cell.value = latest_value
-                    cell.number_format = "General"  # don't trust Excel's inherited format --
-                                                     # confirmed to silently pick up a
-                                                     # percentage format from an adjacent
-                                                     # cell on real data
-                    coord = cell.address
-                    results.append(f"{town}: {latest_year} = {latest_value:,} -> {coord}")
                 except ValueError as exc:
-                    # A town not found, or an ambiguous match, shouldn't
-                    # silently corrupt something else -- surface it and
-                    # move on to the next town.
-                    results.append(f"{town}: SKIPPED — {exc}")
+                    results.append(f"{town}: SKIPPED (row-finding) — {exc}")
+                    flagged_count += 1
+                    continue
 
-            wb.save()
+                cell = sheet.cells(row, col)
+                cell_result = audit_cell(cell, latest_value)
+                existing_series = read_existing_series(sheet, row, exclude_col=col)
+                series_result = audit_series(existing_series, latest_year, latest_value)
+                report = WriteAuditReport(cell_result, series_result)
+
+                if report.safe_to_write:
+                    cell.value = latest_value
+                    cell.number_format = "General"
+                    coord = cell.address
+                    results.append(f"{town}: WRITTEN {latest_year} = {latest_value:,} -> {coord}")
+                    written_count += 1
+                    any_written = True
+                else:
+                    results.append(f"{town}: FLAGGED, not written — {report.summary_line()}")
+                    flagged_count += 1
+
+            if any_written:
+                wb.save()
         finally:
             wb.close()
     finally:
         app.quit()
 
+    results.append("")
+    results.append(f"Summary: {written_count} written, {flagged_count} flagged for review, "
+                    f"{len(cache_files) - written_count - flagged_count} skipped (no data).")
     return results
 
 

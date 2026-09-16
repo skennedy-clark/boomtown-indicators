@@ -45,17 +45,62 @@ procedure — see the QRSIS section below for the target level of detail.
 ## QGSO Regional Database (QRSIS) — fallback when the automated fetcher can't run
 
 `fetch_qgso_housing.py` covers this automatically for the towns and series
-listed in `docs/data_sources/qgso_housing.md`. If QRSIS changes shape and the
-fetcher breaks before a fix lands, the manual fallback is:
+listed in `docs/data_sources/qgso_housing.md`, via QRSIS's underlying API
+(not just the browser wizard — see that fetcher's `COLLECTIONS` dict for
+confirmed collection ids: 1925=sales, 1929=rent, 2075/2031=building
+approvals). **Currently reported at 0 towns ok** per project status notes —
+not confirmed working end-to-end, worth fixing before building further
+automation on the same API.
+
+`fetch_population_erp.py` (main SA2/LGA `Population (ERP)` row) does NOT
+yet have a live-API path — its collection id hasn't been identified. It
+only implements the manual-file fallback below. The manual fallback is:
 
 1. Go to http://www.qgso.qld.gov.au/products/tables/qld-regional-database/index.php
 2. [NEEDS INPUT — the exact wizard steps: which theme, which region type,
    which date format, which series names to select]
-3. Save the resulting export as `cache/qgso_and_bom_{YEAR}.xlsx`
-4. Re-run `python run_update.py --only qgso_housing` — the fetcher should
-   detect and read the manually-placed file
-   [NEEDS INPUT — confirm the fetcher actually has this fallback-read
-   behaviour implemented, or whether this is aspirational]
+3. Assemble the export into a workbook containing (at minimum) a sheet
+   named `Pop`, `Population`, or `Pop sheet`, with:
+   - Collection header: `Population (ERP)(a) persons only`
+   - A header row containing a `Region` column and a year column (a
+     bare 4-digit number, e.g. `2026`)
+   - One row per region: region name | ... | value for that year
+   - **Single year snapshot only** — this file does not contain
+     history, which is fine for this project's actual need (one more
+     year at a time)
+4. Save the resulting file as `cache/qgso_and_bom_{YEAR}.xlsx` (current
+   year) — or `cache/qgso_and_bom_{YEAR-1}.xlsx` if last year's export
+   is what's available
+5. Re-run `python run_update.py --only population_erp` — **confirmed
+   implemented**: the fetcher searches for either filename, then
+   searches the sheet for its header row rather than assuming a fixed
+   position (the row position has already been observed to shift year
+   to year)
+
+**Path to full automation** (see `fetch_population_erp.py`'s docstring
+for the complete version): once `qgso_housing`'s QRSIS calls are
+confirmed working again, the same collection-id-discovery method
+documented there (browser devtools, watch the POST request while
+manually selecting Population (ERP) data) should be used to find the
+population collection id and add a live-API path the same way housing
+already has one — rather than researching this from scratch a second
+time.
+
+### Non-resident worker (NRW) population — Surat/Bowen Basin
+
+`fetch_population_nrw.py` covers this via direct theme-page URLs (more
+tractable than the Regional Database wizard, since these two pages have
+stable URLs), but is **not yet live-tested**. If it fails to find the
+current file:
+
+1. Surat Basin (Western Downs, Maranoa towns): go to
+   https://www.qgso.qld.gov.au/statistics/theme/population/non-resident-population-queensland-resource-regions/surat-basin
+2. Bowen Basin (Isaac — Moranbah, Dysart): go to
+   https://www.qgso.qld.gov.au/statistics/theme/population/non-resident-population-queensland-resource-regions/bowen-galilee-basins
+3. Download the latest "FTE LGA UCL" xlsx from whichever page is
+   relevant
+4. Save as `cache/surat_basin_nrw.xlsx` or `cache/bowen_basin_nrw.xlsx`
+5. Re-run `python run_update.py --only population_nrw`
 
 ---
 

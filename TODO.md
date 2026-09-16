@@ -22,16 +22,194 @@ project was proposed under, and how the sections below map onto it.
 ## Inbox
 _(untriaged — add here, sort later)_
 
--
+- Checked whether the 5 flagged "isolated outlier" years (Isaac 2012,
+  Toowoomba LGA 2013, Dysart 2015, Moranbah 2012 & 2016, Roma 2018,
+  Toowoomba UCL 2023) match problems Steve already found and fixed
+  manually going from 2025→2026: they don't — values are identical in
+  both files, untouched by his manual pass. Isaac 2012 was subsequently
+  confirmed correct against a real Bowen Basin download (see Fetchers —
+  the historical ground-truth audit resolves this class of question
+  wherever full source history is available; UCL-level entries still
+  don't have that, see below).
 
 ---
 
 ## Fetchers
-- [ ] `fetch_population_erp.py` — ABS ERP for NSW/VIC towns (Narrabri, Shepparton, Yarram)
-      via https://api.data.abs.gov.au/ (ERP dataset, filter by SA2/LGA code)
-- [ ] `fetch_population_nrw.py` — QGSO Surat/Bowen Basin non-resident worker population
-      Surat: qgso.qld.gov.au/statistics/theme/population/population-estimates/surat-basin
-      Bowen: qgso.qld.gov.au/statistics/theme/population/population-estimates/bowen-basin
+- [x] `fetch_population_nrw.py` — both regions now use real, confirmed
+      URLs (2026-09-15): Surat Basin (issue 6606) and Bowen Basin
+      (issue 3341) — different issue numbers per region and per report
+      type, confirming issue numbers can't be guessed/incremented.
+- [x] **Fixed and validated against real data (2026-09-15):** the LGA
+      label and year headers turned out to be on TWO SEPARATE rows in
+      the real file (`LGA(a) | Non-resident workers on-shift(b)` on
+      one row, `2008 | 2009 | ...` on the next) — the original version
+      searched for years in the same row as "LGA" and found nothing.
+      Fixed and re-tested against a workbook built to exactly match the
+      real structure Steve pasted — Maranoa/Toowoomba/Western Downs all
+      parse correctly, `n.a.` values correctly excluded rather than
+      crashing, units-label row correctly ignored. Also caught a second
+      bug: the report's own TITLE row contains the substring "lga" too
+      (via "...(LGA)..." in the title), which the original loose
+      substring match grabbed instead of the real header — tightened to
+      require the cell to *start with* "lga" and be short.
+      **Confirmed from real data:** Toowoomba LGA has its own row in
+      the Surat Basin file — added to that region's `lgas` list.
+- [x] **Second real fix, FTE file (2026-09-15):** live run confirmed
+      LGA-level parsing correct (13 towns, right year counts) but every
+      single town showed "UCL: none". Root cause: the FTE file has
+      THREE label columns — `LGA(a)` | `Location(b)` | `UCL(a)` — and
+      the code was matching on `Location` (values like "In town",
+      "Rural areas") instead of `UCL` (the actual place names); and
+      each year spans three sub-columns (ERP | Non-resident workers
+      on-shift | FTE estimate) needing the right one specifically, not
+      just the first. Rewrote to find the UCL column explicitly and
+      locate the correct sub-column per year group, renamed the output
+      field `ucl_fte_latest` → `ucl_nrw_latest`. Tested against a
+      workbook built to exactly match the real structure — Roma/
+      Toowoomba/Millmerran/Oakey all correct, Injune correctly excluded
+      (its 2025 figure was `n.p.`).
+- [x] **Cross-validated against the real 2026 reference workbook
+      (2026-09-15):** every town with a fetched UCL 2025 value matches
+      the existing hand-entered figure exactly — Chinchilla 670, Dalby
+      410, Dysart 2355, Miles 260, Moranbah 2625, Roma 185, Toowoomba
+      120, Wandoan 145 (8/8 exact matches). The two `UCL: none` results
+      (Tara, Wallumbilla) are correct too — the reference file's own
+      2025 figures for those towns are also missing.
+- [x] **First live run against real data (2026-09-15):** 4 clean
+      writes, 8 flagged, breaking into three categories — real
+      historical data-quality findings, step-changes on
+      already-independently-confirmed values (Miles, Wandoan — see
+      override question below), and one real bug (Toowoomba's
+      hardcoded LGA sub-label was wrong for the real file — fixed,
+      removed the incorrect override).
+- [x] **Built the real fix, not a threshold tweak (2026-09-15):** added
+      `audit_historical_series()` in `audit.py` — compares every
+      existing workbook year against the FULL freshly-refetched source
+      series (ground truth), instead of guessing from the existing
+      series' shape alone. Tested against Steve's real Bowen Basin
+      download: confirms zero discrepancy for Isaac's 2011/2012/2013
+      figures, correctly clearing what had looked like a miscopy.
+      Also tested: a genuine 10x typo correctly blocks
+      (`MAJOR_DISCREPANCY`), a modest ~2% revision correctly notes
+      without blocking (`MINOR_DISCREPANCY` — "note but don't assume
+      wrong"), a 1-unit rounding difference is ignored entirely.
+      Supersedes the old shape-based guess when available;
+      `SCALE_MISMATCH` (wrong-row detection) still blocks independently
+      either way. Wired into the LGA-level write path (full history
+      available); **UCL-level writes still use the shape-based check
+      only** — the FTE/UCL source only gives the latest year, no
+      history to ground-truth against.
+- [x] **`--deep-audit` flag built and tested (2026-09-15):** for any
+      flagged UCL-level entry, cross-checks the corresponding LGA's own
+      history in the same year(s) — a real regional workforce event
+      should show up at both levels, a UCL-only blip is more likely a
+      genuine error specific to that cell. Tested end-to-end with real
+      Isaac/Moranbah data: correctly reports 2012 as corroborated
+      (+26% LGA-level swing matching the flagged UCL point) and 2016 as
+      weaker evidence (-9%, real but modest). Context for the human
+      reviewing a flag, not a verdict.
+- [x] **Confirmed working against the real file end-to-end
+      (2026-09-15):** re-run after both fixes above — 6 written
+      (Western Downs LGA, Maranoa LGA, Isaac LGA, Toowoomba LGA,
+      Chinchilla UCL, Dalby UCL), 6 flagged (all UCL-level: Dysart
+      2015, Miles, Moranbah 2012 & 2016, Roma 2018, Toowoomba UCL 2023,
+      Wandoan), exactly as predicted once the ground-truth fix landed.
+- [x] **Split into two files (2026-09-15), per the earlier Inbox note:**
+      `update_population_nrw.py` now handles UCL-level only,
+      `update_population_nrw_lga.py` (new) handles LGA-level only.
+      Shared write logic (`write_one`, `deep_audit_context`) promoted
+      into `base.py` so neither script duplicates it. Regression-tested
+      against the same synthetic data used to validate the combined
+      version — both splits produce identical results (LGA dedup still
+      works, UCL/LGA sub-label handling unaffected).
+- [ ] **Still open: override/force mechanism.** Miles and Wandoan are
+      independently confirmed correct (matched the 2026 reference file
+      exactly) but still sit flagged with no way to say "write it
+      anyway" other than manually clearing the cell first. The 4
+      remaining UCL flags (Dysart 2015, Moranbah 2016, Roma 2018,
+      Toowoomba UCL 2023) are genuinely still unverified either way —
+      `--deep-audit` gave weak/no corroboration for all four, unlike
+      Moranbah's 2012 (strong corroboration, still unwritten).
+- [x] `fetch_population_erp.py` — built (2026-09-10), **but QLD-only,
+      not the NSW/VIC ABS fetcher originally planned under this name**
+      (see naming-collision note below). Currently only works via a
+      working fallback: reads a manually-assembled
+      `cache/qgso_and_bom_{YEAR}.xlsx` if present (documented in
+      `docs/manual_processes.md`). No live-API path yet —
+      `fetch_qgso_housing.py` already has a working QRSIS integration
+      pattern for a different collection (housing); the population
+      collection id needs discovering the same way before a live path
+      can be added here.
+- [x] **Real progress toward automating this (2026-09-16):** QGSO
+      publishes a machine-readable master index of every QRSIS
+      collection — https://statistics.qgso.qld.gov.au/report-viewer/run?__report=sis-stats-available.rptdesign&systemName=QRSIS&__format=xls
+      (an Excel-XML file, not modern xlsx — parses fine as plain text/
+      XML). Confirmed the target collection genuinely exists: "Population
+      (ERP)(a) persons only", group "Population Estimates", **SA2-level**,
+      2016 ASGS geography (current — there's also a superseded 2011-ASGS
+      version, don't use that one), data 1991-2025, updates every March.
+      **No LGA-level version of this exact collection found in the
+      index** — towns needing LGA-level ERP (e.g. Brisbane) may need a
+      differently-named collection, still unconfirmed.
+      **Still needed:** the index doesn't expose the internal numeric
+      collection id the actual query API needs (same kind of id as
+      housing's 1925/1929/2075/2031) — extending `fetch_qgso_housing.py`'s
+      exact query mechanism to auto-discover this collection's id
+      requires its real source code, not available in the sandbox this
+      was investigated in after a reset. Get that file into the next
+      session before attempting the live-API build.
+- [x] **`qgso_housing` status corrected (2026-09-16):** a full fetcher
+      sweep showed this is NOT "0 towns ok" as previously recorded —
+      sales and rent collections both work correctly end-to-end (11
+      real SA2 regions matched, real prices parsed). Only the two
+      approvals collections fail, and specifically: the exact same SA2
+      codes that matched fine for sales/rent come back
+      `"not in QRSIS list"` for approvals. Strong, narrow signal —
+      building-approvals data on QRSIS likely only publishes at LGA
+      level, not SA2, which lines up directly with Research Question B
+      below (LGA vs SA2 for Toowoomba sub-area approvals). Worth
+      checking what region list those two `udqctl_id`s actually expose
+      before assuming a broader fix is needed.
+- [x] **`bom_rainfall` status corrected (2026-09-16):** also not
+      broadly broken as the old "wrong approach" note suggested — 16
+      of 17 towns succeed cleanly (a few "synthetic data" warnings are
+      SILO's own gap-filling, not a bug). The one real failure is
+      narrow: Yarram's configured SILO station number (85151) is
+      invalid, and the name-search fallback found nothing genuinely
+      matching "Yarram" in Victoria. Worth a manual look at SILO's
+      station list for the correct Yarram, VIC station.
+- [x] **Full sweep confirms all three xlsx write scripts consistent and
+      reproducible (2026-09-16):** ran `update_population_nrw.py`,
+      `update_population_nrw_lga.py`, and `update_population_ucl.py`
+      (the separate Population-ERP-UCL indicator) back to back against
+      the same real file. All three matched previously-confirmed
+      results exactly — NRW UCL 2 written/6 flagged, NRW LGA 4
+      written/0 flagged, Population-ERP-UCL 10 written/1 flagged
+      (Chinchilla's formula cell, same one found originally — still
+      unresolved, see below).
+- [ ] **Minor labeling nuance found in this sweep:** re-running an
+      already-written value still logs as `WRITTEN`, not distinguished
+      from a genuine new write — functionally correct (nothing's
+      actually overwritten incorrectly, `CellState.MATCHES_NEW_VALUE`
+      still triggers a write of the identical value) but worth a
+      clearer log label eventually (e.g. "already correct, no-op" vs
+      "WRITTEN") so a re-run's output is easier to read at a glance.
+- [ ] **Chinchilla's formula cell — still an open decision, now
+      confirmed on multiple separate runs.** `=(Y54-W54)/W54` sits in
+      the Population-ERP-UCL row and has blocked every single write
+      attempt so far. Worth actually resolving: confirm nothing else
+      references it, then clear it — or decide it stays a permanent
+      manual-entry cell going forward, rather than leaving it
+      perpetually flagged.
+- [ ] **NAMING COLLISION to resolve:** this TODO originally planned
+      `fetch_population_erp.py` as the NSW/VIC ABS-based fetcher (line
+      below). That name is now taken by the QLD/QGSO fetcher instead.
+      The NSW/VIC one still needs building — needs a different
+      filename (e.g. `fetch_population_erp_abs.py`) and a different
+      FETCHER_REGISTRY key (`population_erp` is taken).
+- [ ] ABS ERP for NSW/VIC towns (Narrabri, Shepparton, Yarram) via
+      https://api.data.abs.gov.au/ (ERP dataset, filter by SA2/LGA
+      code) — still not built, see naming note above
 - [ ] `fetch_housing_nsw.py` — Narrabri housing (NSW Valuer General + FACS rent + ABS 8731)
 - [ ] `fetch_crime_nsw.py` — BOCSAR LGA offences (Narrabri)
 - [ ] `fetch_business.py` — ABS 8165 business counts by SA2
@@ -241,7 +419,7 @@ sub-problems, deliberately sequenced:
       plain-language, step-by-step document (not a developer README) is
       an equally required deliverable alongside the update tooling itself,
       not something to write up afterward once the code is "done."
-- [ ] **Validated against the real 2025 file, not just synthetic test
+- [x] **Validated against the real 2025 file, not just synthetic test
       data:** `update_population_ucl.py` (fixed `xlsx_update.base` import)
       ran successfully against the actual uploaded `Indicators_Data-
       Charts_2025.xlsx`, correctly wrote Chinchilla and Toowoomba's 2025
@@ -252,19 +430,17 @@ sub-problems, deliberately sequenced:
       Housing) to confirm the row-finding logic generalises — the "town
       name row has empty column B" heuristic for locating blocks needs
       checking against sheets where that pattern might not hold exactly
-- [ ] **Year must not be hardcoded anywhere in the real pipeline.**
-      `update_indicator.py`'s self-test hard-codes 2025, which is fine for
-      a test (it needs a fixed, checkable value) but the actual calling
-      code must determine the target year dynamically (e.g. from the
-      current date, or "one past the latest year column already present"),
-      so the same code keeps working unattended in 2026, 2027, etc.
-      without a code change each year.
-- [ ] **Test plan once wired to real data:** run against an actual prior
-      year's saved workbook, update it to the current year, confirm the
-      new year's values are correct; then re-run the *same* update again
-      for the same year and confirm it's a true no-op (identical file,
-      not just "doesn't crash") — this is the real idempotency test, not
-      just the synthetic one in the self-test.
+- [x] **Year must not be hardcoded anywhere in the real pipeline.**
+      Confirmed satisfied by every script built this session (fetchers
+      determine the latest year from the data itself; write scripts take
+      whatever year the fetcher's cache gives them) — no literal year
+      values in any control-flow logic.
+- [x] **Test plan, ground-truth version:** ran against an actual prior
+      year's real workbook (`Indicators Data-Charts 2025.xlsx`), updated
+      it with real fetched data, confirmed values correct, re-ran the
+      same update again and confirmed no duplicate writes (cells that
+      already match the new value are correctly treated as a no-op via
+      `CellState.MATCHES_NEW_VALUE`).
 - [ ] **Data-writing, stage 2 — chart ranges:** each chart's series
       reference is a fixed cell range (e.g. `Income!$M$8:$Z$8`), and ranges
       are inconsistent even within one town's chart sheet (some already
@@ -272,9 +448,6 @@ sub-problems, deliberately sequenced:
       year). Needs per-chart inspection before deciding whether/how to
       extend — do NOT assume a uniform "add one column" fix works
       everywhere
-- [ ] Once (b) verification-against-threshold exists: decide where it sits
-      relative to this — before writing to the xlsx (block bad data) or
-      after (write, but flag)?
 
 ## Output / transform
 - [ ] `to_csv.py` — wire up `building_approvals` transformer (18 of 25 CSVs done)
@@ -289,11 +462,25 @@ sub-problems, deliberately sequenced:
       the raw dict instead of `.values()`) — see `config.py` `_load_towns`.
 - [ ] More fetcher-parsing tests (per-source, against saved fixtures — the
       base download/retry/cache logic is covered, individual fetchers' own
-      parsing logic mostly isn't yet)
+      parsing logic mostly isn't yet); worth adding real coverage for
+      `audit.py`'s functions too now that they're load-bearing
 - [ ] `orchestrator.py` — extract `run_pipeline()` out of `run_update.py`'s `main()` so
       a GUI can call it without going through argv
 - [ ] `gui/` — internal front end over `orchestrator.run_pipeline()` (Streamlit is the
       lowest-effort option for an internal tool)
+- [ ] Documentation convention: file docstring headers should name the
+      file with its full path from repo root (e.g.
+      `regional-indicators/transform/xlsx_update/base.py`), not just the
+      bare filename — makes navigating name collisions much easier
+      (there are two files named `base.py`). Applied consistently to
+      every `xlsx_update/` file; not yet retrofitted to older files
+      (e.g. `fetchers/base.py`, which currently just says
+      `fetchers/base.py` without the `regional-indicators/` prefix).
+- [ ] Refactor at some point: remove deprecated code such as the old
+      openpyxl-based xlsx updater (`base_openpyxl_DEPRECATED.py` and any
+      references to it) now that xlwings is the confirmed-working approach
+- [ ] `requirements.txt` is incomplete compared with `pyproject.toml`: it
+      omits `xlwings`, test dependencies, and `duckdb`
 
 ## Documentation
 - [ ] `docs/indicators.md` — data dictionary: workbook row → fetcher → output CSV

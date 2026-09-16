@@ -1,6 +1,6 @@
 """
-run_update.py
--------------
+regional-indicators/run_update.py
+----------------------------------
 Master orchestrator for the regional-indicators data pipeline.
 
 Usage:
@@ -37,6 +37,8 @@ from fetchers.base import FetchResult
 from fetchers.fetch_income import ATOIncomeFetcher
 from fetchers.fetch_income_table6 import ATOTable6Fetcher
 from fetchers.fetch_population_ucl import QGSOPopulationUCLFetcher
+from fetchers.fetch_population_nrw import QGSOPopulationNRWFetcher
+from fetchers.fetch_population_erp import QGSOPopulationERPFetcher
 from fetchers.fetch_crime_qps import QPSCrimeFetcher
 from fetchers.fetch_qgso_housing import QGSOHousingFetcher
 from fetchers.fetch_salm_unemployment import SALMUnemploymentFetcher
@@ -46,6 +48,13 @@ FETCHER_REGISTRY: dict[str, type] = {
     "income":         ATOIncomeFetcher,
     "income_table6":  ATOTable6Fetcher,
     "population_ucl": QGSOPopulationUCLFetcher,
+    "population_nrw": QGSOPopulationNRWFetcher,  # Surat/Bowen Basin non-resident
+                                                   # workers -- NOT YET LIVE-TESTED
+    "population_erp": QGSOPopulationERPFetcher,  # main SA2/LGA ERP row -- currently
+                                                   # only works if a manually-assembled
+                                                   # cache/qgso_and_bom_{YEAR}.xlsx is
+                                                   # present; see its docstring for the
+                                                   # path to full automation
     "crime_qps":      QPSCrimeFetcher,
     "salm_unemployment": SALMUnemploymentFetcher,
     "bom_rainfall":      BOMRainfallFetcher,
