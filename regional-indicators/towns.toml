@@ -141,8 +141,8 @@ name             = "Wallumbilla"
 state            = "QLD"
 postcode         = "4428"
 postcodes        = ["4428"]
-sa2_code         = "307011178"
-qgso_sa2         = "307011176"
+sa2_code         = "307011177"
+qgso_sa2         = "307011177"
 qgso_lga         = "LGA/34860"
 sa2_name         = "Roma Surrounds"
 sa3_code         = "30701"
@@ -154,7 +154,7 @@ benchmark        = false
 district         = "Wallumbilla and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-roma-surrounds.pdf"
-notes            = "WARNING: sa2_code 307011178 may be incorrect (= Tara). qgso_sa2 set to Roma (307011176). Verify before publishing. BOM station 43043 has >10% synthetic data 2009-2014."
+notes            = "RESOLVED 2026-09-17: sa2_code/qgso_sa2 corrected to 307011177, confirmed as Roma Surrounds' real ASGS 2021 code (QGSO PDF + ABS Census QuickStats both agree) -- the old 307011178 was genuinely Tara's code, and 307011176 was Roma township's own code, neither was Roma Surrounds. Cross-checked against the truth workbook: Roma Surrounds' own Population (ERP) figure (6,287) is real and distinct from Roma township's (7,083) -- confirms this was a real data-correctness issue, not just a label mismatch. BOM station 43043 has >10% synthetic data 2009-2014."
 
 [towns.goondiwindi]
 name             = "Goondiwindi"

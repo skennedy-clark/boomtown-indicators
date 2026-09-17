@@ -92,21 +92,23 @@ HEADERS = {
     "Origin":  "https://statistics.qgso.qld.gov.au",
 }
 
-# Corrected 2026-09-16 after the first live run confirmed the format;
-# "Financial Year" / "Year Ended 30 Jun YYYY" is now proven correct.
-# TO_DATE is computed, not hardcoded -- a literal year here would
-# silently cap this fetcher at 2025 forever once next year arrives,
-# never erroring, just quietly going stale. Requesting one year past
-# "now" is safe: this is a RANGE query, confirmed to just return
-# whatever's actually published up to that point (QGSO updates this
-# collection annually each March per its catalog listing, so the
-# newest available year usually lags "now" by several months anyway --
-# asking for more than exists doesn't fail, it just returns what's
-# there).
-FROM_DATE = "Year Ended 30 Jun 2001"
-TO_DATE   = f"Year Ended 30 Jun {datetime.now().year + 1}"
+# CORRECTED 2026-09-17 against a real manual walkthrough of the QRSIS
+# wizard (Steve stepped through every page and captured the actual HTML).
+# Both previous guesses were wrong in a way that silently broke every
+# region match, not just Wallumbilla's -- confirmed every SA2 code this
+# project needs (Roma, Roma Surrounds, Chinchilla, Wambo, all of them) is
+# genuinely present in the real region list, so this was always a
+# request-format bug, never a data-availability one.
+#   - date_format: the real hidden field value is "Y2", not "Y1".
+#   - from_date/to_date: the real <select> only offers plain year numbers
+#     ("2025", "2024", ... "1991") -- "Year Ended 30 Jun YYYY" never
+#     matched anything real, and likely broke the session silently for
+#     every step after it, which is exactly the symptom seen (empty
+#     region list, no visible error).
+FROM_DATE = "2001"
+TO_DATE   = str(datetime.now().year + 1)
 PERIOD    = "Financial Year"
-DATE_FMT  = "Y1"
+DATE_FMT  = "Y2"
 
 ASSEMBLED_FILE_PATTERN = "qgso_and_bom_{year}.xlsx"
 REGIONAL_DATABASE_URL = (
@@ -187,19 +189,27 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         if not avail_series:
             raise RuntimeError("No series available for this collection")
         series = avail_series[:1]
-        self._select_series(session, udqctl_id, series)
+        time_periods_html = self._select_series(session, udqctl_id, series)
         self.log.info(f"  Series selected: {series}")
 
-        self._set_time_period(session, udqctl_id)
+        self._set_time_period(session, udqctl_id, time_periods_html)
 
         self._select_region_type(session, udqctl_id, "SA2 - Statistical Area Level 2")
 
         avail_regions = self._get_options(
             session, "QIS1110W$UDQREG.ProcessRegions", udqctl_id, "inforeg.htm", "p_new_multi"
         )
-        matched_regions = self._match_regions(sa2_map, avail_regions)
+        matched_regions, sa2_name_by_code = self._match_regions(sa2_map, avail_regions)
         if not matched_regions:
             raise RuntimeError("No SA2 regions matched in QRSIS region list")
+        # Diagnostic: the previous run showed sa2_name coming back empty
+        # for every town whose real SA2 name differs from town.name
+        # (Dalby, Dysart, Toowoomba's sub-areas, etc.), while towns where
+        # they happen to be identical (Roma, Chinchilla...) looked fine --
+        # which could mean those "worked" by accident via a fallback, not
+        # because the real capture succeeded. Log the actual dict so this
+        # is confirmed either way, not guessed at again.
+        self.log.info(f"  sa2_name_by_code captured: {sa2_name_by_code}")
         self._select_regions(session, udqctl_id, matched_regions)
         self.log.info(f"  Regions selected: {len(matched_regions)}")
 
@@ -207,7 +217,7 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         raw = self._parse_output_html(html)
         self.log.info(f"  Parsed data for {len(raw)} regions")
 
-        return self._aggregate(series[0], raw, sa2_map)
+        return self._aggregate(series[0], raw, sa2_map, sa2_name_by_code)
 
     def _select_collection(self, session) -> Optional[str]:
         resp = session.post(
@@ -230,7 +240,7 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         resp.raise_for_status()
         return _parse_options(resp.text, select_name)
 
-    def _select_series(self, session, udqctl_id, series):
+    def _select_series(self, session, udqctl_id, series) -> str:
         for s in series:
             session.post(
                 BASE_URL + "QIS1110W$UDQSER.ProcessActions",
@@ -239,17 +249,75 @@ class QGSOPopulationERPFetcher(BaseFetcher):
                 timeout=30,
             )
             time.sleep(0.2)
-        session.post(
+        resp = session.post(
             BASE_URL + "QIS1110W$UDQSER.ProcessActions",
             data=_q("udqctl_id", udqctl_id, "info_page", "infoser.htm",
                     "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
+        # This response IS the next page (Time Periods) -- Oracle PL/SQL
+        # WebTK returns each next screen directly from the POST, no
+        # separate fetch needed. Returned so the real available date
+        # range can be read from it rather than guessed.
+        return resp.text
 
-    def _set_time_period(self, session, udqctl_id):
+    def _discover_max_to_date(self, time_periods_html: str) -> str | None:
+        """Parse the real 'To Date' dropdown out of the Time Periods page
+        and return its newest (default-selected) option -- confirmed
+        real structure (2026-09-17 walkthrough): a plain year number
+        <select>, most-recent-first, with the newest marked
+        selected="selected". Reading this directly avoids ever
+        requesting a year QRSIS doesn't actually have (confirmed cause
+        of a full session failure, not a graceful "return what's
+        there") -- more robust than computing a guessed future year,
+        and self-updating every year without a code change.
+
+        From Date and To Date both use the generic <select
+        name="p_values"> -- distinguished only by a preceding hidden
+        <input name="p_names" value="to_date"> marker, not by the
+        select's own name/id. Naively taking "the first select with
+        digit options" grabs From Date instead (confirmed real bug,
+        caught by testing against the real page -- From Date defaults
+        to the OLDEST year, 1991, which this function would otherwise
+        wrongly report as the max).
+        """
+        soup = BeautifulSoup(time_periods_html, "lxml")
+
+        to_date_marker = soup.find(
+            "input", {"name": "p_names", "value": "to_date"}
+        )
+        if not to_date_marker:
+            return None
+
+        select = to_date_marker.find_next("select")
+        if not select:
+            return None
+
+        options = select.find_all("option")
+        years = [o.get_text(strip=True) for o in options if o.get_text(strip=True).isdigit()]
+        if not years:
+            return None
+
+        selected = select.find("option", selected=True)
+        if selected and selected.get_text(strip=True).isdigit():
+            return selected.get_text(strip=True)
+        return max(years, key=int)
+
+    def _set_time_period(self, session, udqctl_id, time_periods_html: str = ""):
+        to_date = self._discover_max_to_date(time_periods_html) if time_periods_html else None
+        if to_date:
+            self.log.info(f"  Discovered real max To Date from the page: {to_date}")
+        else:
+            to_date = TO_DATE
+            self.log.warning(
+                f"  Could not discover the real To Date option from the page -- "
+                f"falling back to computed guess {to_date!r}, which may not "
+                f"be a valid option and could break this step silently."
+            )
+
         data = _q("udqctl_id", udqctl_id, "coll_id", COLL_ID, "error_msg", "",
                   "date_format", DATE_FMT, "period", PERIOD,
-                  "from_date", FROM_DATE, "to_date", TO_DATE)
+                  "from_date", FROM_DATE, "to_date", to_date)
         data.append(("p_op_mode", "Next"))
         resp = session.post(BASE_URL + "QIS1110W$UDQCTL.ProcessActions", data=data, timeout=30)
         self.log.info(f"  Time period step: HTTP {resp.status_code}, {len(resp.text)} bytes back")
@@ -281,10 +349,19 @@ class QGSOPopulationERPFetcher(BaseFetcher):
             snippet = re.sub(r'\s+', ' ', text)[:500]
             self.log.warning(f"  {step_name} response looks like a genuine QRSIS/Oracle error: {snippet}")
 
-    def _match_regions(self, sa2_map, available) -> list[str]:
+    def _match_regions(self, sa2_map, available) -> tuple[list[str], dict[str, str]]:
+        """Returns (matched region strings, {sa2_code: display_name}).
+        The display name is parsed out of the full region string (e.g.
+        "SA2/317011456 - Toowoomba - Central (01/07/2011 - 30/06/2026)"
+        -> "Toowoomba - Central") -- needed downstream so writes target
+        the real SA2 label, not town.name, which differs for several
+        towns (confirmed: Toowoomba's three sub-areas each need their
+        own distinct SA2 name, none of which match towns.toml's name
+        field directly)."""
         if available:
             self.log.info(f"  First available region: {available[0][:80]}")
         matched = []
+        sa2_name_by_code: dict[str, str] = {}
         for code, towns in sa2_map.items():
             town_names = [t.name for t in towns]
             prefix = f"SA2/{code}"
@@ -292,9 +369,14 @@ class QGSOPopulationERPFetcher(BaseFetcher):
             if hits:
                 matched.extend(hits)
                 self.log.info(f"  Matched {'/'.join(town_names)}: {hits[0][:60]}")
+                m = re.match(r'^SA2/\d+ - (.+?) \(', hits[0])
+                if m:
+                    sa2_name_by_code[code] = m.group(1).strip()
+                else:
+                    self.log.warning(f"  Could not parse SA2 name out of: {hits[0][:80]}")
             else:
                 self.log.warning(f"  [{'/'.join(town_names)}] {prefix} not in QRSIS list")
-        return matched
+        return matched, sa2_name_by_code
 
     def _select_regions(self, session, udqctl_id, regions):
         session.post(
@@ -316,7 +398,11 @@ class QGSOPopulationERPFetcher(BaseFetcher):
             BASE_URL + "QIS1110W$UDQCTL1.ProcessActions",
             data=_q("udqctl_id", udqctl_id, "coll_id", COLL_ID, "error_msg", "",
                     "ser_sort_col", "Sort Number", "reg_sort_col", "Region Code",
-                    "display_style", "For each Region display Time Period by Series",
+                    # Confirmed real default (2026-09-17 walkthrough) --
+                    # requesting the OTHER style was never actually
+                    # confirmed to work; this one produced real, correct
+                    # output.
+                    "display_style", "For each Series display Time Period by Region",
                     "op_mode", "QRSIS Query"),
             timeout=120,
         )
@@ -342,71 +428,80 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         return None
 
     def _parse_output_html(self, html: str) -> dict:
+        """Returns {region_code: {year: value}}. Confirmed real structure
+        (2026-09-17 manual walkthrough): one table headed 'Period' in its
+        first column, with region labels (e.g. 'SA2/307011176 - Roma',
+        'LGA/33610 - Goondiwindi (R)') as the remaining column headers,
+        and one row per year. This REPLACES an earlier version of this
+        parser that assumed a completely different, region-grouped
+        structure -- that assumption was never actually confirmed against
+        real output; this one is.
+        """
         result: dict[str, dict] = {}
-        sections = re.split(r'Region\s*:\s*', html)
-        for section in sections[1:]:
-            m = re.match(r'((?:SA2|SA3|SA4|LGA)/[\w]+)', section)
-            if not m:
-                continue
-            region_code = m.group(1)
-            region_data: dict[str, dict] = {}
+        soup = BeautifulSoup(html, "lxml")
 
-            soup = BeautifulSoup(section, "lxml")
-            table = soup.find("table", border=True) or soup.find("table")
-            if not table:
-                result[region_code] = region_data
-                continue
-
+        for table in soup.find_all("table"):
             rows = table.find_all("tr")
             if not rows:
-                result[region_code] = region_data
                 continue
-
             header_cells = rows[0].find_all(["th", "td"])
-            series_names = [c.get_text(strip=True) for c in header_cells[1:]]
+            header_texts = [c.get_text(strip=True) for c in header_cells]
+            if not header_texts or header_texts[0].lower() != "period":
+                continue  # not the data table
+
+            region_codes = []
+            for h in header_texts[1:]:
+                m = re.match(r'(SA2|LGA|SA3|SA4)/(\S+?)\s*-', h)
+                region_codes.append(m.group(2) if m else None)
 
             for row in rows[1:]:
                 cells = row.find_all(["td", "th"])
                 if not cells:
                     continue
-                period = cells[0].get_text(strip=True)
-                if not period:
+                period_text = cells[0].get_text(strip=True)
+                m = re.search(r'\b(19|20)\d{2}\b', period_text)
+                if not m:
                     continue
-                period_data: dict = {}
-                for i, sname in enumerate(series_names, start=1):
-                    if i < len(cells):
-                        raw = cells[i].get_text(strip=True).replace(",", "").replace("$", "").strip()
-                        try:
-                            period_data[sname] = float(raw)
-                        except ValueError:
-                            period_data[sname] = None
-                region_data[period] = period_data
+                year = int(m.group(0))
 
-            result[region_code] = region_data
+                for i, code in enumerate(region_codes, start=1):
+                    if code is None or i >= len(cells):
+                        continue
+                    raw_val = cells[i].get_text(strip=True).replace(",", "").replace("$", "").strip()
+                    try:
+                        value = float(raw_val)
+                    except ValueError:
+                        continue
+                    result.setdefault(code, {})[year] = value
 
         return result
 
-    def _aggregate(self, series_name: str, raw: dict, sa2_map: dict) -> dict:
+    def _aggregate(self, series_name: str, raw: dict, sa2_map: dict, sa2_name_by_code: dict) -> dict:
+        """Returns {town.slug: {"year_vals": {...}, "sa2_name": "..."}} --
+        sa2_name travels alongside the values so the eventual workbook
+        write can target the real SA2 label (see _match_regions).
+
+        raw is now {region_code: {year_int: value}} directly -- the
+        parser already resolves year and value per region, no more
+        per-series lookup needed here (this collection only ever
+        selects one series, confirmed: 'Persons (Persons)'). series_name
+        is kept as a parameter for interface stability/logging even
+        though it's no longer used to look anything up.
+        """
         result: dict[str, dict] = {}
         for code, towns in sa2_map.items():
-            region_key = f"SA2/{code}"
-            periods = raw.get(region_key) or raw.get(code) or {}
-            if not periods:
+            year_vals_raw = raw.get(code) or {}
+            if not year_vals_raw:
                 continue
+            sa2_name = sa2_name_by_code.get(code)
             for town in towns:
-                year_vals: dict[str, int] = {}
-                for period, vals in periods.items():
-                    m = re.search(r'\b(19|20)\d{2}\b', period)
-                    if not m:
-                        continue
-                    yr = int(m.group(0))
-                    if not (YEAR_START <= yr <= YEAR_END):
-                        continue
-                    v = vals.get(series_name)
-                    if v is not None:
-                        year_vals[str(yr)] = int(v)
+                year_vals: dict[str, int] = {
+                    str(yr): int(v)
+                    for yr, v in year_vals_raw.items()
+                    if YEAR_START <= yr <= YEAR_END
+                }
                 if year_vals:
-                    result[town.slug] = year_vals
+                    result[town.slug] = {"year_vals": year_vals, "sa2_name": sa2_name}
         return result
 
     def _write_results(self, towns, data: dict, source_label: str):
@@ -414,19 +509,35 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         out_dir.mkdir(parents=True, exist_ok=True)
 
         for town in towns:
-            year_vals = data.get(town.slug)
-            if not year_vals:
+            entry = data.get(town.slug)
+            if not entry or not entry.get("year_vals"):
                 self.log.warning(f"  [{town.name}] no ERP data retrieved")
                 self.result.towns_failed.append(town.name)
                 continue
 
+            year_vals = entry["year_vals"]
+            # town.sa2_name (from towns.toml) is now authoritative when
+            # present -- more reliable than parsing it out of live HTML,
+            # which just proved fragile in practice. The live-parsed
+            # value (entry["sa2_name"]) is only a fallback for a town
+            # not yet mapped in the toml -- a new town can still be
+            # added by extending the toml alone, this just makes an
+            # explicit mapping win once one exists.
+            sa2_name = town.sa2_name or entry.get("sa2_name") or town.name
+            if not town.sa2_name and entry.get("sa2_name") and entry["sa2_name"] != town.name:
+                self.log.info(
+                    f"  [{town.name}] using live-discovered SA2 name "
+                    f"'{entry['sa2_name']}' -- consider adding this to "
+                    f"towns.toml as sa2_name for reliability."
+                )
             latest_year = max(year_vals, key=int)
             out = {
-                "town":   town.name,
-                "state":  town.state,
-                "source": source_label,
-                "year":   int(latest_year),
-                "value":  year_vals[latest_year],
+                "town":     town.name,
+                "state":    town.state,
+                "source":   source_label,
+                "sa2_name": sa2_name,
+                "year":     int(latest_year),
+                "value":    year_vals[latest_year],
                 "series_by_year": year_vals,
             }
             out_path = out_dir / f"{town.slug}_population_erp.json"
