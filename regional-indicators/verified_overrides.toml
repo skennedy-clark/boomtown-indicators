@@ -1,0 +1,52 @@
+# regional-indicators/verified_overrides.toml
+# -----------------------------------------------------------------------
+# Specific (town, indicator, year, value) combinations that have been
+# independently checked and confirmed correct, despite the write-time
+# audit flagging them (audit.py's shape-based or ground-truth checks).
+#
+# An override applies ONLY if the value currently being written EXACTLY
+# matches what's recorded here. If the fetched value ever changes (a
+# later revision, a fixed bug upstream, a different year), the override
+# stops applying automatically and the flag returns -- this is not a
+# standing "trust this cell forever" instruction, it's a record that one
+# specific figure was checked.
+#
+# Add an entry only after actually verifying the value -- against a
+# reference document, the original source, or (weaker, note it as such)
+# strong corroborating evidence like --deep-audit's LGA cross-check.
+# `reason` should say what kind of verification it was, so a future
+# reader can judge how much to trust it.
+
+[[override]]
+indicator     = "Non-resident workers on-shift"
+sub_label     = "Non-resident workers (UCL)"
+town          = "Miles"
+year          = 2025
+value         = 260
+reason        = "Matches the 2026 reference workbook exactly (independently cross-validated against a hand-verified source, 2026-09-15)"
+verified_date = "2026-09-15"
+
+[[override]]
+indicator     = "Non-resident workers on-shift"
+sub_label     = "Non-resident workers (UCL)"
+town          = "Wandoan"
+year          = 2025
+value         = 145
+reason        = "Matches the 2026 reference workbook exactly (independently cross-validated against a hand-verified source, 2026-09-15)"
+verified_date = "2026-09-15"
+
+# Candidate, NOT yet added -- weaker evidence than the two above.
+# Moranbah's 2012 NRW figure was flagged by the shape-based check but
+# --deep-audit showed Isaac LGA also had a real +26% swing the same
+# year (strong regional corroboration) -- this is suggestive, not an
+# independent confirmation the way Miles/Wandoan's reference-workbook
+# match was. Steve's call whether that's enough to add:
+#
+# [[override]]
+# indicator     = "Non-resident workers on-shift"
+# sub_label     = "Non-resident workers (UCL)"
+# town          = "Moranbah"
+# year          = 2012
+# value         = <the flagged value -- fill in from the audit output>
+# reason        = "Corroborated by --deep-audit: Isaac LGA also shows a +26% swing in 2012, consistent with a real regional workforce event rather than a miscopy -- not an independent source check"
+# verified_date = "2026-09-17"
