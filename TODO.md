@@ -17,6 +17,39 @@ this file *is* the tracker, versioned alongside the code it describes.
 See `docs/project_proposal.md` for the formal three-extension structure this
 project was proposed under, and how the sections below map onto it.
 
+**North star, restated and staged out by Steve (2026-09-17), worth
+re-reading whenever deep in one fetcher's details — "get it working" is a
+TACTIC toward this, not the goal itself.** Data at LGA / SA2 / UCL scale are
+all genuinely valid and wanted (benchmarking a town against its broader
+context is intentional, not redundancy to eliminate). Design preference:
+extend `towns.toml` to add a new town or a data mapping, not hardcode
+per-town logic in Python — a new town should be addable by editing the toml
+alone. The staged ambition, roughly in order:
+
+1. **Automate this year's work** — the current focus, everything in
+   Fetchers/XLSX data below.
+2. **Generalize it to next year** — the "will it work next year" audit
+   already underway (see Maintenance section): no hardcoded dates, no
+   fragile assumptions that quietly go stale.
+3. **Fork/extend to towns not currently in the booklet/xlsx.** `towns.toml`
+   deliberately already carries towns beyond the current output set — the
+   output side should eventually be extendable to include a new town by
+   config alone, the same way fetching already aims to be.
+4. **Extend to other states and specific new gas-affected regions** — NT
+   explicitly named, **Beetaloo Basin towns** specifically flagged as a real
+   candidate (a genuine NT gas basin, the same shape of thing as the
+   Surat/Bowen Basin coverage already built).
+5. **Go spatial** — DuckDB + GIS, connecting to the "Resource-operation
+   start-date detection" future-scope section elsewhere in this file
+   (spatially joining well/facility data to SA2 polygons).
+6. **Ultimately: generalize to all of Australia**, not just the current
+   CSG-affected Queensland/interstate town set.
+
+Every stage above sits on top of the ones before it working reliably and
+generically — a fix or a design choice made now is worth judging against
+"does this help stage 3-6 too, or does it just patch stage 1" where that's
+a real question, not just against whether it makes today's run pass.
+
 ---
 
 ## Inbox
@@ -211,6 +244,46 @@ _(untriaged — add here, sort later)_
       crude "error|invalid" pattern — tightened to look for actual
       QRSIS/Oracle error markers (`ORA-NNNNN`, `no data found`, etc.)
       instead of generic English words.
+- [x] **The 2026-09-16 "confirmed" values were wrong, just not caught
+      until they broke (2026-09-17) — corrected against Steve's real
+      manual walkthrough of the whole QRSIS wizard, not another guess.**
+      `date_fmt` is actually `"Y2"` for this collection, not `"Y1"`;
+      `from_date`/`to_date` are plain year numbers ("2025", "2001"),
+      never "Year Ended 30 Jun YYYY" — that compound string apparently
+      happened to work on 09-16 but stopped once `to_date` became a
+      dynamic year (2027) beyond what QRSIS actually has, which
+      silently breaks the ENTIRE session (empty region list for every
+      town, not just an out-of-range result) rather than gracefully
+      clipping. **Real fix, more robust than either previous guess:**
+      the fetcher now reads the real "To Date" dropdown directly off
+      the live Time Periods page and uses whatever QRSIS itself says
+      is newest — self-updating every year with no code change needed,
+      rather than computing a guessed future date at all. Caught and
+      fixed a bug in this discovery logic itself during testing: From
+      Date and To Date share the same generic `<select>` element name,
+      so naively taking "the first select with year options" grabbed
+      From Date's default (1991, the oldest) instead — fixed by
+      anchoring on the `to_date` hidden-field marker specifically.
+      **Also rewrote `_parse_output_html` and `_submit_report`'s
+      requested `display_style`** to match the REAL confirmed output
+      table shape (Period as rows, region labels as columns, one table
+      per series) — the original parser assumed a completely different,
+      never-actually-confirmed region-grouped structure.
+      **Tested against the real, verbatim server response Steve
+      captured** (not a synthetic reconstruction): all four regions in
+      his sample output (2 LGA, 2 SA2) parsed with exact correct
+      values matching what his browser showed, full pipeline through
+      `_aggregate` confirmed correct town/year/value/sa2_name mapping.
+      Real, hard evidence this time, not another hypothesis — next live
+      run is the actual confirmation.
+- [ ] Verify the `_parse_output_html` change didn't matter for the
+      earlier run that DID work end-to-end (2026-09-16, before this
+      turn's fixes) — that run's actual response shape was never
+      directly inspected, only its final written values were confirmed
+      correct, so it's possible the old parser was accidentally correct
+      for that specific case. Not expected to cause a regression (the
+      new parser is more precisely matched to confirmed real structure),
+      but worth keeping in mind if anything looks different this time.
 - [ ] **Next: wire this into the workbook.** Targets the SA2-section
       `Population (ERP)` row — the exact same indicator name/section
       already confirmed to collide with the LGA-section version for
@@ -438,14 +511,34 @@ sub-problems, deliberately sequenced:
       match exists, instead of guessing. Confirmed via real test: raises
       correctly on the Goondiwindi collision, and the already-working UCL
       matches (unique indicator name, no collision) are unaffected.
-- [ ] **Still needed — proper `section` parameter.** The current fix
-      converts silent-wrong-answer into loud-error, which is the right
-      immediate safety net, but it doesn't let you actually WRITE to
-      Goondiwindi's LGA or SA2 row — every ambiguous case currently just
-      stops. Real fix: `update_indicator_value(..., section="SA2")` (or
-      LGA/UCL) as an explicit, required disambiguator whenever a sheet
-      has multiple sections, scanning section-by-section rather than
-      whole-sheet.
+- [x] **`section` parameter built and tested (2026-09-16).**
+      `_find_town_indicator_row`/`write_one` now accept `section=
+      "LGA"/"SA2"/"UCL"`, tracking which section each row sits in as it
+      scans (the sheet marks each with its own single-word header row).
+      Tested against a mock reproducing the real Goondiwindi collision:
+      no section still correctly raises AMBIGUOUS (unchanged, backward
+      compatible); `section="LGA"` and `section="SA2"` now correctly
+      resolve to the two different rows; an unmatched section correctly
+      raises not-found rather than crashing; existing UCL matching
+      (unique indicator name, no section needed) unaffected. Built
+      `update_population_erp.py`, targeting `section="SA2"`, matching by
+      `sa2_name` (the real ABS SA2 label) rather than `town.name`.
+      **Caught a real bug while building this:** `fetch_population_erp.py`
+      never actually captured the matched SA2 *name*, only the code —
+      would have silently written under the wrong label for every town
+      whose SA2 name differs from `town.name` (exactly the Toowoomba
+      sub-areas this feature exists to fix). Fixed: `_match_regions` now
+      parses and returns the real name (tested against all 7 real
+      region strings from the live run, including the hyphenated ones —
+      "Toowoomba - Central", "North Toowoomba - Harlaxton", "Broadsound
+      - Nebo" — all extracted correctly), threaded through `_aggregate`
+      and `_write_results` into the cache JSON's new `sa2_name` field.
+      **NOT YET TESTED against a live Excel instance** — the section
+      logic itself is proven via mock, but the actual write against the
+      real workbook hasn't run yet. Also: re-run `fetch_population_erp.py`
+      first before testing the wiring script, since its cache output
+      format changed (added `sa2_name`) — existing cache files from the
+      earlier live run won't have it.
 - [ ] **Name-mapping gap found in the same read-through:** the SA2
       section's row labels are actual ABS SA2 names, which don't map 1:1
       onto `Town.name` in towns.toml. Concretely: `Toowoomba (Central)` /
@@ -592,8 +685,26 @@ sub-problems, deliberately sequenced:
       replicate previous booklets' financial-year aggregation for historical data?
 - [ ] **B.** Toowoomba sub-area booklets: LGA-level figure or SA2-level figure for
       approvals? (SA2 is very sparse for Central/Harlaxton)
-- [ ] **C.** Wallumbilla housing: correct to reuse Roma's SA2 data, or should
-      Wallumbilla housing be flagged as unavailable instead?
+- [x] **C — partially resolved, side effect flagged (2026-09-17).**
+      Cross-checked against the truth workbook: "Roma" and "Roma Surrounds"
+      are both real, distinct SA2 rows with genuinely different Population
+      (ERP) figures (7,083 vs 6,287) — confirms this was a real data-
+      correctness gap, not just a label choice. Fixed in `towns.toml`:
+      Wallumbilla's `sa2_code`/`qgso_sa2` corrected to `307011177`
+      (Roma Surrounds' actual ASGS 2021 code, confirmed via QGSO's own
+      PDF and ABS Census QuickStats — the old `307011178` was genuinely
+      Tara's code, `307011176` was Roma township's own). **Not yet known:
+      whether this breaks Wallumbilla's housing fetch** — `qgso_sa2` is
+      shared with `fetch_qgso_housing.py`, so this change also switches
+      Wallumbilla from reusing Roma's housing data to trying "Roma
+      Surrounds" directly. If that SA2 has no sales/rent data in QRSIS
+      (plausible for a rural/dispersed area), housing may now fetch
+      nothing for Wallumbilla instead of a working proxy. Test
+      `qgso_housing` after this change, not just `population_erp`, before
+      treating this as fully resolved — if housing does break, the real
+      fix is probably a separate field (e.g. only override the SA2 used
+      for population, keep housing on the Roma proxy deliberately) rather
+      than one shared code serving every indicator identically.
 - [ ] **D.** Goondiwindi's SA3 reclassification (30703 → 30701 in ASGS 2021) —
       flag for any cross-year regional-level analysis
 - [ ] **E.** Narrabri / Shepparton / Yarram: no SALM unemployment data — no chart,
