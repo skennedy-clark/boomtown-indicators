@@ -155,14 +155,36 @@ _(untriaged — add here, sort later)_
       against the same synthetic data used to validate the combined
       version — both splits produce identical results (LGA dedup still
       works, UCL/LGA sub-label handling unaffected).
-- [ ] **Still open: override/force mechanism.** Miles and Wandoan are
-      independently confirmed correct (matched the 2026 reference file
-      exactly) but still sit flagged with no way to say "write it
-      anyway" other than manually clearing the cell first. The 4
-      remaining UCL flags (Dysart 2015, Moranbah 2016, Roma 2018,
+- [x] **Override mechanism built and tested (2026-09-17).** New
+      `regional-indicators/verified_overrides.toml` — a git-tracked,
+      human-editable list of specific (town, indicator, sub_label,
+      year, value) combinations independently confirmed correct, each
+      with a `reason` recording what kind of verification it was. Wired
+      into `write_one()` (in `base.py`, so it's automatic for every
+      current and future indicator, not just NRW): a flagged write
+      checks the override list before giving up, and only applies if
+      the value matches EXACTLY — if the fetched value ever changes,
+      the override silently stops applying and the flag returns, never
+      a standing "trust this cell forever" bypass. `WriteAuditReport`
+      extended with an `override_reason` field; its summary line shows
+      BOTH the override and the original flag reason together, so
+      nothing about why a cell was flagged gets hidden just because it
+      was overridden. Tested end-to-end (5 checks: real file loads
+      correctly, exact match works, mismatched value/town correctly
+      don't match, a flagged report correctly becomes safe-to-write
+      with a matching override applied). Seeded with the two
+      confirmed-strong entries: Miles and Wandoan 2025 UCL NRW (both
+      independently matched the 2026 reference workbook exactly).
+      Moranbah 2012 left as a commented-out candidate in the file
+      itself — corroborated by `--deep-audit` (Isaac LGA +26% same
+      year) but that's regional-trend evidence, not an independent
+      source check the way Miles/Wandoan's was; Steve's call whether
+      that's enough to add for real.
+- [ ] The 4 remaining UCL flags (Dysart 2015, Moranbah 2016, Roma 2018,
       Toowoomba UCL 2023) are genuinely still unverified either way —
-      `--deep-audit` gave weak/no corroboration for all four, unlike
-      Moranbah's 2012 (strong corroboration, still unwritten).
+      `--deep-audit` gave weak/no corroboration for all four. Needs an
+      actual historical-source check, not something resolvable from
+      here without live access to old QGSO report editions.
 - [x] `fetch_population_erp.py` — built (2026-09-10), **but QLD-only,
       not the NSW/VIC ABS fetcher originally planned under this name**
       (see naming-collision note below). Currently only works via a
@@ -363,13 +385,24 @@ _(untriaged — add here, sort later)_
       still triggers a write of the identical value) but worth a
       clearer log label eventually (e.g. "already correct, no-op" vs
       "WRITTEN") so a re-run's output is easier to read at a glance.
-- [ ] **Chinchilla's formula cell — still an open decision, now
-      confirmed on multiple separate runs.** `=(Y54-W54)/W54` sits in
-      the Population-ERP-UCL row and has blocked every single write
-      attempt so far. Worth actually resolving: confirm nothing else
-      references it, then clear it — or decide it stays a permanent
-      manual-entry cell going forward, rather than leaving it
-      perpetually flagged.
+- [x] **Chinchilla's formula cell — resolved, and confirms the audit
+      design is working as intended, not a gap in it.** Checked whether
+      anything else in the workbook depends on it: the pattern
+      `=(Y-X)/X` is a real, intentional growth-rate calculation, but it
+      belongs in row 53 (confirmed present there, consistently, in
+      every version of the workbook checked — original 2025, current
+      2025, and the 2026 truth document), not row 54 where it was
+      flagged — the truth document's row 54 is a plain number, meaning
+      whoever built it already cleared exactly this kind of stray
+      formula in this exact spot. Nothing else references row 54
+      specifically. **Steve's decision: delete it manually, re-run** —
+      and confirmed this is the intended workflow going forward, not a
+      one-off fix: audit flags an artifact, a human decides and cleans
+      the sheet, re-run. More of this kind of leftover exploratory-
+      analysis crud is expected across Income/Crime/Housing and the
+      other sheets — connects directly to the existing "generalize
+      row-finding to other sheets" item below, not a surprise when it
+      turns up there too.
 - [ ] **NAMING COLLISION to resolve:** this TODO originally planned
       `fetch_population_erp.py` as the NSW/VIC ABS-based fetcher (line
       below). That name is now taken by the QLD/QGSO fetcher instead.
