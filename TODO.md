@@ -284,6 +284,40 @@ _(untriaged — add here, sort later)_
       for that specific case. Not expected to cause a regression (the
       new parser is more precisely matched to confirmed real structure),
       but worth keeping in mind if anything looks different this time.
+- [x] **CONFIRMED LIVE, FULLY CLEAN (2026-09-17), all fixes verified
+      working together.** `"Discovered real max To Date from the page:
+      2025"` — the discovery logic worked exactly as designed, no
+      guessed/hardcoded year involved. All 12 regions matched, 14/14
+      towns fetched, zero failures. **Wallumbilla = 6,287** — exactly
+      "Roma Surrounds"' real figure from the truth document, confirming
+      the towns.toml fix and this session's QRSIS fixes work correctly
+      together (previously it silently returned Roma township's 7,083
+      instead). Goondiwindi (6,251) and Roma (7,083) both match the
+      truth document exactly too. This indicator is genuinely done on
+      the fetch side — next is wiring `update_population_erp.py`
+      (already built, using the `section="SA2"` parameter) against a
+      real test copy, now that the underlying data is finally
+      trustworthy enough to be worth testing against.
+- [ ] **Wiring confirmed working, with one small real fix needed
+      (2026-09-17).** First live run against the real 2025 file: 11/14
+      written correctly (including Wallumbilla's confirmed-correct
+      6,287), 3 flagged as row-not-found: Dysart, Miles, Wandoan. Root
+      cause: the workbook's own row labels for these two SA2 areas are
+      `"Broadsound-Nebo"` and `"Miles-Wandoan"` — **no spaces around
+      the hyphen** — while QRSIS itself (and the toml, until now)
+      calls them `"Broadsound - Nebo"` / `"Miles - Wandoan"` — **with**
+      spaces. Every other hyphenated SA2 name that worked (Roma
+      Surrounds, Toowoomba - Central, North Toowoomba - Harlaxton) uses
+      consistent spacing in the workbook; this is a real inconsistency
+      in the workbook's own labeling, not a data error, and not a
+      pattern worth generalizing a fuzzy-match around (the row-finder's
+      "no guessing" contract is a deliberate safety property, not
+      something to weaken for two towns). Fixed via `towns.toml`
+      directly instead: `sa2_name` for Dysart/Miles/Wandoan corrected
+      to the exact no-space workbook spelling, with a note on each
+      explaining the QRSIS-vs-workbook discrepancy for future
+      reference. Re-run the wiring script to confirm all 14 write
+      clean now.
 - [ ] **Next: wire this into the workbook.** Targets the SA2-section
       `Population (ERP)` row — the exact same indicator name/section
       already confirmed to collide with the LGA-section version for
