@@ -40,6 +40,8 @@ cell-by-cell, which matters at this sheet's real size (~170 rows).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import xlwings as xw
 
 YEAR_HEADER_ROW = 2          # plain calendar year, e.g. 2001
@@ -187,6 +189,52 @@ def read_existing_series(sheet: "xw.Sheet", row: int, exclude_col: int | None = 
     return series
 
 
+OVERRIDES_PATH = Path(__file__).parent.parent.parent / "verified_overrides.toml"
+_overrides_cache: list[dict] | None = None
+
+
+def _load_overrides() -> list[dict]:
+    """Load and cache regional-indicators/verified_overrides.toml --
+    specific (town, indicator, year, value) combinations independently
+    confirmed correct despite an audit flag. Cached at module level
+    since this is read on every write_one() call within a run; a
+    missing file just means no overrides are configured, not an error.
+    """
+    global _overrides_cache
+    if _overrides_cache is not None:
+        return _overrides_cache
+
+    if not OVERRIDES_PATH.exists():
+        _overrides_cache = []
+        return _overrides_cache
+
+    import tomllib
+    with open(OVERRIDES_PATH, "rb") as f:
+        data = tomllib.load(f)
+    _overrides_cache = data.get("override", [])
+    return _overrides_cache
+
+
+def _check_override(town: str, indicator: str, sub_label: str | None, year: int, value) -> str | None:
+    """Returns the override's `reason` string if this exact
+    (town, indicator, sub_label, year, value) combination is a
+    confirmed override, else None. The value must match EXACTLY -- an
+    override doesn't apply just because the town/indicator/year line up;
+    if the fetched value changes, the override silently stops applying
+    and the flag returns, rather than trusting a stale confirmation.
+    """
+    for entry in _load_overrides():
+        if (
+            entry.get("town") == town
+            and entry.get("indicator") == indicator
+            and entry.get("sub_label") == sub_label
+            and entry.get("year") == year
+            and entry.get("value") == value
+        ):
+            return entry.get("reason", "verified override, no reason recorded")
+    return None
+
+
 def write_one(
     sheet, town: str, indicator: str, sub_label: str | None, year: int, value,
     source_series: dict | None = None, section: str | None = None,
@@ -217,6 +265,14 @@ def write_one(
     year), update_population_nrw_lga.py (LGA-level, source_series
     available), and update_population_erp.py (SA2-level, section="SA2"
     required to avoid the LGA-section collision).
+
+    If an audit flags the write, automatically checks
+    verified_overrides.toml for an exact (town, indicator, sub_label,
+    year, value) match before giving up -- an override lets a
+    specifically-confirmed figure through despite the flag, without
+    weakening the audit itself for anything else. See that file's own
+    header for the format and the verification standard expected before
+    adding an entry.
     """
     from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 
@@ -233,6 +289,8 @@ def write_one(
         historical_result = audit_historical_series(existing_series, source_series)
 
     report = WriteAuditReport(cell_result, series_result, historical_result)
+    if not report.safe_to_write:
+        report.override_reason = _check_override(town, indicator, sub_label, year, value)
 
     if report.safe_to_write:
         cell.value = value

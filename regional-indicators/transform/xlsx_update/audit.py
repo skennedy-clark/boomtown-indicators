@@ -327,9 +327,16 @@ class WriteAuditReport:
     cell_audit: CellAuditResult
     series_audit: SeriesAuditResult
     historical_audit: "HistoricalAuditResult | None" = None
+    override_reason: str | None = None
 
     @property
     def safe_to_write(self) -> bool:
+        if self.override_reason is not None:
+            # A verified override always wins -- it exists specifically
+            # to write through a flag that's been independently checked
+            # and confirmed correct. See verified_overrides.toml.
+            return True
+
         cell_ok = not self.cell_audit.needs_review
 
         if self.historical_audit is not None:
@@ -357,6 +364,13 @@ class WriteAuditReport:
                     f"HISTORICAL {label}: {c.year} existing={c.existing_value:,} vs "
                     f"source={c.source_value:,} ({c.ratio:.1f}x)"
                 )
+        if self.override_reason is not None:
+            # Show the override AND whatever it's overriding -- full
+            # transparency about why this was flagged in the first
+            # place, not just that it got waved through.
+            if parts:
+                return f"OVERRIDE APPLIED ({self.override_reason}) — originally flagged: " + " | ".join(parts)
+            return f"OVERRIDE APPLIED ({self.override_reason})"
         if not parts:
             return f"OK ({self.cell_audit.state.value}, {self.series_audit.flag.value})"
         return " | ".join(parts)
