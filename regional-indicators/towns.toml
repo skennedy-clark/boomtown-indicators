@@ -84,7 +84,7 @@ postcodes        = ["4415"]
 sa2_code         = "307011175"
 qgso_sa2         = "307011175"
 qgso_lga         = "LGA/37310"
-sa2_name         = "Miles - Wandoan"
+sa2_name         = "Miles-Wandoan"
 sa3_code         = "30701"
 lga              = "Western Downs"
 qps_division     = "Miles"
@@ -94,7 +94,7 @@ benchmark        = false
 district         = "Miles and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-miles-wandoan.pdf"
-notes            = "SA2 renamed Miles - Wandoan in ASGS 2021; Wandoan shares this SA2"
+notes            = "SA2 renamed Miles-Wandoan in ASGS 2021; Wandoan shares this SA2. NOTE 2026-09-17: sa2_name stored WITHOUT spaces around the hyphen to match the actual workbook row label exactly -- QRSIS itself displays this region as \"Miles - Wandoan\" (with spaces), an inconsistency in the workbook's own labeling, not a data error."
 
 [towns.tara]
 name             = "Tara"
@@ -124,7 +124,7 @@ postcodes        = ["4419"]
 sa2_code         = "307011175"
 qgso_sa2         = "307011175"
 qgso_lga         = "LGA/37310"
-sa2_name         = "Miles - Wandoan"
+sa2_name         = "Miles-Wandoan"
 sa3_code         = "30701"
 lga              = "Western Downs"
 qps_division     = "Wandoan"
@@ -134,7 +134,7 @@ benchmark        = false
 district         = "Wandoan and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-miles-wandoan.pdf"
-notes            = "Wandoan merged into Miles - Wandoan (307011175) in ASGS 2021. Shares SA2 data with Miles."
+notes            = "Wandoan merged into Miles-Wandoan (307011175) in ASGS 2021. Shares SA2 data with Miles. NOTE 2026-09-17: sa2_name stored WITHOUT spaces around the hyphen to match the actual workbook row label exactly -- QRSIS itself displays this region as \"Miles - Wandoan\" (with spaces)."
 
 [towns.wallumbilla]
 name             = "Wallumbilla"
@@ -204,7 +204,7 @@ postcodes        = ["4745"]
 sa2_code         = "312011338"
 qgso_sa2         = "312011338"
 qgso_lga         = "LGA/33980"
-sa2_name         = "Broadsound - Nebo"
+sa2_name         = "Broadsound-Nebo"
 sa3_code         = "31201"
 lga              = "Isaac"
 qps_division     = "Dysart"
@@ -214,7 +214,7 @@ benchmark        = false
 district         = "Dysart and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-broadsound-nebo.pdf"
-notes            = "Dysart absorbed into Broadsound - Nebo (312011338) in ASGS 2021. Unemployment figures cover a wide rural area. Flag in outputs."
+notes            = "Dysart absorbed into Broadsound-Nebo (312011338) in ASGS 2021. Unemployment figures cover a wide rural area. Flag in outputs. NOTE 2026-09-17: sa2_name stored WITHOUT spaces around the hyphen (\"Broadsound-Nebo\") to match the actual workbook row label exactly -- QRSIS itself displays this region as \"Broadsound - Nebo\" (with spaces), an inconsistency in the workbook's own labeling, not a data error. sa2_name here is for workbook-row matching, not necessarily QRSIS's exact display string."
 
 [towns.toowoomba]
 name             = "Toowoomba"

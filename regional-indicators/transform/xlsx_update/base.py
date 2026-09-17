@@ -85,8 +85,12 @@ def _find_year_column(sheet: "xw.Sheet", year: int) -> int:
     return new_col
 
 
+SECTION_LABELS = {"LGA", "SA2", "UCL"}
+
+
 def _find_town_indicator_row(
-    sheet: "xw.Sheet", town: str, indicator: str, sub_label: str | None
+    sheet: "xw.Sheet", town: str, indicator: str, sub_label: str | None,
+    section: str | None = None,
 ) -> int:
     """Locate the row for `indicator` (optionally disambiguated by
     `sub_label`) inside `town`'s block, scanning the WHOLE sheet and
@@ -95,6 +99,17 @@ def _find_town_indicator_row(
     -- confirmed on real data: Goondiwindi's 'Population (ERP)' differs
     by 42% between its LGA and SA2 rows). Reads columns A:B in a single
     bulk range read.
+
+    section: optional disambiguator, one of "LGA"/"SA2"/"UCL", for
+    sheets with multiple parallel geography-level sections. The sheet
+    marks each section with its own header row (column A = exactly
+    "LGA", "SA2", or "UCL", column B empty) -- this scan tracks which
+    section it's currently inside as it goes, and when `section` is
+    given, only counts a match if it's in that section. When section is
+    omitted, behaviour is unchanged from before: scans every section,
+    and still raises AMBIGUOUS rather than guessing if more than one
+    genuinely matches -- section is how you resolve that once you've
+    hit it, not a requirement for every call.
     """
     used = sheet.used_range
     max_row = used.last_cell.row
@@ -105,14 +120,21 @@ def _find_town_indicator_row(
 
     matches: list[int] = []
     in_town_block = False
+    current_section: str | None = None
     for offset, (col_a, col_b) in enumerate(ab_values):
         row = FIRST_DATA_ROW + offset
 
         if col_a and col_b is None:
+            if col_a in SECTION_LABELS:
+                current_section = col_a
+                in_town_block = False  # a section header is never itself a town row
+                continue
             in_town_block = col_a == town
             continue
 
         if in_town_block and col_a == indicator:
+            if section is not None and current_section != section:
+                continue
             if sub_label is None or col_b == sub_label:
                 matches.append(row)
 
@@ -122,7 +144,8 @@ def _find_town_indicator_row(
     if len(matches) == 0:
         raise ValueError(
             f"Could not find indicator '{indicator}'"
-            f"{f' (sub-label {sub_label!r})' if sub_label else ''} "
+            f"{f' (sub-label {sub_label!r})' if sub_label else ''}"
+            f"{f' (section {section!r})' if section else ''} "
             f"under town '{town}' in sheet '{sheet.name}'. "
             f"Check spelling/casing against the sheet exactly -- "
             f"this function does not guess or fuzzy-match, and does not "
@@ -133,8 +156,8 @@ def _find_town_indicator_row(
         f"AMBIGUOUS: {len(matches)} rows match indicator '{indicator}'"
         f"{f' (sub-label {sub_label!r})' if sub_label else ''} "
         f"under town '{town}' in sheet '{sheet.name}' (rows {matches}). "
-        f"Pass sub_label to disambiguate, or check which row is correct "
-        f"before proceeding."
+        f"Pass section='LGA'/'SA2'/'UCL' (or sub_label) to disambiguate, "
+        f"or check which row is correct before proceeding."
     )
 
 
@@ -164,7 +187,10 @@ def read_existing_series(sheet: "xw.Sheet", row: int, exclude_col: int | None = 
     return series
 
 
-def write_one(sheet, town: str, indicator: str, sub_label: str | None, year: int, value, source_series: dict | None = None):
+def write_one(
+    sheet, town: str, indicator: str, sub_label: str | None, year: int, value,
+    source_series: dict | None = None, section: str | None = None,
+):
     """Shared audited-write helper: run both pre-write audits, write
     only if clean. Returns (WriteAuditReport, cell_address).
 
@@ -177,15 +203,25 @@ def write_one(sheet, town: str, indicator: str, sub_label: str | None, year: int
     produced (Isaac's 2012 NRW figure looked like an isolated miscopy
     from its shape, but exactly matches the real source).
 
-    Used by both update_population_nrw.py (UCL-level, no source_series
-    -- the UCL/FTE source only gives the latest year) and
-    update_population_nrw_lga.py (LGA-level, source_series available --
-    the LGA source gives full multi-year history).
+    section, when provided ("LGA"/"SA2"/"UCL"), disambiguates sheets
+    with multiple parallel geography-level sections that can share both
+    a town name and an indicator name -- e.g. Population's
+    'Population (ERP)' row exists in BOTH the LGA and SA2 sections for
+    Goondiwindi, with genuinely different values (confirmed 42%
+    difference). Without section, a genuine collision still raises
+    AMBIGUOUS rather than guessing -- this is how you resolve it once
+    you've hit it, not a requirement for every call.
+
+    Used by update_population_ucl.py and update_population_nrw.py
+    (UCL-level, no source_series -- those sources only give the latest
+    year), update_population_nrw_lga.py (LGA-level, source_series
+    available), and update_population_erp.py (SA2-level, section="SA2"
+    required to avoid the LGA-section collision).
     """
     from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 
     col = _find_year_column(sheet, year)
-    row = _find_town_indicator_row(sheet, town, indicator, sub_label)
+    row = _find_town_indicator_row(sheet, town, indicator, sub_label, section=section)
     cell = sheet.cells(row, col)
 
     cell_result = audit_cell(cell, value)
