@@ -68,13 +68,13 @@ sa2_name         = "Wambo"
 sa3_code         = "30702"
 lga              = "Western Downs"
 qps_division     = "Dalby"
-bom_station      = "41240"
+bom_station      = "41522"
 csg_notice_year  = 2009
 benchmark        = false
 district         = "Dalby and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-wambo.pdf"
-notes            = "Dalby has no SA2-level SALM entry; Wambo (307021183) used as proxy. Flag in outputs."
+notes            = "Dalby has no SA2-level SALM entry; Wambo (307021183) used as proxy. Flag in outputs. RAINFALL FIXED 2026-09-21: bom_station corrected from 41240 to 41522 (Dalby Airport), the true published station -- 41240 was a SILO-availability substitute that broke continuity with the existing published record. 41522 is NOT in SILO; fetcher will fail clearly with a BOM link until manual_rainfall_data.toml has entries for it."
 
 [towns.miles]
 name             = "Miles"
@@ -108,13 +108,13 @@ sa2_name         = "Tara"
 sa3_code         = "30701"
 lga              = "Western Downs"
 qps_division     = "Tara"
-bom_station      = "41099"
+bom_station      = "42086"
 csg_notice_year  = 2009
 benchmark        = false
 district         = "Tara and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-tara.pdf"
-notes            = "BOM station changed from 42104 (Woodlea, not in SILO) to 41099 (Tara Township). Data continuity not verified."
+notes            = "RAINFALL FIXED 2026-09-21: bom_station corrected to 42086 (Woodlea) -- the true published station, matching the Exogenous tab. The old note here claimed the original station was 42104, a different number, and that 41099 (Tara Township) was substituted for SILO availability -- confirmed directly against SILO: 42086 IS actually in SILO, so no substitute was ever needed. Steve confirmed 042086/Woodlea as correct against the published record."
 
 [towns.wandoan]
 name             = "Wandoan"
@@ -168,13 +168,13 @@ sa2_name         = "Goondiwindi"
 sa3_code         = "30701"
 lga              = "Goondiwindi"
 qps_division     = "Goondiwindi"
-bom_station      = "41038"
+bom_station      = "41507"
 csg_notice_year  = 2009
 benchmark        = false
 district         = "Goondiwindi and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-goondiwindi.pdf"
-notes            = "BOM station changed to 41038 (Post Office). Stations 41507 and 41559 (used in prior booklets) not in SILO."
+notes            = "RAINFALL FIXED 2026-09-21: bom_station corrected to 41507 (New Kildonan), the true pre-2020 published station -- 41038 was a SILO-availability substitute. Confirmed directly against SILO: 41507 is genuinely NOT in SILO, so this town needs manual_rainfall_data.toml entries. IMPORTANT for whoever enters that data: the published record shows a station TRANSITION -- \"New Kildonan 041507 / WTP (2020→)\" -- meaning 2020 onward should use the WTP station's own readings, not New Kildonan's continued data, if BOM's site distinguishes them. WTP's own station number is not yet known. The current towns.toml schema can only hold one bom_station per town -- doesn't yet represent this transition; using 41507 here is correct for the pre-2020 record but may not be for 2020+ once the WTP number is found."
 
 [towns.moranbah]
 name             = "Moranbah"
@@ -188,13 +188,13 @@ sa2_name         = "Moranbah"
 sa3_code         = "31201"
 lga              = "Isaac"
 qps_division     = "Moranbah"
-bom_station      = "34038"
+bom_station      = "34035"
 csg_notice_year  = 2009
 benchmark        = false
 district         = "Moranbah and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-moranbah.pdf"
-notes            = "BOM station changed to 34038 (WTP). Station 34035 (Airport, used in prior booklets) not in SILO."
+notes            = "RAINFALL FIXED 2026-09-21: bom_station corrected from 34038 (WTP) back to 34035 (Moranbah Airport), the true published station used in prior booklets. 34038 was a SILO-availability substitute that broke continuity with the existing published record. 34035 is NOT in SILO; fetcher will fail clearly with a BOM link until manual_rainfall_data.toml has entries for it."
 
 [towns.dysart]
 name             = "Dysart"
@@ -342,7 +342,7 @@ sa2_code         = "212031483"
 sa2_name         = "Yarram"
 sa3_code         = "21203"
 lga              = "Wellington"
-bom_station      = "85151"
+bom_station      = "85193"
 benchmark        = false
 district         = "Yarram and District"
 cover_photo      = "cover.jpg"

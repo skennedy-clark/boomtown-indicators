@@ -1,0 +1,35 @@
+# regional-indicators/manual_rainfall_data.toml
+# -----------------------------------------------------------------------
+# Manually-entered monthly rainfall for towns whose TRUE, published BOM
+# station (see towns.toml's bom_station) is not in SILO's Patched Point
+# Dataset. Deliberately NOT auto-substituted with a different SILO
+# station -- continuity with the existing published record matters more
+# than automated availability. See fetch_bom_rainfall.py's docstring and
+# TODO.md for the full reasoning.
+#
+# When a town's bom_station isn't found in SILO, fetch_bom_rainfall.py
+# looks here for that (town, year). If present, the 12 monthly figures
+# are run through the SAME total/summer/winter aggregation SILO-sourced
+# data gets -- fully compatible with everything downstream, just
+# source-labelled as manual. If absent, the fetcher fails clearly with
+# a direct link to BOM's Climate Data Online page for that exact
+# station, for a human to open in a real browser (BOM blocks automated
+# access to that page, but ordinary browsing is fine) and read the
+# monthly figures off directly.
+#
+# Enter whatever months you have -- a partial year is fine, it just
+# won't count as a "complete year" for historic-average purposes (same
+# rule SILO data already follows). Use null/leave a month out entirely
+# if genuinely unknown for that month, rather than guessing 0.
+#
+# Format: one [[month]] entry per (town, year, month). value is in mm.
+
+# Example (remove once real entries exist):
+# [[month]]
+# town          = "Dalby"
+# year          = 2025
+# month         = 1
+# value_mm      = 123.4
+# entered_by    = "Steve"
+# entered_date  = "2026-09-21"
+# source_note   = "Read from BOM CDO, station 041522 (Dalby Airport)"
