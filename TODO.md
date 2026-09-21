@@ -369,6 +369,141 @@ _(untriaged — add here, sort later)_
       invalid, and the name-search fallback found nothing genuinely
       matching "Yarram" in Victoria. Worth a manual look at SILO's
       station list for the correct Yarram, VIC station.
+- [x] **Yarram's station fixed (2026-09-17/21).** 85151 turned out to
+      be real and currently active — confirmed via BOM's own climate
+      archive ("Yarram Airport", live daily observations) — but SILO's
+      Patched Point Dataset simply doesn't include it. Found the real
+      fix via SILO's own station-name search directly (the fetcher's
+      own name-search fallback oddly didn't surface it): **station
+      85193, literally named "YARRAM"** (-38.560, 146.670, VIC,
+      elevation 18m). Independently double-confirmed by Steve against
+      BOM's own daily/monthly rainfall data pages for 85193 directly —
+      two separate sources agreeing, not just a name match. `towns.toml`
+      corrected, re-run confirmed 17/17.
+- [x] **Major policy correction (2026-09-21), prompted by Steve
+      checking rainfall against the actual published Exogenous tab in
+      the real workbook — do NOT auto-substitute a different SILO
+      station when the true one isn't found.** Continuity with years of
+      already-published data matters more than automated availability.
+      Confirmed real, concrete cases the old auto-substitution policy
+      got wrong: Dalby (published station 41522, silently substituted
+      with 41240), Moranbah (published 34035, substituted with 34038)
+      — both fixed in `towns.toml` to the true station. **New towns
+      with no prior published history are the one legitimate case for
+      picking the nearest SILO-available station** — that's a one-time
+      decision made by hand when adding the town (e.g. via the
+      `nearest-bom-station` tool, confirmed working — its data source,
+      `bom.gov.au/climate/data/lists_by_element/stations.txt`, is a
+      plain static catalog, genuinely not subject to the same
+      anti-scraping block as BOM's interactive data portal), not
+      something the fetcher should do automatically at run time.
+- [x] **Investigated BOM direct access as an alternative to SILO —
+      confirmed not viable, for two separate, real reasons (2026-09-21).**
+      (1) BOM's Climate Data Online web portal (`jsp/ncc/cdio/weatherData`)
+      explicitly blocks automated access — a real, stated policy
+      ("you should stop"), not a technical hurdle to route around; using
+      browser automation (Selenium/Playwright) specifically to defeat a
+      detected-and-blocked automation attempt would be circumventing an
+      explicit access policy, not solving a bug — decided not to pursue
+      this regardless of how legitimate the underlying use is. (2) BOM's
+      anonymous FTP (`ftp2.bom.gov.au/anon/gen`) was tested directly and
+      connects fine, but its own README confirms it only carries
+      *current* forecasts/warnings/observations/charts (radar, satellite,
+      NWP, aviation products) — historical station climate records are
+      explicitly a separate, PAID "registered user" product, with only
+      non-real samples free. Not a path to historical rainfall data.
+      Don't revisit either path without a genuinely new reason to think
+      something's changed.
+- [x] **Built: manual-entry fallback + full fetcher redesign
+      (2026-09-21).** New `regional-indicators/manual_rainfall_data.toml`
+      — a human reads monthly figures directly off BOM's CDO page (real
+      browser traffic, not blocked) and enters them; the fetcher runs
+      manual entries through the EXACT SAME total/summer/winter
+      aggregation SILO data gets (confirmed via a full round-trip test:
+      12 real monthly figures → correct total/summer/winter split,
+      correctly never flagged as "synthetic" since manual entries use a
+      distinct source-code marker from SILO's interpolation flag).
+      `fetch_bom_rainfall.py` rewritten: auto-substitution removed
+      entirely; when the true station isn't in SILO, checks the manual
+      file first, and if nothing there, fails with a direct clickable
+      link to that station's BOM CDO page rather than a generic error.
+      Also surfaced, genuinely good news: the fetcher ALREADY computed
+      summer/winter splits all along (`_aggregate()`'s `summer`/`winter`
+      keys) — the earlier "we need seasonal not just yearly" concern was
+      about the logs only ever printing the annual total, not a real gap
+      in the underlying data.
+- [x] **Steve declined the browser-automation route (Selenium against
+      BOM's climate/data/ form) — correctly, and worth recording why:
+      not because it wouldn't technically work, but because it's still
+      automated access to a service that's explicitly stated it doesn't
+      want that, just via a page their bot-detection hasn't caught up
+      to yet. Building around exploiting that gap would be circumventing
+      an explicit policy, not solving a technical problem — declined
+      regardless of how legitimate the underlying research use is.**
+      Confirmed the actual right path instead: Steve reading BOM's site
+      himself and entering figures into `manual_rainfall_data.toml`.
+- [x] **All 12 stations tested directly against SILO (2026-09-21),
+      using Steve's confirmed list of true published stations —
+      genuinely good news: only 2 need manual entry, not 5.** Chinchilla
+      (42078), Dalby (41522), Dysart (35109), Miles (42023), Narrabri
+      (54038), Roma (43091), **Tara (42086)**, Toowoomba (41529),
+      Wallumbilla (43043), Wandoan (35029) are ALL confirmed genuinely
+      in SILO — the earlier Dalby/Tara substitutions turn out to have
+      been unnecessary; both true stations were available in SILO all
+      along (or added to SILO's PPD since the original substitution
+      decision, years ago). Only **Goondiwindi (41507)** and
+      **Moranbah (34035)** are confirmed NOT in SILO — genuinely need
+      `manual_rainfall_data.toml` entries. `towns.toml` corrected for
+      all of Tara/Goondiwindi/Wandoan/Dalby/Moranbah to match Steve's
+      confirmed list exactly.
+      **Still open, Goondiwindi specifically:** the published record
+      shows a real station transition — "New Kildonan 041507 / WTP
+      (2020→)" — meaning 2020-onward figures should come from the WTP
+      station specifically, not New Kildonan continued. WTP's own
+      station number isn't known yet. Since 41507 isn't in SILO either
+      way, this doesn't block automation (manual entry is needed
+      regardless), but whoever enters Goondiwindi's manual data needs
+      to know which station's numbers to actually read for 2020+.
+      **Wandoan's "TM (2021→)" transition is real per the published
+      record too, but moot for automation** — 35029 (the pre-2021
+      station) is confirmed IN SILO, so the fetcher works fine either
+      way; the transition would only matter for exact continuity if
+      SILO's own 35029 data happens to reflect the same underlying
+      station change already (unconfirmed either way, not urgent).
+- [x] **CONFIRMED LIVE (2026-09-21): 15/17 towns clean via SILO alone,
+      no regressions.** Real run against the corrected `towns.toml`:
+      Dalby (538.4mm) and Tara (475.8mm) both succeed directly through
+      their true published stations, exactly as the direct SILO test
+      predicted. The no-substitution policy held correctly even when
+      tested under real pressure — SILO's own name-search surfaced
+      `34038 MORANBAH WATER TREATMENT PLANT` as an available
+      alternative for Moranbah, and the fetcher correctly did NOT
+      silently substitute it, just logged it as information and still
+      failed cleanly with the BOM link. Yarram briefly regressed back
+      to the old 85151 in one run (likely an unsynced local edit,
+      nothing wrong with the design) and was confirmed fixed on
+      re-check — 85193 now used correctly. Genuinely done: `bom_rainfall`
+      is now fully policy-correct (published-station continuity over
+      automated convenience), with exactly two towns (Goondiwindi,
+      Moranbah) waiting on manual entries, both understood and
+      expected, not bugs.
+- [x] **Declined a browser-automation (Selenium) route Steve found
+      partial success with, and worth recording why clearly — not
+      rejected for not working, rejected on principle (2026-09-21).**
+      Using Selenium to drive a real browser through BOM's climate-data
+      form and download files is still automated access to a service
+      that's explicitly stated it doesn't want that (the same policy
+      that blocked the CDO endpoint directly) — it just uses a page
+      their bot-detection hasn't caught up to yet. Building around
+      exploiting that gap would be circumventing an explicit access
+      policy, not solving a technical problem, regardless of how
+      legitimate the underlying research use is. Declined to help
+      extend, debug, or integrate this into the pipeline. The actually-
+      correct path — Steve reading BOM's site himself and entering
+      figures into `manual_rainfall_data.toml` — is what's actually
+      being used, and it's already tested and working.
+      SILO's own 35029 data happens to reflect the same underlying
+      station change already (unconfirmed either way, not urgent).
 - [x] **Full sweep confirms all three xlsx write scripts consistent and
       reproducible (2026-09-16):** ran `update_population_nrw.py`,
       `update_population_nrw_lga.py`, and `update_population_ucl.py`
