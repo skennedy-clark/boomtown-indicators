@@ -113,6 +113,11 @@ try:
 except ImportError:
     raise ImportError("pip install requests")
 
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    raise ImportError("pip install beautifulsoup4 lxml")
+
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 SILO_BASE        = "https://www.longpaddock.qld.gov.au/cgi-bin/silo"
@@ -126,6 +131,15 @@ BOM_CDO_URL        = (
     "https://www.bom.gov.au/jsp/ncc/cdio/weatherData/av"
     "?p_nccObsCode=139&p_display_type=dataFile&p_stn_num={station}"
 )
+
+BOM_AVERAGES_URL = "https://www.bom.gov.au/climate/averages/tables/cw_{station}.shtml"
+# Confirmed genuinely accessible (2026-09-22, verified independently via
+# both web_fetch and a raw curl request -- real HTTP 200, real content).
+# A DIFFERENT BOM product from the interactive Climate Data Online portal
+# that blocks automated access -- this is their static "Climate Averages"
+# tables, not subject to the same block. Confirmed real row shape: label
+# cell, 12 month cells, Annual cell, years-of-data cell, date-range cell
+# (16 cells total for the "Mean rainfall (mm)" row specifically).
 
 # Source codes in daily_rain_source column
 CODE_SYNTHETIC   = 15   # interpolated/patched — flag if >10% of year
@@ -253,7 +267,82 @@ class BOMRainfallFetcher(BaseFetcher):
         if not annual:
             self.result.towns_failed.append(town.name)
             return
-        self._write_cache(town, station, annual, patched_years, historic_avg, source_label, source_url)
+        bom_official_avg, bom_official_note = self._fetch_official_historic_average(station, town.name)
+        self._write_cache(
+            town, station, annual, patched_years, historic_avg, source_label, source_url,
+            bom_official_avg, bom_official_note,
+        )
+
+    def _fetch_official_historic_average(self, station: str, town_name: str) -> tuple[float | None, str]:
+        """Fetch BOM's own official 'Mean rainfall (mm) Annual' figure
+        for this station from their Climate Averages page -- confirmed
+        genuinely accessible (2026-09-22), a different BOM product from
+        the interactive portal that blocks automated access.
+
+        Returns (value, note). value is None if genuinely unavailable
+        (network error, station not on this page, unexpected page
+        structure) -- the caller falls back to keeping whatever's
+        already in the workbook rather than blanking it or guessing,
+        per Steve's explicit instruction, but the note always explains
+        what happened so it's visible either way.
+        """
+        url = BOM_AVERAGES_URL.format(station=station)
+        try:
+            resp = requests.get(url, timeout=30,
+                                 headers={"User-Agent": "boomtown-indicators/1.0 (UQ research pipeline)"})
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            target_row = None
+            for row in soup.find_all("tr"):
+                first_cell = row.find("td")
+                if first_cell and "Mean rainfall" in first_cell.get_text():
+                    target_row = row
+                    break
+
+            if target_row is None:
+                return None, (
+                    f"BOM Climate Averages page for station {station} loaded, but no "
+                    f"'Mean rainfall' row was found -- page structure may have changed. "
+                    f"Kept the existing Historic Average; worth checking manually: {url}"
+                )
+
+            cells = target_row.find_all("td")
+            if len(cells) < 15:
+                return None, (
+                    f"BOM Climate Averages page for station {station} loaded, but the "
+                    f"rainfall row has an unexpected shape ({len(cells)} cells, expected "
+                    f"18: label, 12 months, Annual, years, dates, plot, map). Kept the "
+                    f"existing Historic Average; worth checking manually: {url}"
+                )
+
+            # Confirmed real row shape (2026-09-22, verified against the live
+            # page, not just an isolated snippet): [0]=label, [1..12]=Jan..Dec,
+            # [13]=Annual, [14]=years-of-data, [15]=date-range, [16..17]=empty
+            # plot/map icon cells. Indexed from the START, not the end -- an
+            # earlier version used cells[-3]/cells[-2] and silently grabbed the
+            # date-range cell instead of Annual, because the real page has 18
+            # cells (with trailing plot/map icons) not the 16 an isolated test
+            # snippet assumed. Fixed positions from the start are stable
+            # regardless of how many decorative cells follow.
+            annual_text = cells[13].get_text(strip=True)
+            annual_value = float(annual_text)
+            years_text = cells[14].get_text(strip=True)
+            self.log.info(
+                f"  [{town_name}] BOM official historic average: {annual_value} mm "
+                f"(station {station}, {years_text} years of record)"
+            )
+            return annual_value, (
+                f"BOM's own official Mean Annual Rainfall for station {station}, "
+                f"{years_text} years of record: {url}"
+            )
+
+        except Exception as exc:
+            return None, (
+                f"Could not fetch BOM's official historic average for station "
+                f"{station} ({exc}). Kept the existing Historic Average; worth "
+                f"checking manually: {BOM_AVERAGES_URL.format(station=station)}"
+            )
 
     def _monthly_from_manual_data(self, town_name: str) -> dict:
         """Convert manual_rainfall_data.toml entries for this town into the
@@ -467,6 +556,8 @@ class BOMRainfallFetcher(BaseFetcher):
         historic_avg:  float | None,
         source_label:  str,
         source_url:    str,
+        bom_official_avg:  float | None = None,
+        bom_official_note: str = "",
     ):
         in_range = {yr: v for yr, v in annual.items() if YEAR_START <= yr <= YEAR_END}
 
@@ -503,11 +594,13 @@ class BOMRainfallFetcher(BaseFetcher):
             "note": (
                 f"Rainfall from {source_label}, station {station}, aggregated to "
                 f"annual totals. Summer = Jan–Mar + Oct–Dec; Winter = Apr–Sep. "
-                f"Historic average = mean of {len(annual)} complete years in record "
-                f"(from {min(annual)} to {max(annual)})."
+                f"Historic average (self-computed) = mean of {len(annual)} complete "
+                f"years in record (from {min(annual)} to {max(annual)})."
                 f"{manual_note}{patch_note}"
             ),
             "historic_avg_mm": historic_avg,
+            "bom_official_historic_avg_mm":  bom_official_avg,
+            "bom_official_historic_avg_note": bom_official_note,
             "indicators": {
                 "rainfall":        {str(yr): v["total"]  for yr, v in in_range.items()},
                 "rainfall_summer": {str(yr): v["summer"] for yr, v in in_range.items()},
