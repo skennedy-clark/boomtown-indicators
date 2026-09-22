@@ -487,6 +487,84 @@ _(untriaged — add here, sort later)_
       automated convenience), with exactly two towns (Goondiwindi,
       Moranbah) waiting on manual entries, both understood and
       expected, not bugs.
+- [x] **`update_rainfall.py` first real run found and fixed a genuine
+      bug (2026-09-22): wrote 2025's data to column AA instead of Z.**
+      Root cause confirmed directly against the real files: the
+      Exogenous sheet's `used_range` reports the sheet-wide column
+      extent (Z/26 in both the 2025 original and 2026 final files) --
+      but that's from UNRELATED content elsewhere in the sheet
+      (Education/Fuel sections further down), not from the Rainfall
+      section's own year headers, which genuinely stop at Y (2024) in
+      the pre-update file. Trusting `used_range.last_cell.column` as
+      "where the year data ends" was the bug -- fixed to search row 1
+      itself for the rightmost real year value and append directly
+      after that, ignoring whatever else the sheet's used_range
+      reports. Tested against a mock reproducing the exact real
+      scenario (real years through Y, misleading used_range at Z) --
+      confirms it now correctly creates 2025 at Z, not AA. Worth being
+      aware `base.py`'s Population-sheet version uses the same
+      used_range-trusting pattern -- hasn't caused a problem there so
+      far (every Population write this session landed exactly where
+      expected), so not touched without real evidence of a problem,
+      but the same failure mode could in principle recur if that sheet
+      ever develops similar unrelated-content pollution.
+- [x] **"Historic Average" built and tested against real BOM data
+      (2026-09-22).** Steve found BOM's "Climate Averages" tables
+      (`bom.gov.au/climate/averages/tables/cw_{station}.shtml`) —
+      confirmed genuinely accessible (independently verified via both
+      `web_fetch` and a raw `curl` request, real HTTP 200) — a
+      completely different BOM product from the interactive Climate
+      Data Online portal that blocks automated access. This settled
+      the definition question directly: "Historic Average" is BOM's
+      own official Mean Annual Rainfall figure, not a self-computed
+      rolling mean — confirmed by Steve's own manual reading for
+      Moranbah (597.3mm), which also explained the existing workbook's
+      unexplained 592.8mm (likely computed differently, from the
+      substitute station or a different date range).
+      `fetch_bom_rainfall.py` now fetches this automatically per
+      station and stores it in the cache alongside everything else.
+      **Real bug found and fixed during testing**: the real page has
+      18 cells per row (including 2 trailing empty plot/map icon
+      cells) — an isolated test snippet only had 16, so indexing from
+      the END of the row (`cells[-3]`) silently grabbed the date-range
+      cell instead of Annual on the first live test. Fixed to index
+      from the START instead, which is stable regardless of trailing
+      decorative cells. Re-tested against the real live page after the
+      fix — exact match (597.3mm) confirmed.
+      `update_rainfall.py` writes it with a genuinely different
+      pattern from total/summer/winter: the SAME value across every
+      year column (confirmed that's how this row is actually used —
+      a flat constant for charting), with a 20%-difference sanity
+      check against whatever's already there before overwriting, and
+      per Steve's explicit instruction — when the page genuinely isn't
+      available for a station (confirmed real, e.g. Chinchilla
+      doesn't have one), the existing value is left untouched with a
+      clear note, never blanked or guessed. Tested end-to-end:
+      real Moranbah value fetches correctly, a wildly different value
+      correctly gets flagged rather than silently overwriting, and an
+      empty row writes cleanly with nothing to compare against.
+- [x] **Real second bug found and fixed on the first live run
+      (2026-09-22): "kept existing value" left a genuine gap at 2025
+      specifically.** First live test against a real test file: 39/39
+      total/summer/winter writes succeeded, but Historic Average came
+      back completely blank for 2025 across every town, even ones
+      with real, complete history through 2024. Root cause: a fresh
+      BOM fetch mostly 404s (confirmed genuinely real, independently
+      verified for Dalby/Toowoomba/Narrabri/Roma — BOM's Climate
+      Averages compiled-table product has much narrower station
+      coverage than hoped; Moranbah appears to be the exception among
+      this town list, not the norm), and the old fallback logic did
+      NOTHING when the fetch failed — but "keep the previous average"
+      per Steve's original instruction actually means writing that old
+      value into the newly-created 2025 column too, not leaving it
+      untouched while every other column has data. New
+      `_carry_forward_historic_average()` does this properly: reads
+      whatever's already in the row (a flat constant, so any populated
+      cell works) and writes it into just the new year's column,
+      leaving the rest of the row alone. Tested against both the exact
+      real bug scenario (real history through 2024, genuinely blank
+      2025) and the genuinely-empty case (a town with no history at
+      all yet, like Moranbah) — both confirmed correct.
 - [x] **Declined a browser-automation (Selenium) route Steve found
       partial success with, and worth recording why clearly — not
       rejected for not working, rejected on principle (2026-09-21).**
@@ -502,6 +580,33 @@ _(untriaged — add here, sort later)_
       correct path — Steve reading BOM's site himself and entering
       figures into `manual_rainfall_data.toml` — is what's actually
       being used, and it's already tested and working.
+- [x] **Confirmed real reason for the station-number-in-label
+      convention (2026-09-21).** Directly diffed the 2025 original vs
+      2026 final Exogenous sheets: 2025's Rainfall row labels have NO
+      station numbers at all ("Harewood", "Dalby Airport", "New
+      Kildonan/ WTP (2020→)") — 2026 adds them ("Harewood 042078",
+      "Dalby Airport 041522", "New Kildonan 041507/ WTP (2020→)").
+      Steve did this deliberately this year, specifically because
+      chasing down the real station numbers (this whole rainfall
+      thread) required real digging — embedding them in the label means
+      nobody has to repeat that hunt. Confirmed this is exactly the
+      convention `update_rainfall.py`'s row-finder already assumes
+      (built and tested against the real 2026 structure) — matching by
+      station number as a substring, which only works if the number is
+      actually in the label. That's also the right safety net for "a
+      future editor forgets to include the number" (Steve's own
+      phrasing): the row-finder doesn't guess or fuzzy-match if the
+      number's missing, it just fails loudly with a clear error, same
+      as a genuinely-missing town.
+- [ ] **New-town case explicitly deferred by Steve, not being solved
+      now.** Current behavior: a brand new town (no existing Exogenous
+      row at all) would just fail with "could not find station number
+      X" the same as a bad/missing label — consistent with the "doesn't
+      guess or create a row for you" principle everywhere else in this
+      project, and a reasonable placeholder, but genuinely not designed
+      for yet. Whenever this gets picked up: needs a real decision on
+      whether the row gets created automatically (and by what template)
+      or whether it's always a manual step first.
       SILO's own 35029 data happens to reflect the same underlying
       station change already (unconfirmed either way, not urgent).
 - [x] **Full sweep confirms all three xlsx write scripts consistent and
