@@ -351,6 +351,29 @@ class WriteAuditReport:
         series_ok = self.series_audit.flag in (SeriesFlag.OK, SeriesFlag.TOO_SHORT)
         return cell_ok and series_ok
 
+    @property
+    def should_write_with_flag(self) -> bool:
+        """True when the ONLY reason safe_to_write is False is a
+        series-shape or historical-discrepancy concern -- NEVER a
+        cell-level block (a formula or unexpected existing content).
+        Distinguishes "this number looks unusual, write it but flag it
+        visually for review" from "this cell isn't safe to touch at
+        all, don't write anything" -- overwriting a live formula or
+        someone's stray note is a different, higher-stakes risk than a
+        suspicious-but-plausible number, and must never be silently
+        written over regardless of formatting. Callers that support
+        visual flagging (e.g. writing the value in bold red rather than
+        leaving the cell untouched) should check this after
+        safe_to_write comes back False; callers that don't support it
+        can ignore this and keep the existing block-everything
+        behaviour, which remains correct either way.
+        """
+        if self.safe_to_write:
+            return False
+        if self.cell_audit.needs_review:
+            return False
+        return True
+
     def summary_line(self) -> str:
         parts = []
         if self.cell_audit.needs_review:
