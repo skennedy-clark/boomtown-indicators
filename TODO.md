@@ -1026,3 +1026,263 @@ sub-problems, deliberately sequenced:
       it inside this pipeline
 - [ ] Once documented, decide whether automating the upload is in scope for this
       pipeline at all, or stays manual until the separate project lands
+## Income indicator — wiring built (2026-09-23)
+
+- [x] **`update_income.py` built and tested (2026-09-23).** Both ATO
+      fetchers (`fetch_income.py` Table 8, `fetch_income_table6.py`
+      Table 6) already worked at the fetch level (17/17, per project
+      summary) -- this wires their output into the real Income sheet.
+      Confirmed real sheet structure first: fiscal-year strings
+      directly in row 1 ("2000/01"), no separate calendar-year row 2
+      like Population has; 12-row town blocks (name, postcode, 10
+      indicator rows) confirmed consistent across all 12 towns this
+      sheet covers (same 12 as Rainfall -- VIC towns aren't covered
+      here either); a state-level benchmark section below row ~147,
+      out of scope; 4 "Individual ABN..." rows confirmed consistently
+      empty for every town -- genuinely unsourced, not something
+      either fetcher touches.
+      **Real structural incompatibility found before writing any
+      code, not after**: base.py's existing `_find_town_indicator_row`
+      would have broken here -- it treats an empty column B as "left
+      this town's block", which is exactly the postcode row's shape,
+      so it would have incorrectly exited Chinchilla's block one row
+      after entering it. Built a dedicated row-finder instead (same
+      reasoning as Exogenous needing its own), with a real safety
+      feature base.py's version doesn't have: cross-checks the
+      postcode row against towns.toml before trusting a name match,
+      not just trusting the town name string alone.
+      Indicator mapping confirmed against real row labels: Table 8's
+      full series -> "Average Taxable Income or Loss (all
+      individuals)" (gets the ground-truth historical audit, full
+      series available); Table 6's three latest-year-only values ->
+      "...(taxable individuals)", "No. wage and salary earners",
+      "Total wage and salary earnings" (shape-based audit only, like
+      NRW's UCL writes).
+      Tested (7 checks, all pass): town+postcode found correctly,
+      wrong postcode correctly raises rather than silently
+      proceeding, indicator found within the correct bounded window,
+      a label that only exists in the NEXT town's block correctly
+      fails to match (critical boundary test), fiscal-year column
+      finding for both an existing year and a new one.
+      **NOT yet tested against a live Excel instance** — next step is
+      a real run against a throwaway test copy, same as every other
+      wiring script's first live test.
+
+## Income wiring — real bug found and fixed on first live run (2026-09-23)
+
+- [x] **Serious bug: every write call created a NEW duplicate year
+      column instead of reusing the one from the previous call.**
+      First live run corrupted row 1 with 11 duplicate "2023/24"
+      headers (columns Z through AJ) in a single run. Root cause: a
+      genuine year-convention mismatch in `_find_year_column`'s
+      comparison — `year` is always passed in as the CALENDAR year a
+      fiscal year ENDS in (e.g. 2024 for FY "2023/24", matching
+      `_fiscal_label`'s own convention), but the search loop compared
+      it directly against the STARTING year parsed from each label
+      ("2023/24" → 2023) — 2023 never equals 2024, so an already-
+      existing column could never be found again, and every single
+      write call (up to 17 towns × 4 indicators) created another new
+      one. Fixed to parse the label the same way
+      `_fy_to_calendar_year` does, so both sides of the comparison use
+      one consistent convention. Tested against the exact real
+      scenario: 5 repeated calls for the same target year now all
+      correctly return the same column, with the sheet's real
+      used_range pollution (AC-AF's growth-rate formula crud inflating
+      it to column AG) reproduced in the mock too, confirmed not to
+      matter — row 1 search is genuinely immune to it, was never
+      actually the cause despite looking suspicious at first.
+      Also directly confirmed (separately, since this bug happened to
+      never trigger it) that the existing audit system's formula
+      detection would correctly catch and block a write landing on
+      one of the AC-AF-style formula cells, same as it did for
+      Chinchilla's Population row — this protection was already
+      correctly in place, just never exercised by the buggy version.
+      **`test-copy.xlsx` is corrupted from this bug and should be
+      discarded, not manually repaired** — unclear which data rows
+      also got phantom writes scattered across the duplicate columns.
+      Start fresh from the original once the fix is confirmed.
+
+## Income methodology correction + ABN indicators (2026-09-23)
+
+- [x] **Real methodology bug found via the delta check Steve asked
+      for, and fixed.** Comparing test-copy.xlsx against the 2026
+      reference file: "Average Taxable Income or Loss (all
+      individuals)" for Chinchilla 2023/24 showed $72,289 (mine, from
+      Table 8's own pre-published average) vs $73,581 (reference) —
+      a real ~1.8% discrepancy, not rounding. Steve's `Notes_DD.docx`
+      documents the actual intended methodology: this row should come
+      from Table 6B (`Taxable income or loss $ / no.`), a completely
+      different ATO product from Table 8. Verified directly against
+      the real downloaded Table 6 file: the documented Table 6B
+      calculation gives exactly $73,581 for Chinchilla — exact match.
+      "Taxable individuals" was already correct (Table 6A, confirmed
+      unchanged, still exact match at $91,431).
+      Fixed: `fetch_income_table6.py` rebuilt to also extract Table
+      6B's `taxable_no`/`taxable_income` (confirmed real column
+      indices 4/5) and compute `avg_income_all`. `update_income.py`
+      changed so Table 6B's value takes over entirely for whichever
+      year it covers — Table 8's (confirmed less accurate) figure for
+      that same year is never written at all, avoiding any same-run
+      conflict. Table 8 still backfills older years Table 6's
+      single-year-per-release snapshot doesn't reach.
+- [x] **Six "Individual ABN..." rows built — previously entirely
+      unsourced in the workbook.** Per Notes_DD.docx's documented
+      mapping (the ATO file doesn't use the literal words "Individual
+      ABN"): NPP/PP/Total business income fields from Table 6B,
+      confirmed real column indices 132-137. Sanity-checked against
+      real data: PP + NPP income exactly equals Total income for
+      Chinchilla ($41,377,276 = $41,377,276), supporting these are
+      genuinely the right fields.
+      **One assumption worth Steve confirming, not just asserting**:
+      the notes don't explicitly say Table 6A vs 6B for these six
+      fields specifically. Used 6B (unfiltered/all-individuals),
+      consistent with how wages already comes from 6B and none of
+      the six ABN labels carry a "(taxable individuals)" qualifier
+      the way the two average-income rows do — a reasonable inference
+      from the documented pattern, not something explicitly stated.
+- [x] **Corrected column indices confirmed directly against the real
+      2023-24 file, not assumed to carry forward from the 2022-23
+      file's indices the old docstring cited** — downloaded and
+      inspected the real file's full header row for both 6A and 6B
+      rather than trusting last year's positions still hold.
+
+## Income wiring — real bugs found on second live run, plus a genuine methodology question (2026-09-23)
+
+- [x] **Real bug: the "prevent double-write" logic never actually
+      worked, due to a slug-vs-display-name key mismatch.** `t6_files`
+      was keyed by filename slug ("chinchilla") but looked up by
+      display name from Table 8's JSON ("Chinchilla") — guaranteed
+      mismatch, so `skip_this_year` was silently always False. Table 8
+      wrote into every "all individuals" cell first, every time, and
+      only the audit's 1% tolerance masked it for towns where the two
+      sources' values happened to land close together (Dysart,
+      Moranbah, Toowoomba) — everywhere else (Chinchilla, Dalby,
+      Goondiwindi, Miles, Roma, Tara, Wallumbilla, Wandoan) it surfaced
+      as a confusing "cell already contains X" flag against a value
+      this same run had just written moments earlier. Fixed by keying
+      `t6_files` by display name (read from each file's own "town"
+      field) instead of the filename slug. Directly confirmed via a
+      reproduction: the old approach's lookup returns None for every
+      real case, the fixed one matches correctly.
+- [x] **Real, confirmed label variance: Narrabri's block uses
+      different exact wording for three rows** — "Average taxable
+      income (all)" not "...or Loss (all individuals)", same for
+      "(taxable)", and "Total wage & salary earnings" (ampersand) not
+      "...and salary earnings". Same shape of issue as Rainfall's
+      Narrabri quirk. Fixed via an explicit, documented
+      `ALTERNATE_LABELS` dict — the row-finder still requires an exact
+      match against one of a specific, recorded set of strings, never
+      a fuzzy "close enough" guess. Tested against a mock reproducing
+      Narrabri's exact real labels — all four indicators (including
+      the one with identical text, confirming nothing regressed)
+      resolve correctly.
+- [x] **Confirmed genuinely correct, not bugs**: Toowoomba (Central)/
+      (Harlaxton)/(West) and Shepparton/Yarram all correctly fail
+      "could not find town" — Income has exactly 12 town rows, only
+      the combined "Toowoomba", confirmed directly against the
+      reference file. Nothing to fix.
+- [x] **Confirmed safe, via direct reference-file comparison**: Dysart
+      ABN PP no. (fetched 11, reference Z=11), Goondiwindi earners_no
+      (fetched 3,657, reference 3,657), Moranbah ABN PP no. (fetched
+      30, reference 30) — all three flagged jumps are genuine, correct
+      changes, not errors. Good candidates for
+      `verified_overrides.toml` entries if Steve wants them written
+      through rather than re-flagged on every future run.
+- [ ] **Genuine methodology question, needs Steve's decision, not
+      something to resolve unilaterally.** Toowoomba's four flagged
+      figures (earners_no, all three ABN totals-no) are NOT just
+      flagged-but-correct like the above — they're genuinely
+      different from the reference, and precisely explained:
+      `towns.toml` has `postcodes = ["4350", "4352"]` for Toowoomba;
+      the fetcher correctly sums across both (confirmed: postcode 4350
+      alone = 58,143, exactly the reference's figure; 4352 alone =
+      16,954; 58,143 + 16,954 = 75,097, exactly the fetched combined
+      total). The real question: is 4350+4352 the intended scope for
+      Income (and potentially every other indicator that aggregates
+      across Toowoomba's postcodes), or did 4352 get added to
+      `towns.toml` after the reference file's income figures were last
+      computed with a narrower 4350-only scope? Whichever way this
+      goes could affect more than just Income.
+
+## Income: state benchmarks + write-with-flag highlighting built (2026-09-23)
+
+- [x] **State benchmark calculation built and verified against real
+      data.** Per Notes_DD.docx's documented process: NOT an average
+      of postcode averages -- sum the raw dollar/count fields across
+      every row belonging to that state, then divide. Verified
+      directly against the real downloaded Table 6 file before
+      building anything: computed QLD/NSW all/taxable all four exactly
+      match the 2026 reference workbook's existing figures (75,890 /
+      90,846 / 83,306 / 100,533). Confirmed real benchmark-section
+      structure: a 3-row block per state (name row + 2 indicator rows,
+      no postcode row like town blocks have), with QLD and NSW using
+      genuinely different exact label wording for their own two rows
+      (confirmed directly, including "Queensland " with a trailing
+      space). New dedicated row-finder (`_find_state_row`/
+      `_find_state_indicator_row`) rather than reusing the town-block
+      one, tested against a mock matching the real structure exactly
+      (5/5 checks pass).
+- [x] **Real bug, crashed on first live run, fixed immediately**: the
+      glob pattern finding per-town Table 6 cache files
+      (`*_income_t6.json`) also matched the new benchmark cache file
+      (`benchmark_income_t6.json`), which has no `"town"` key (it has
+      `"benchmarks"` instead by design) -- crashed with `KeyError:
+      'town'` the first time a benchmark file actually existed to be
+      swept in. Fixed by explicitly excluding that filename from the
+      per-town glob. Confirmed fixed via a reproduction with both file
+      types present together.
+- [x] **New capability: flagged writes now visually highlight instead
+      of silently not writing, per Steve's request** — "write it in
+      bold red so it's easier to check directly in the sheet, rather
+      than only refusing to write and requiring a separate log check."
+      Added `WriteAuditReport.should_write_with_flag` to `audit.py`
+      (shared, so this could extend to Population/Rainfall too, not
+      just Income) -- deliberately scoped: a series-shape or
+      historical-discrepancy concern now writes-with-flag, but a
+      CELL-level block (a formula, unexpected existing content) still
+      hard-blocks regardless -- overwriting structural content is a
+      different, higher-stakes risk than a suspicious number, and that
+      boundary must never soften. Tested exhaustively at the audit.py
+      level (5/5 scenarios: clean, formula-blocked, unexpected-
+      content-blocked even with a clean series, override-applied).
+      `update_income.py`'s writer applies bold red font on a flagged
+      write, and explicitly resets to plain formatting on a clean
+      write (so a once-flagged, later-confirmed cell doesn't stay red
+      forever). **Confirmed working at the write-decision and value
+      level via a corrected mock** (the value genuinely gets written
+      into a new cell despite the flag, not left blank) -- but the
+      actual font-formatting assertion in that same test run couldn't
+      be confirmed due to a separate mock limitation (the test mock
+      doesn't persist font state across repeated `sheet.cells()`
+      calls the way it does for `.value`), not a sign of a problem in
+      the real code path. Worth a real (non-mocked) xlwings run to
+      fully confirm the visual formatting before treating this as
+      completely verified.
+
+- [x] **Confirmed exactly the risk flagged earlier — real xlwings run
+      crashed on `cell.font.color = None` (2026-09-23).** `TypeError:
+      'NoneType' object is not subscriptable` inside xlwings'
+      `rgb_to_int` -- confirms xlwings' real Font.color setter has no
+      "reset to automatic" pathway via None, unlike what a mock
+      assumed. Fixed to explicit black `(0, 0, 0)`, the standard
+      default text colour. This is exactly why the earlier note said
+      the formatting behaviour needed a real (non-mocked) run to fully
+      confirm -- the mock genuinely could not have caught this.
+      One line, isolated, well-understood fix -- worth a re-run to
+      confirm clean end-to-end now, including whether the bold-red
+      highlighting actually displays correctly for the genuinely
+      flagged cells (Dysart, Goondiwindi, Moranbah, Toowoomba).
+
+- [x] **CONFIRMED FULLY WORKING, real live run, zero crashes
+      (2026-09-23).** 124 written (up from 113 -- now including the 4
+      state benchmark writes), 27 correctly flagged-but-written in
+      bold red (all previously confirmed correct via direct reference
+      comparison), including Steve confirming the highlighting is
+      visually working in real Excel. Income is genuinely done: both
+      fetchers, the corrected all-individuals methodology, the six ABN
+      indicators, QLD/NSW state benchmarks, Narrabri's label variance,
+      the double-write bug, and the write-with-flag highlighting
+      feature are all built, tested, and now confirmed live. Only
+      remaining open item is the Toowoomba postcode-scope question
+      (4350 alone vs 4350+4352) -- a real decision for Steve, not a
+      bug, and not blocking anything.
