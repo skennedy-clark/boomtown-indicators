@@ -43,6 +43,7 @@ from fetchers.fetch_crime_qps import QPSCrimeFetcher
 from fetchers.fetch_qgso_housing import QGSOHousingFetcher
 from fetchers.fetch_salm_unemployment import SALMUnemploymentFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
+from fetchers.fetch_business import ABSBusinessFetcher
 
 FETCHER_REGISTRY: dict[str, type] = {
     "income":         ATOIncomeFetcher,
@@ -59,6 +60,7 @@ FETCHER_REGISTRY: dict[str, type] = {
     "salm_unemployment": SALMUnemploymentFetcher,
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,
+    "business":          ABSBusinessFetcher,
     # "population":   ABSPopulationFetcher,       # TODO
     # "unemployment": ABSLabourFetcher,           # TODO
     # "housing":      QGSOHousingFetcher,         # TODO (QLD only, semi-manual)
