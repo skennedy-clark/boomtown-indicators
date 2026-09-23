@@ -304,16 +304,16 @@ name             = "Narrabri"
 state            = "NSW"
 postcode         = "2390"
 postcodes        = ["2390"]
-sa2_code         = "102021116"
+sa2_code         = "110031197"
 sa2_name         = "Narrabri"
-sa3_code         = "10202"
+sa3_code         = "11003"
 lga              = "Narrabri"
 bom_station      = "54038"
 csg_notice_year  = 2015
 benchmark        = false
 district         = "Narrabri and District"
 cover_photo      = "cover.jpg"
-notes            = "NSW CSG town. Absent from SALM smoothed dataset. Unemployment data pending LGA-level fallback."
+notes            = "FIXED 2026-09-23: sa2_code corrected from 102021116 (not a valid 2021 ASGS SA2 code at all -- confirmed via direct ABS ArcGIS lookup, empty result) to 110031197, confirmed live against ABS's own current SA2 dataset. sa3_code corrected from 10202 to 11003 (Moree - Narrabri), consistent with the corrected SA2 code. Found while mapping the Business sheet's SA2-keyed rows -- Narrabri Surrounds (110031198, the SA2 immediately adjacent) has no corresponding town in this project. NSW CSG town. Absent from SALM smoothed dataset. Unemployment data pending LGA-level fallback."
 
 
 # ─── VICTORIA TOWNS ─────────────────────────────────────────────────────────
