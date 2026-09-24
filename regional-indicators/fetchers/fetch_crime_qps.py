@@ -180,9 +180,21 @@ class QPSCrimeFetcher(BaseFetcher):
                 for ind_key, col_name in INDICATOR_COLS.items():
                     monthly[key][ind_key].append(safe(col_name))
 
-            # Annual SUM per division per year, convert /100k -> /1k
+            # Annual SUM per division per year, convert /100k -> /1k.
+            # Skip incomplete years (confirmed real risk 2026-09-24: the
+            # in-progress current year only had 8 of 12 months -- summing
+            # a partial year would silently understate it, misleadingly
+            # looking like a huge crime drop once compared to a real full
+            # year. Same "skip incomplete years" pattern already proven
+            # correct in fetch_bom_rainfall.py.
             result: dict[str, dict[int, dict]] = defaultdict(dict)
+            incomplete_years = []
             for (division, yr), indicators in monthly.items():
+                months_present = max((len(v) for v in indicators.values()), default=0)
+                if months_present < 12:
+                    incomplete_years.append((division, yr, months_present))
+                    continue
+
                 annual = {}
                 for ind_key, values in indicators.items():
                     if values:
@@ -191,6 +203,17 @@ class QPSCrimeFetcher(BaseFetcher):
                 if all(k in annual for k in TOTAL_COMPONENTS):
                     annual["total"] = round(sum(annual[k] for k in TOTAL_COMPONENTS), 6)
                 result[division][yr] = annual
+
+            if incomplete_years:
+                current_year_skips = [
+                    f"{d} {y} ({m}/12 months)" for d, y, m in incomplete_years
+                    if y == max(yr for _, yr, _ in incomplete_years)
+                ]
+                self.log.info(
+                    f"  Skipped {len(incomplete_years)} incomplete division-years "
+                    f"(most are the in-progress current year, expected) -- e.g. "
+                    f"{current_year_skips[:3]}"
+                )
 
             self.log.info(
                 f"  Parsed {len(result)} divisions, "
