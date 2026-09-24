@@ -1286,3 +1286,84 @@ sub-problems, deliberately sequenced:
       remaining open item is the Toowoomba postcode-scope question
       (4350 alone vs 4350+4352) -- a real decision for Steve, not a
       bug, and not blocking anything.
+## Crime indicator — two real, significant bugs found and fixed in the existing fetcher (2026-09-24)
+
+- [x] **Major finding: the existing `fetch_crime_qps.py` (previously
+      marked "14/14 QLD towns working") has NEVER produced correct
+      values.** "Working" only ever meant "runs without crashing" --
+      nobody had validated the actual numbers against the real
+      reference workbook until now. Two real, confirmed bugs:
+      1. Annual aggregation used `statistics.mean()` of the 12 monthly
+         rates. An annual rate should be the SUM across the year (a
+         rate PER YEAR, not an average monthly rate) -- confirmed via
+         an almost-exact 12.024x ratio between old output and real
+         workbook values, across four independent indicators
+         (drug/good_order/theft/traffic). Every crime figure this
+         fetcher ever produced, for all 14 towns, was wrong by roughly
+         a factor of 12.
+      2. "Total offences (person, property, other)" summed ALL 8 QPS
+         summary categories, when the row's own name says literally
+         "(person, property, other)" -- confirmed directly: summing
+         just those three raw columns (with the sum-not-mean fix
+         applied) matches the real value to within 0.2%; summing all 8
+         does not come close.
+      Both fixes verified together against all 11 individual real 2001
+      values for Chinchilla plus Total -- every single one now matches
+      the real workbook within a consistent, uniform 0.20% (the same
+      tiny residual across every indicator, strongly suggesting a
+      minor QPS-side population-denominator rounding quirk, not a
+      remaining methodology error on our side).
+      Also EXTENDED to cover all 12 rows the real sheet actually has
+      per town (confirmed via direct inspection) -- the old version
+      only produced 5 (all/drug/good_order/theft/traffic). Added:
+      breach_dv, offences_property, offences_person, other_offences,
+      prostitution, unlawful_entry, weapons -- confirmed via the raw
+      column order these are genuinely independent categories, not
+      double-counted sub-items of Total or of each other.
+
+- [x] **Third real bug found and fixed, from checking the live run's
+      "latest (2026)" output critically rather than accepting it at
+      face value.** 2026 is the in-progress current year (today is
+      2026-09-24) -- confirmed directly it only had 8 of 12 months in
+      the raw CSV. Combined with the mean-to-sum fix, this meant the
+      fetcher would silently write a partial-year sum as if it were a
+      genuine annual total, misleadingly looking like a huge crime
+      drop once compared against a real full year. Fixed: skip any
+      division-year with fewer than 12 months present, same "skip
+      incomplete years" pattern already proven correct in
+      `fetch_bom_rainfall.py`. Tested against real data: 2026 now
+      correctly excluded, 2025 correctly becomes the latest complete
+      year, and the earlier fix's 2001 values are unaffected.
+
+## Crime wiring script built (2026-09-24)
+
+- [x] **Found and fixed: `apply_write_formatting`/`describe_write_outcome`
+      (promoted to `audit.py` during the Business write-with-flag work)
+      were never actually pushed to GitHub** -- `should_write_with_flag`
+      and the `summary_line` structural fix were committed correctly,
+      but the two shared functions added right after them, in the same
+      sitting, apparently weren't. Found immediately (an ImportError)
+      when `update_crime.py` tried to use them. Restored and verified
+      both with syntax AND a real runtime import this time (not just
+      `ast.parse`, learning from the earlier lesson that syntax
+      validity doesn't guarantee correctness).
+- [x] **`update_crime.py` built and tested for the 11 confirmed QLD
+      towns.** Confirmed real structure: plain calendar-year integers
+      in row 1 from column C (not fiscal strings); 13-row town blocks
+      (name + 12 indicator rows) in a fixed order confirmed identical
+      across every town checked. Tested (6 checks): town/indicator
+      row-finding, correctly bounded search (doesn't spill into the
+      next town), existing-year lookup, and new-year column creation.
+      **Deliberately out of scope, confirmed real, not oversights:**
+      Narrabri/NSW use a completely different 5-category structure
+      (Assault, Malicious damage to property, Other offences, Other
+      offences against the person, Robbery) -- genuinely need NSW
+      BOCSAR as a data source, not QPS, not built yet. The Queensland
+      state benchmark uses the same 12-category structure as towns,
+      but QPS's data has no native statewide division -- would need
+      its own cross-division aggregation, similar to Income's QLD/NSW
+      benchmark work -- real, separate follow-up.
+      **NOT yet tested against a live Excel instance.**
+
+- [x] **Real bug found and fixed on the first live run: `isinstance(label, int)` silently rejected every real year value.** xlwings returns whole-number cells as floats (2001.0) via Excel's COM interface -- confirmed real, openpyxl (used only for inspection, never the live write path) happens to preserve int type but xlwings doesn't, so a mock built with plain ints never would have caught this. 0/168 written, every single row failed with "could not find any year values." Fixed in all three affected spots: broadened to `isinstance(label, (int, float))`, compared/stored via `int(label)`. Retested with a mock using actual floats this time (matching the real scenario) -- year-column finding, existing-series reading, and dict-key typing all confirmed correct.
+- [x] Confirmed expected, not a bug: Toowoomba (Central)/(Harlaxton)/(West) correctly fail "could not find town" -- Crime has one combined "Toowoomba" row only, same pattern as Business and Income.

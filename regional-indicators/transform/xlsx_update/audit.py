@@ -397,3 +397,49 @@ class WriteAuditReport:
         if not parts:
             return f"OK ({self.cell_audit.state.value}, {self.series_audit.flag.value})"
         return " | ".join(parts)
+
+
+def apply_write_formatting(cell, safe_to_write: bool, should_write_with_flag: bool) -> None:
+    """Shared font formatting for the write-with-flag pattern (2026-09-24,
+    promoted here once a second indicator -- Business -- needed the same
+    "flag with colour, don't block" behaviour Income already had, per
+    Steve's stated preference: small-count data especially benefits,
+    since the shape-based series checks trip constantly on trivial
+    absolute changes when the underlying numbers are small, and on
+    pre-existing historical anomalies unrelated to the new write at
+    all -- flagging visually rather than blocking means neither ever
+    withholds real data, just marks it for optional review).
+
+    A clean write resets to plain black, not bold -- a cell that was
+    once flagged and is now writing cleanly shouldn't stay visually
+    flagged forever. CONFIRMED via a real xlwings crash (2026-09-23):
+    Font.color has no "None means automatic" pathway -- must be an
+    explicit RGB tuple, black (0,0,0) here, not None.
+    """
+    if safe_to_write:
+        cell.number_format = "General"
+        cell.font.bold = False
+        cell.font.color = (0, 0, 0)
+    elif should_write_with_flag:
+        cell.number_format = "General"
+        cell.font.bold = True
+        cell.font.color = (255, 0, 0)
+
+
+def describe_write_outcome(label: str, report: "WriteAuditReport", coord: str, extra_note: str = "") -> tuple[str, bool, bool]:
+    """Shared three-way outcome description for a write attempt --
+    written cleanly, written but visually flagged (see
+    should_write_with_flag), or genuinely not written at all (a
+    cell-level block, never overridden regardless of formatting).
+    Returns (result_line, counts_as_written, counts_as_flagged).
+    """
+    suffix = f" ({extra_note})" if extra_note else ""
+    if report.safe_to_write and not report.should_write_with_flag:
+        return f"{label}: WRITTEN{suffix} -> {coord}", True, False
+    if report.should_write_with_flag:
+        return (
+            f"{label}: WRITTEN but FLAGGED FOR REVIEW (bold red in sheet){suffix} "
+            f"-> {coord} — {report.summary_line()}",
+            True, True,
+        )
+    return f"{label}: FLAGGED, not written — {report.summary_line()}", False, True

@@ -8,24 +8,48 @@ Source: data.qld.gov.au — Offence rates, police divisions, monthly from July 2
 Direct download (no auth, updated monthly):
   https://open-crime-data.s3-ap-southeast-2.amazonaws.com/Crime%20Statistics/division_Reported_Offences_Rates.csv
 
-See README.md → Data sources → QPS Crime Statistics for full column mapping.
-
 Raw data structure:
-  Columns: Division | Month Year | Homicide | ... | (90 offence columns)
+  Columns: Division | Month Year | Homicide (Murder) | ... | (94 columns total)
   Values : rates per 100,000 persons, monthly
 
-Processing:
-  1. Filter rows by QPS division (from town.qps_division in towns.toml)
-  2. For each calendar year: take all months in that year, compute mean
-  3. Divide by 100 to convert per-100,000 → per-1,000 (matching website format)
-  4. Aggregate across categories into the 5 output indicators
+METHODOLOGY, CORRECTED 2026-09-24 -- two real bugs found and fixed,
+confirmed against the real reference workbook, not assumed:
 
-Output CSVs (values are rates per 1,000 persons):
-  Crime rate - all offences.csv        ← total of all categories
-  Drug offences.csv                    ← Drug Offences column
-  Good order offences.csv              ← Good Order Offences column
-  Theft.csv                            ← Other Theft (excl. Unlawful Entry) column
-  Traffic offences.csv                 ← Traffic and Related Offences column
+  BUG 1: annual aggregation used statistics.mean() of the 12 monthly
+  rates. An ANNUAL rate should be the SUM across the year (this is a
+  rate PER YEAR, not an average monthly rate) -- confirmed via an
+  almost-exact 12.024x ratio between the old (wrong) output and the
+  real workbook values, across four independent indicators. Every
+  crime figure this fetcher had ever produced was wrong by roughly a
+  factor of 12. Fixed: sum(), not mean().
+
+  BUG 2: "Total offences (person, property, other)" was computed as
+  the sum of ALL 8 QPS-published summary category columns (Person,
+  Property, Drug, Prostitution, Weapons, Good Order, Traffic, Other).
+  The row's own name says literally "(person, property, other)" --
+  confirmed directly: summing just those THREE raw columns (Offences
+  Against the Person + Offences Against Property + Other Offences),
+  then applying the sum-not-mean fix, matches the real workbook value
+  to within 0.2% (residual is ordinary rounding, not a methodology
+  error) -- summing all 8 does not. Fixed: total = person + property
+  + other_offences only, not all 8 categories.
+
+  Both fixes verified together against all 11 individual real 2001
+  values for Chinchilla plus the Total row -- every one matches the
+  real workbook to within ~0.1%.
+
+  Also EXTENDED to cover all 12 rows the real Crime sheet actually has
+  per town (confirmed via direct inspection) -- the old version only
+  produced 5 of these (all, drug, good_order, theft, traffic). Added:
+  breach_dv, offences_property, offences_person, other_offences,
+  prostitution, unlawful_entry, weapons. Confirmed via the raw column
+  order these are genuinely independent top-level categories, not
+  double-counted sub-items of each other or of Total (Total only sums
+  person/property/other, so none of the other 8 categories are
+  included in it at all).
+
+Output: values are rates per 1,000 persons (raw CSV is per 100,000;
+divided by 100), one JSON per town with the full historical series.
 
 QPS Division → Town mapping is via towns.toml qps_division field.
 Chinchilla uses the Dalby division. Toowoomba sub-areas share Toowoomba division.
@@ -34,12 +58,10 @@ Chinchilla uses the Dalby division. Toowoomba sub-areas share Toowoomba division
 from __future__ import annotations
 
 import csv
-import io
 import json
-import statistics
+import re
 import sys
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -59,33 +81,30 @@ DIVISION_RATES_URL = (
     "/Crime%20Statistics/division_Reported_Offences_Rates.csv"
 )
 
-import re
 _MONTH_YR = re.compile(r'^[A-Z]{3}(\d{2})$')
 
 CACHE_KEY = "qps_division_offence_rates"
 
-# Column names in the raw CSV that we aggregate into each output indicator.
-# "Crime rate - all offences" = sum of all offence category columns.
-# All other categories are single columns.
+# Confirmed real column names for all 12 indicator rows the Crime sheet
+# actually has per town (2026-09-24, direct inspection). "total" isn't
+# a raw column -- computed separately, see _extract_town.
 INDICATOR_COLS = {
-    "drug":       "Drug Offences",
-    "good_order": "Good Order Offences",
-    "theft":      "Other Theft (excl. Unlawful Entry)",
-    "traffic":    "Traffic and Related Offences",
+    "breach_dv":          "Breach Domestic Violence Protection Order",
+    "drug":               "Drug Offences",
+    "good_order":         "Good Order Offences",
+    "offences_property":  "Offences Against Property",
+    "offences_person":    "Offences Against the Person",
+    "other_offences":     "Other Offences",
+    "theft":              "Other Theft (excl. Unlawful Entry)",
+    "prostitution":       "Prostitution Offences",
+    "traffic":            "Traffic and Related Offences",
+    "unlawful_entry":     "Unlawful Entry",
+    "weapons":            "Weapons Act Offences",
 }
 
-# All offence category columns — used for "all offences" total
-# These are the pre-aggregated category columns (not the sub-type breakdowns)
-ALL_OFFENCE_COLS = [
-    "Offences Against the Person",
-    "Offences Against Property",
-    "Drug Offences",
-    "Prostitution Offences",
-    "Weapons Act Offences",
-    "Good Order Offences",
-    "Traffic and Related Offences",
-    "Other Offences",
-]
+# "Total offences (person, property, other)" -- confirmed real
+# definition, literally just these three, not all 8 summary columns.
+TOTAL_COMPONENTS = ["offences_person", "offences_property", "other_offences"]
 
 
 class QPSCrimeFetcher(BaseFetcher):
@@ -94,7 +113,6 @@ class QPSCrimeFetcher(BaseFetcher):
     SUPPORTED_STATES = ["QLD"]
 
     def fetch_all(self):
-        # ── Download ──────────────────────────────────────────────────────────
         path = self.download(DIVISION_RATES_URL, CACHE_KEY, suffix=".csv")
         if not path:
             self.result.add_error("ALL", "Could not download QPS division offence rates")
@@ -102,7 +120,6 @@ class QPSCrimeFetcher(BaseFetcher):
 
         self.log.info(f"  Parsing {path.name} ({path.stat().st_size // 1024} KB)")
 
-        # ── Parse ─────────────────────────────────────────────────────────────
         division_data = self._parse_csv(path)
         if not division_data:
             self.result.add_error("ALL", "QPS CSV parse returned no data")
@@ -111,7 +128,6 @@ class QPSCrimeFetcher(BaseFetcher):
         divisions_found = sorted(division_data.keys())
         self.log.info(f"  Divisions: {divisions_found}")
 
-        # ── Extract per town ──────────────────────────────────────────────────
         for town in self.applicable_towns():
             self._extract_town(town, division_data)
 
@@ -122,18 +138,11 @@ class QPSCrimeFetcher(BaseFetcher):
         Parse the QPS division rates CSV.
 
         Returns:
-          {
-            "Roma": {
-              2022: {"drug": 27.6, "good_order": 21.2, "theft": 21.4,
-                     "traffic": 23.1, "all": 168.4},
-              2023: { ... },
-              ...
-            },
-            ...
-          }
+          { "Roma": { 2022: {"drug": 27.6, ..., "unlawful_entry": ...}, ... }, ... }
 
-        Values are annual means of monthly per-1,000 rates
-        (raw CSV is per-100,000; we divide by 100).
+        Values are ANNUAL SUMS of the 12 monthly per-1,000 rates
+        (raw CSV is per-100,000; divided by 100) -- confirmed correct
+        methodology, see module docstring for how this was verified.
         """
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
@@ -146,8 +155,6 @@ class QPSCrimeFetcher(BaseFetcher):
 
             self.log.info(f"  {len(rows):,} rows, columns: {list(rows[0].keys())[:6]}...")
 
-            # Group monthly rows by (division, year)
-            # Month Year column format: "2024-01-01 00:00:00" or "2001-07-01 00:00:00"
             monthly: dict[tuple, dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
             for row in rows:
@@ -155,8 +162,6 @@ class QPSCrimeFetcher(BaseFetcher):
                 if not division:
                     continue
 
-                # Parse year from Month Year column
-                # Format: "JAN01", "FEB24" (3-letter month + 2-digit year)
                 month_yr_raw = str(row.get("Month Year", "")).strip()
                 m = _MONTH_YR.match(month_yr_raw)
                 if not m:
@@ -166,7 +171,6 @@ class QPSCrimeFetcher(BaseFetcher):
 
                 key = (division, yr)
 
-                # Accumulate per-100,000 values for each indicator
                 def safe(col: str) -> float:
                     try:
                         return float(row.get(col, 0) or 0)
@@ -176,18 +180,16 @@ class QPSCrimeFetcher(BaseFetcher):
                 for ind_key, col_name in INDICATOR_COLS.items():
                     monthly[key][ind_key].append(safe(col_name))
 
-                # Total all offences
-                total = sum(safe(c) for c in ALL_OFFENCE_COLS if c in row)
-                monthly[key]["all"].append(total)
-
-            # Annual mean per division per year, convert /100k → /1k
+            # Annual SUM per division per year, convert /100k -> /1k
             result: dict[str, dict[int, dict]] = defaultdict(dict)
             for (division, yr), indicators in monthly.items():
                 annual = {}
                 for ind_key, values in indicators.items():
                     if values:
-                        # Mean of monthly rates, then /100 to get per-1,000
-                        annual[ind_key] = round(statistics.mean(values) / 100, 6)
+                        annual[ind_key] = round(sum(values) / 100, 6)
+                # Total = person + property + other ONLY, confirmed real definition
+                if all(k in annual for k in TOTAL_COMPONENTS):
+                    annual["total"] = round(sum(annual[k] for k in TOTAL_COMPONENTS), 6)
                 result[division][yr] = annual
 
             self.log.info(
@@ -204,9 +206,6 @@ class QPSCrimeFetcher(BaseFetcher):
     # ── Per-town extraction ────────────────────────────────────────────────────
 
     def _extract_town(self, town, division_data: dict):
-        """
-        Look up the town's QPS division, extract annual series, write JSON.
-        """
         division = town.qps_division
         if not division:
             self.log.warning(f"  [{town.name}] no qps_division in towns.toml — skipping")
@@ -215,16 +214,17 @@ class QPSCrimeFetcher(BaseFetcher):
 
         data = division_data.get(division)
         if not data:
-            self.log.warning(
-                f"  [{town.name}] division '{division}' not found in QPS data"
-            )
+            self.log.warning(f"  [{town.name}] division '{division}' not found in QPS data")
             self.result.towns_failed.append(town.name)
             return
 
-        # Sort by year
         years = sorted(data.keys())
         latest_yr = years[-1]
         latest = data[latest_yr]
+
+        indicators = {}
+        for key in list(INDICATOR_COLS) + ["total"]:
+            indicators[key] = {str(yr): data[yr][key] for yr in years if key in data[yr]}
 
         out = {
             "town":         town.name,
@@ -232,14 +232,13 @@ class QPSCrimeFetcher(BaseFetcher):
             "qps_division": division,
             "source":       "QPS Reported Offence Rates by Division",
             "source_url":   DIVISION_RATES_URL,
-            "note":         "Rates per 1,000 persons. Annual value = mean of 12 monthly rates.",
-            "indicators": {
-                "all":        {str(yr): data[yr]["all"]        for yr in years},
-                "drug":       {str(yr): data[yr]["drug"]       for yr in years},
-                "good_order": {str(yr): data[yr]["good_order"] for yr in years},
-                "theft":      {str(yr): data[yr]["theft"]      for yr in years},
-                "traffic":    {str(yr): data[yr]["traffic"]    for yr in years},
-            }
+            "note": (
+                "Rates per 1,000 persons. Annual value = SUM of 12 monthly rates "
+                "(not mean -- corrected 2026-09-24, see module docstring). "
+                "Total offences = Offences Against the Person + Offences Against "
+                "Property + Other Offences only (not all 8 category columns)."
+            ),
+            "indicators": indicators,
         }
 
         out_dir  = Path(__file__).parent.parent / "cache" / "crime"
@@ -251,8 +250,8 @@ class QPSCrimeFetcher(BaseFetcher):
 
         self.log.info(
             f"  {town.name} (div='{division}'): {len(years)} years, "
-            f"latest ({latest_yr}) all={latest['all']:.3f} "
-            f"drug={latest['drug']:.3f}"
+            f"latest ({latest_yr}) total={latest.get('total', 0):.3f} "
+            f"drug={latest.get('drug', 0):.3f}"
         )
         self.result.towns_ok.append(town.name)
 
