@@ -72,22 +72,16 @@ FIRST_YEAR_COLUMN = 3   # column C -- confirmed
 YEAR_HEADER_ROW = 1
 TOWN_BLOCK_SIZE = 13    # name row + 12 indicator rows, confirmed
 
-# Confirmed real, fixed row order (see module docstring) -- matches
-# fetch_crime_qps.py's INDICATOR_COLS keys plus "total".
-INDICATOR_ROW_LABELS = {
-    "breach_dv":         "Breach Domestic Violence Protection Order",
-    "drug":              "Drug Offences",
-    "good_order":        "Good Order Offences",
-    "offences_property": "Offences Against Property",
-    "offences_person":   "Offences Against the Person",
-    "other_offences":    "Other Offences",
-    "theft":             "Other Theft (excl. Unlawful Entry)",
-    "prostitution":      "Prostitution Offences",
-    "traffic":           "Traffic and Related Offences",
-    "unlawful_entry":    "Unlawful Entry",
-    "weapons":           "Weapons Act Offences",
-    "total":             "Total offences (person, property, other)",
-}
+# GENERALIZED 2026-09-24, per Steve's explicit direction ("knowing
+# there will be a fetch victoria, tasmania, nt, wa at some point"):
+# this used to be a hardcoded QLD-specific label dict. Now each
+# fetcher's own JSON output carries its own label alongside every
+# indicator (indicators[key] = {"label": ..., "values": {...}}), so
+# this script is state-agnostic -- it works for QLD's 12 categories,
+# NSW's different 8, and whatever future states turn out to use,
+# without ever needing a per-state dict here. See
+# fetch_crime_qps.py and fetch_crime_bocsar.py for the schema both
+# fetchers (and any future state fetcher) must produce.
 
 
 def _find_year_column(sheet, year: int) -> int:
@@ -204,10 +198,15 @@ def _write_crime_row(sheet, row: int, year: int, value, source_series: dict | No
 
 
 def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
-    cache_files = sorted(cache_dir.glob("*_crime_qps.json"))
+    # GENERALIZED 2026-09-24: was "*_crime_qps.json" only. Picks up
+    # any state fetcher's output now (crime_qps for QLD, crime_bocsar
+    # for NSW, and future crime_vic/crime_tas/crime_nt/crime_wa),
+    # provided each writes its cache file as <town>_crime_<source>.json
+    # in this same directory, in the shared schema.
+    cache_files = sorted(cache_dir.glob("*_crime_*.json"))
     if not cache_files:
         raise FileNotFoundError(
-            f"No *_crime_qps.json files found in {cache_dir} -- run fetch_crime_qps.py first."
+            f"No *_crime_*.json files found in {cache_dir} -- run a crime fetcher first."
         )
 
     results = []
@@ -233,11 +232,22 @@ def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> lis
                     town_row = _find_town_row(sheet, town)
                 except ValueError as exc:
                     results.append(f"{town}: SKIPPED (row-finding) — {exc}")
-                    flagged_count += len(INDICATOR_ROW_LABELS)
+                    flagged_count += len(indicators)
                     continue
 
-                for key, label in INDICATOR_ROW_LABELS.items():
-                    values_by_year = indicators.get(key, {})
+                # GENERALIZED 2026-09-24: reads label and values directly
+                # from each fetcher's own JSON, not a hardcoded per-state
+                # dict -- works for any state's indicator set.
+                for key, entry in indicators.items():
+                    label = entry.get("label")
+                    values_by_year = entry.get("values", {})
+                    if not label:
+                        results.append(
+                            f"{town} {key}: SKIPPED (no 'label' in fetcher output) — "
+                            f"fetcher must supply indicators[key]['label']"
+                        )
+                        flagged_count += 1
+                        continue
                     if not values_by_year:
                         results.append(f"{town} {key}: no data, skipped")
                         continue

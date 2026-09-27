@@ -40,6 +40,7 @@ from fetchers.fetch_population_ucl import QGSOPopulationUCLFetcher
 from fetchers.fetch_population_nrw import QGSOPopulationNRWFetcher
 from fetchers.fetch_population_erp import QGSOPopulationERPFetcher
 from fetchers.fetch_crime_qps import QPSCrimeFetcher
+from fetchers.fetch_crime_bocsar import BOCSARCrimeFetcher
 from fetchers.fetch_qgso_housing import QGSOHousingFetcher
 from fetchers.fetch_salm_unemployment import SALMUnemploymentFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
@@ -57,6 +58,7 @@ FETCHER_REGISTRY: dict[str, type] = {
                                                    # present; see its docstring for the
                                                    # path to full automation
     "crime_qps":      QPSCrimeFetcher,
+    "crime_bocsar":   BOCSARCrimeFetcher,   # NSW; template for future crime_vic/tas/nt/wa
     "salm_unemployment": SALMUnemploymentFetcher,
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,

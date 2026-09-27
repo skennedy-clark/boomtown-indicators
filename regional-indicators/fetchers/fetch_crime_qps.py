@@ -85,6 +85,15 @@ _MONTH_YR = re.compile(r'^[A-Z]{3}(\d{2})$')
 
 CACHE_KEY = "qps_division_offence_rates"
 
+# Queensland statewide rates -- confirmed real, direct source (2026-09-24):
+# QPS publishes this directly, same convention as the division file, no
+# population lookup or cross-division aggregation needed.
+QLD_RATES_URL = (
+    "https://open-crime-data.s3-ap-southeast-2.amazonaws.com"
+    "/Crime%20Statistics/QLD_Reported_Offences_Rates.csv"
+)
+QLD_CACHE_KEY = "qps_qld_statewide_offence_rates"
+
 # Confirmed real column names for all 12 indicator rows the Crime sheet
 # actually has per town (2026-09-24, direct inspection). "total" isn't
 # a raw column -- computed separately, see _extract_town.
@@ -105,6 +114,16 @@ INDICATOR_COLS = {
 # "Total offences (person, property, other)" -- confirmed real
 # definition, literally just these three, not all 8 summary columns.
 TOTAL_COMPONENTS = ["offences_person", "offences_property", "other_offences"]
+
+# GENERALIZED 2026-09-24, per Steve's explicit direction ("knowing
+# there will be a fetch victoria, tasmania, nt, wa at some point"):
+# update_crime.py now reads each indicator's sheet-row label directly
+# from this fetcher's own JSON output, instead of trusting a hardcoded
+# per-state dict in the wiring script. INDICATOR_COLS' values already
+# happen to be identical to the real sheet row labels (confirmed via
+# direct inspection), so they're reused directly here rather than
+# duplicated.
+INDICATOR_LABELS = {**INDICATOR_COLS, "total": "Total offences (person, property, other)"}
 
 
 class QPSCrimeFetcher(BaseFetcher):
@@ -130,6 +149,19 @@ class QPSCrimeFetcher(BaseFetcher):
 
         for town in self.applicable_towns():
             self._extract_town(town, division_data)
+
+        # Queensland state benchmark -- confirmed real, direct source
+        # (2026-09-24, Steve): QPS publishes a genuine statewide rates
+        # file, same convention as the division-level one. No population
+        # lookup or cross-division aggregation needed at all -- verified
+        # directly against all 12 of the workbook's known 2024 Queensland
+        # benchmark values, every one matches within the same ~0.2-0.7%
+        # margin as the town-level data.
+        qld_path = self.download(QLD_RATES_URL, QLD_CACHE_KEY, suffix=".csv")
+        if qld_path:
+            self._extract_queensland(qld_path)
+        else:
+            self.log.warning("  Could not download QLD statewide offence rates -- skipping benchmark")
 
     # ── Parser ─────────────────────────────────────────────────────────────────
 
@@ -245,9 +277,15 @@ class QPSCrimeFetcher(BaseFetcher):
         latest_yr = years[-1]
         latest = data[latest_yr]
 
+        # GENERALIZED 2026-09-24: each indicator now carries its own
+        # sheet-row label alongside its values, so update_crime.py
+        # needs no hardcoded per-state label dict at all.
         indicators = {}
         for key in list(INDICATOR_COLS) + ["total"]:
-            indicators[key] = {str(yr): data[yr][key] for yr in years if key in data[yr]}
+            indicators[key] = {
+                "label": INDICATOR_LABELS[key],
+                "values": {str(yr): data[yr][key] for yr in years if key in data[yr]},
+            }
 
         out = {
             "town":         town.name,
@@ -277,6 +315,122 @@ class QPSCrimeFetcher(BaseFetcher):
             f"drug={latest.get('drug', 0):.3f}"
         )
         self.result.towns_ok.append(town.name)
+
+    # ── Queensland statewide benchmark ────────────────────────────────────────
+
+    def _parse_statewide_csv(self, path: Path) -> dict:
+        """Same proven methodology as _parse_csv (sum 12 months, skip
+        incomplete years, total = person+property+other only) -- kept as
+        a separate, self-contained method rather than refactoring the
+        already-tested division parser, since there's no Division column
+        to group by here at all (the whole file IS one implicit
+        "division": statewide). Verified directly against all 12 of the
+        workbook's known 2024 Queensland values before this was written,
+        see module docstring.
+
+        Returns: { 2022: {"drug": 27.6, ..., "total": ...}, ... }
+        """
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            if not rows:
+                self.log.error("QLD statewide CSV is empty")
+                return {}
+
+            monthly: dict[int, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+
+            for row in rows:
+                month_yr_raw = str(row.get("Month Year", "")).strip()
+                m = _MONTH_YR.match(month_yr_raw)
+                if not m:
+                    continue
+                yr2 = int(m.group(1))
+                yr = 2000 + yr2 if yr2 <= 50 else 1900 + yr2
+
+                def safe(col: str) -> float:
+                    try:
+                        return float(row.get(col, 0) or 0)
+                    except (ValueError, TypeError):
+                        return 0.0
+
+                for ind_key, col_name in INDICATOR_COLS.items():
+                    monthly[yr][ind_key].append(safe(col_name))
+
+            result: dict[int, dict] = {}
+            incomplete_years = []
+            for yr, indicators in monthly.items():
+                months_present = max((len(v) for v in indicators.values()), default=0)
+                if months_present < 12:
+                    incomplete_years.append((yr, months_present))
+                    continue
+
+                annual = {}
+                for ind_key, values in indicators.items():
+                    if values:
+                        annual[ind_key] = round(sum(values) / 100, 6)
+                if all(k in annual for k in TOTAL_COMPONENTS):
+                    annual["total"] = round(sum(annual[k] for k in TOTAL_COMPONENTS), 6)
+                result[yr] = annual
+
+            if incomplete_years:
+                self.log.info(f"  QLD statewide: skipped incomplete years {incomplete_years}")
+
+            return result
+
+        except Exception as exc:
+            self.log.error(f"QLD statewide CSV parse error: {exc}", exc_info=True)
+            return {}
+
+    def _extract_queensland(self, path: Path):
+        self.log.info(f"  Parsing {path.name} ({path.stat().st_size // 1024} KB)")
+        data = self._parse_statewide_csv(path)
+        if not data:
+            self.result.add_error("Queensland", "QLD statewide CSV parse returned no data")
+            return
+
+        years = sorted(data.keys())
+        latest_yr = years[-1]
+        latest = data[latest_yr]
+
+        # GENERALIZED 2026-09-24: each indicator now carries its own
+        # sheet-row label alongside its values, so update_crime.py
+        # needs no hardcoded per-state label dict at all.
+        indicators = {}
+        for key in list(INDICATOR_COLS) + ["total"]:
+            indicators[key] = {
+                "label": INDICATOR_LABELS[key],
+                "values": {str(yr): data[yr][key] for yr in years if key in data[yr]},
+            }
+
+        out = {
+            "town":         "Queensland",
+            "state":        "QLD",
+            "qps_division": None,
+            "source":       "QPS Reported Offence Rates, Queensland statewide",
+            "source_url":   QLD_RATES_URL,
+            "note": (
+                "Rates per 1,000 persons. Same methodology as individual "
+                "division rows: annual value = SUM of 12 monthly rates, "
+                "total = Offences Against the Person + Offences Against "
+                "Property + Other Offences only."
+            ),
+            "indicators": indicators,
+        }
+
+        out_dir = Path(__file__).parent.parent / "cache" / "crime"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "queensland_crime_qps.json"
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2)
+
+        self.log.info(
+            f"  Queensland (statewide): {len(years)} years, "
+            f"latest ({latest_yr}) total={latest.get('total', 0):.3f}"
+        )
+        self.result.towns_ok.append("Queensland")
 
 
 if __name__ == "__main__":

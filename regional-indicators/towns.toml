@@ -147,14 +147,14 @@ qgso_lga         = "LGA/34860"
 sa2_name         = "Roma Surrounds"
 sa3_code         = "30701"
 lga              = "Maranoa"
-qps_division     = "Roma"
+qps_division     = "Wallumbilla"
 bom_station      = "43043"
 csg_notice_year  = 2009
 benchmark        = false
 district         = "Wallumbilla and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-roma-surrounds.pdf"
-notes            = "RESOLVED 2026-09-17: sa2_code/qgso_sa2 corrected to 307011177, confirmed as Roma Surrounds' real ASGS 2021 code (QGSO PDF + ABS Census QuickStats both agree) -- the old 307011178 was genuinely Tara's code, and 307011176 was Roma township's own code, neither was Roma Surrounds. Cross-checked against the truth workbook: Roma Surrounds' own Population (ERP) figure (6,287) is real and distinct from Roma township's (7,083) -- confirms this was a real data-correctness issue, not just a label mismatch. BOM station 43043 has >10% synthetic data 2009-2014."
+notes            = "RESOLVED 2026-09-17: sa2_code/qgso_sa2 corrected to 307011177, confirmed as Roma Surrounds' real ASGS 2021 code (QGSO PDF + ABS Census QuickStats both agree) -- the old 307011178 was genuinely Tara's code, and 307011176 was Roma township's own code, neither was Roma Surrounds. Cross-checked against the truth workbook: Roma Surrounds' own Population (ERP) figure (6,287) is real and distinct from Roma township's (7,083) -- confirms this was a real data-correctness issue, not just a label mismatch. BOM station 43043 has >10% synthetic data 2009-2014. FIXED 2026-09-24: qps_division corrected from 'Roma' to 'Wallumbilla' -- confirmed a real, dedicated 'Wallumbilla' QPS division exists in the raw data and was never actually needed as a substitute. The 'Roma' substitute produced massive, systematic discrepancies against the existing workbook (10-30x+ off, many years showing existing=0 vs a real nonzero source value) -- switching to Wallumbilla's own division matches the existing workbook almost exactly (2023: 48.67 vs 51.41, 2024: 32.62 vs 31.91 -- the same small ~2-5% variance every correctly-mapped town shows)."
 
 [towns.goondiwindi]
 name             = "Goondiwindi"

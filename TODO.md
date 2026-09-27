@@ -1367,3 +1367,93 @@ sub-problems, deliberately sequenced:
 
 - [x] **Real bug found and fixed on the first live run: `isinstance(label, int)` silently rejected every real year value.** xlwings returns whole-number cells as floats (2001.0) via Excel's COM interface -- confirmed real, openpyxl (used only for inspection, never the live write path) happens to preserve int type but xlwings doesn't, so a mock built with plain ints never would have caught this. 0/168 written, every single row failed with "could not find any year values." Fixed in all three affected spots: broadened to `isinstance(label, (int, float))`, compared/stored via `int(label)`. Retested with a mock using actual floats this time (matching the real scenario) -- year-column finding, existing-series reading, and dict-key typing all confirmed correct.
 - [x] Confirmed expected, not a bug: Toowoomba (Central)/(Harlaxton)/(West) correctly fail "could not find town" -- Crime has one combined "Toowoomba" row only, same pattern as Business and Income.
+- [x] **CONFIRMED FIXED, real live run (2026-09-24).** Wallumbilla's qps_division fix works exactly as predicted: historical discrepancies dropped from massive (2-33x, many "infx") to the same tiny ~1.0-1.1x variance every other town shows; flag count dropped from 11/12 to 4/12. Crime wiring is genuinely working end to end now.
+- [ ] **Noted, not necessarily an issue: "breach_dv" flagged widely (8 of 11 towns), consistently, similar magnitude.** Unlike Wallumbilla's issue (isolated to one town, many indicators), this is spread evenly across many independent towns for one specific indicator -- looks like a genuine statewide trend, not a data error. Real candidate explanation: "Coercive Control" appears as a genuinely new offence category in the raw data, and DV enforcement has been a real, active QLD policy focus recently -- a real rise in reported breaches statewide is plausible. Values are already written (write-with-flag), not blocked -- just needs Steve's own judgement when reviewing, not further code changes.
+
+## Queensland state benchmark — built (2026-09-24)
+
+- [x] **Queensland benchmark added, cleanly.** Steve pointed to QPS's
+      own statewide rates file (`QLD_Reported_Offences_Rates.csv`) --
+      confirmed this is a DIRECT source, same convention as the
+      division-level file, meaning no population lookup or
+      cross-division aggregation was needed at all (an earlier,
+      more complex approach -- computing a rate from raw counts plus
+      a separately-sourced QLD population figure -- turned out to be
+      unnecessary once the right file was found). Extended
+      `fetch_crime_qps.py` with a self-contained
+      `_parse_statewide_csv`/`_extract_queensland` pair (kept separate
+      from the proven division parser rather than refactoring shared
+      logic, to avoid any risk to what's already tested and working).
+      Verified all 12 indicators against the real, known 2024
+      Queensland benchmark values -- every one matches within a
+      realistic tolerance (slightly wider than individual towns' ~0.2%,
+      consistent with rounding accumulating over a much larger,
+      statewide-aggregated dataset -- not a methodology problem).
+      `update_crime.py` needed ZERO changes -- confirmed via direct
+      test that it already finds and writes "Queensland" exactly like
+      any town, since the fetcher output uses the same JSON shape.
+
+## Crime generalized for future state fetchers + NSW BOCSAR built (2026-09-24)
+
+- [x] **Generalized `update_crime.py` and `fetch_crime_qps.py`'s output
+      schema, per Steve's explicit direction ("knowing there will be a
+      fetch victoria, tasmania, nt, wa at some point").** The wiring
+      script used to hardcode QLD's 12-category label dict -- wouldn't
+      have worked for NSW's different 8 categories, let alone any
+      future state. Fixed: each fetcher's JSON now carries its own
+      label alongside each indicator's values
+      (indicators[key] = {"label": ..., "values": {...}}), so
+      update_crime.py reads labels from the data itself -- fully
+      state-agnostic, no per-state dict anywhere in the wiring script.
+      Confirmed via direct test against a mock NSW-shaped sheet (8
+      different categories) that this works with zero further
+      changes. Re-verified fetch_crime_qps.py's new output against
+      real data -- no regression, same values as before, just now in
+      the new nested shape. cache_dir.glob pattern also generalized
+      from `*_crime_qps.json` to `*_crime_*.json` so it picks up any
+      state's fetcher output automatically.
+- [x] **`fetch_crime_bocsar.py` built for NSW, designed as the
+      template for future state fetchers** -- module docstring
+      explicitly documents what's NSW-specific (the two BOCSAR URLs,
+      wide-format parser, 8-category list) vs what's already
+      state-agnostic and shouldn't be reinvented (output schema,
+      sum-not-mean, skip-incomplete-years). Two real sources: NSW-wide
+      (population built in) and by-LGA (needs ABS's separate LGA
+      population series, found and verified: 2001-2025, confirmed
+      Narrabri's 2021 figure (12,808) exactly matches an independent
+      real source found earlier). `towns.toml`'s existing `lga` field
+      reused directly as the BOCSAR LGA name -- confirmed exact match,
+      no new towns.toml field needed.
+      **Verification results, real and honest, not glossed over:**
+      6 of 8 categories match within 0.4-9.4% (same normal margin as
+      everywhere else in this project). "Other offences against the
+      person" is 99.3% off but that's 1 vs 2 raw incidents for the
+      year -- almost certainly ordinary small-number noise, not a bug.
+      **"Theft" is 22.7% off -- a genuine ~90-incident gap, not yet
+      explained.** Checked directly: every real BOCSAR subcategory
+      under "Theft" is correctly summed (11 subcategories, confirmed
+      against the raw data), no hidden category found, no double-
+      counting found. Genuinely unresolved -- worth flagging clearly
+      rather than either declaring this fully correct or burying the
+      gap. Not yet wired (no update step run) -- fetcher-level only so
+      far.
+
+- [x] **Bug found on first live BOCSAR run and fixed (2026-09-28):**
+      NSW-wide reported "latest complete year = 2026", but 2026 only has
+      6 months. The completeness check counted values (max list length
+      across categories), so 3 subcategory rows x 6 months = 18 passed a
+      ">= 12" test. Now checks the header's actual month columns per
+      year. I had tested this safeguard on the LGA path only -- the
+      docstring claimed more than was verified. Also: `crime_bocsar`
+      was not registered in run_update.py when first built (same slip as
+      Business); fixed.
+- [ ] **NSW statewide has no history** -- source file only carries
+      "2025 population"/"2026 population", so only 2025 gets a rate.
+      Fine for writing the newest year; a proper series needs ABS
+      state-level population.
+- [ ] **Narrabri Assault 2025 = 18.29 vs 2024 = 13.71** (~176 -> ~234
+      incidents) while NSW is flat. Plausible for a small LGA but
+      unverified; will be flagged red on write.
+- [ ] **Narrabri "Theft" ~22.7% below workbook's 2024 value** (~90
+      incidents), still unexplained -- see earlier entry.
+- [ ] update_crime wiring for NSW/Narrabri not yet live-tested.
