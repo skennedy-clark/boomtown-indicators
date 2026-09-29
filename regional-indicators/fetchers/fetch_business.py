@@ -54,11 +54,29 @@ sheet and towns.toml, with corrections found along the way:
   Roma=307011176  Roma Surrounds(Wallumbilla)=307011177
   Broadsound-Nebo(Dysart)=312011338  Narrabri=110031197
   Narrabri Surrounds=110031198 (no corresponding project town)
-  Toowoomba - SA2 Composite = 317011456 + 317011454 + 317011458
-    (+ 317011457, "Toowoomba - East", confirmed to exist via live ABS
-    lookup but not yet in towns.toml -- see TODO.md, this is a real
-    open decision, not resolved by this fetcher unilaterally. Currently
-    NOT included in the composite sum below pending that decision.)
+  Toowoomba - SA2 Composite = the TEN urban Toowoomba SA2s (317011446, -47,
+    -52, -53, -54, -55, -56, -57, -58, -59): Darling Heights, Drayton -
+    Harristown, Middle Ridge, Newtown (Qld), North Toowoomba - Harlaxton,
+    Rangeville, Toowoomba - Central, - East, - West, Wilsonton.
+
+    RESOLVED 2026-09-28 from last year's raw download ("ABS SA2 Turnover
+    Businesses.xlsx", whose "Extracted" sheet lists exactly these SA2s):
+    these 10 reproduce the workbook's 2023/24 composite EXACTLY on all 8
+    values (NPP 2042/2855/3602/987, PP 223/184/156/37), and out of every
+    subset of the 10 it is the ONLY one that does. This replaces the earlier
+    3-SA2 (then 4-SA2) definitions, which gave 730/781/1044 and were wrong;
+    "East excluded" was decided before this evidence existed.
+
+    KNOWN EXEMPLAR DISCREPANCY: the 2026 workbook's 2024/25 composite
+    (NPP 1865/2745/3463/964, PP 212/169/138/52) equals these 10 MINUS
+    Rangeville (again the unique exact subset; Rangeville's 126 is the whole
+    gap in the first band). Last year's column included Rangeville, so this
+    looks like an oversight in the exemplar's newest column rather than a
+    decision -- to be confirmed by Steve. This fetcher uses all 10, so its
+    2024/25 output will exceed the exemplar's by Rangeville's contribution.
+
+    VALIDATED against the exemplar: the other 11 regions reproduce the 2026
+    workbook's 2024/25 column EXACTLY (22 of 22 NPP/PP blocks).
 """
 
 from __future__ import annotations
@@ -100,7 +118,18 @@ SA2_REGIONS = {
     "Roma":                       [307011176],
     "Roma Surrounds":             [307011177],
     "Tara":                       [307011178],
-    "Toowoomba - SA2 Composite":  [317011456, 317011454, 317011458],
+    "Toowoomba - SA2 Composite":  [
+        317011446,  # Darling Heights
+        317011447,  # Drayton - Harristown
+        317011452,  # Middle Ridge
+        317011453,  # Newtown (Qld)
+        317011454,  # North Toowoomba - Harlaxton
+        317011455,  # Rangeville  (absent from the exemplar's 2024/25 column -- see docstring)
+        317011456,  # Toowoomba - Central
+        317011457,  # Toowoomba - East
+        317011458,  # Toowoomba - West
+        317011459,  # Wilsonton
+    ],
     "Wambo":                      [307021183],
 }
 

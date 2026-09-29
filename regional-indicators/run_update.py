@@ -43,6 +43,7 @@ from fetchers.fetch_crime_qps import QPSCrimeFetcher
 from fetchers.fetch_crime_bocsar import BOCSARCrimeFetcher
 from fetchers.fetch_qgso_housing import QGSOHousingFetcher
 from fetchers.fetch_salm_unemployment import SALMUnemploymentFetcher
+from fetchers.fetch_qrsis_labour import QRSISLabourFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 from fetchers.fetch_business import ABSBusinessFetcher
 
@@ -60,6 +61,7 @@ FETCHER_REGISTRY: dict[str, type] = {
     "crime_qps":      QPSCrimeFetcher,
     "crime_bocsar":   BOCSARCrimeFetcher,   # NSW; template for future crime_vic/tas/nt/wa
     "salm_unemployment": SALMUnemploymentFetcher,
+    "qrsis_labour":      QRSISLabourFetcher,   # QLD LGA + Queensland benchmark, companion to salm_unemployment
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,
     "business":          ABSBusinessFetcher,

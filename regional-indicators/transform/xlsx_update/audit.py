@@ -92,13 +92,28 @@ def audit_cell(cell, new_value, tolerance: float = 0.01) -> CellAuditResult:
             ),
         )
 
-    if isinstance(value, (int, float)) and isinstance(new_value, (int, float)):
-        if value == 0 and new_value == 0:
+    # BUG FIXED 2026-09-29, found via Housing: xlwings can return a cell's
+    # existing value as a Python Decimal (confirmed real on this workbook's
+    # price/rent cells -- e.g. Decimal('385')), which `isinstance(value,
+    # (int, float))` does not recognise. Every Decimal-typed cell was
+    # silently skipping the whole tolerance check below and falling straight
+    # through to UNEXPECTED_CONTENT regardless of how close the values
+    # actually were -- confirmed directly: Decimal('385') == 385.0 is True
+    # in plain Python, so cells that were exact or near-exact matches (e.g.
+    # 385 vs 385.0, 480 vs 480.0) were being flagged as conflicts. This is
+    # shared code used by every writer (Crime, Employment, Business,
+    # Housing) -- see TODO.md, some past "flagged" results elsewhere may
+    # have been false flags caused by this, not genuine discrepancies.
+    from decimal import Decimal
+    numeric_types = (int, float, Decimal)
+    if isinstance(value, numeric_types) and isinstance(new_value, numeric_types):
+        value_f, new_value_f = float(value), float(new_value)
+        if value_f == 0 and new_value_f == 0:
             close = True
-        elif value == 0 or new_value == 0:
+        elif value_f == 0 or new_value_f == 0:
             close = False
         else:
-            close = abs(value - new_value) / abs(value) <= tolerance
+            close = abs(value_f - new_value_f) / abs(value_f) <= tolerance
         if close:
             return CellAuditResult(
                 CellState.MATCHES_NEW_VALUE, coord, value, formula, new_value,

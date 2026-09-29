@@ -1457,3 +1457,521 @@ sub-problems, deliberately sequenced:
 - [ ] **Narrabri "Theft" ~22.7% below workbook's 2024 value** (~90
       incidents), still unexplained -- see earlier entry.
 - [ ] update_crime wiring for NSW/Narrabri not yet live-tested.
+
+## Crime: NSW/Narrabri live-verified (2026-09-28)
+
+- [x] **Full chain confirmed live**: crime_qps + crime_bocsar fetch, then
+      update_crime writes QLD towns, Queensland, Narrabri and NSW in one
+      pass (160 written, 64 flagged). NSW wrote all 8 categories, no flags.
+- [x] **Narrabri "Theft" gap RESOLVED -- methodology is correct.**
+      Compared workbook vs BOCSAR-derived series for every year 2005-2024
+      across all 8 categories: ratio is 1.00 (within a few %) for
+      2005-2023 in every category, Theft included. The gap is 2024-only
+      (Theft 1.29, Malicious damage 1.10; "Other offences against the
+      person" 0.50 = 1 vs 2 incidents). Likely cause: the workbook's 2024
+      column came from an earlier BOCSAR release since revised (hypothesis,
+      not proven). Corroborated by NSW-wide: workbook 2024 Theft 26.2 vs
+      BOCSAR 2025 21.4 (1.22x) -- same Theft-specific 2024 inflation on a
+      second geography. My earlier "unexplained ~90-incident gap" concern
+      is withdrawn.
+- [x] **Narrabri Assault 2025 = 18.29** (196 -> 176 -> 234 incidents for
+      2023/24/25). 2024 was the low year; 2025 is ~19% above 2023, broad
+      across months and subcategories. Looks real. NOTE: I predicted this
+      would be flagged red; it was NOT (no flag fired) -- prediction wrong.
+- [ ] Audit noise class: "new value 0.0 is 0.0x the existing series
+      median (0)" fires when both are zero (Narrabri Transport,
+      Queensland + Toowoomba Prostitution). Meaningless; a guard in
+      audit_series for median==0 and value==0 would remove it. Not done
+      (shared audit.py).
+- [ ] Narrabri Robbery flagged (0.31 -> 0.08) = 4 -> 1 incidents;
+      small-number noise.
+
+## Employment (SALM) -- investigated, fetcher reworked, wiring built (2026-09-28)
+
+- [x] **Annual definition VERIFIED against the workbook, and my own
+      hypothesis was wrong.** I suspected the fetcher double-smoothed and
+      that the workbook used the December-quarter value. Tested every
+      candidate against all 15 SA2 + 5 LGA rows (2011-2025): Dec-quarter
+      matched 12%, plain mean of the 4 quarters 68-69%. The mean is exact
+      where it should be (Chinchilla 2012: 1.8/1.7/1.7/1.5 = 1.675 = the
+      workbook's 1.675; Tara 2025 = 11.2 to the digit). Residual mismatches
+      are vintage (SALM re-estimated at the 2016->2021 ASGS changeover:
+      ~0.15pp avg in 2019-23, 13-14/15 matching again in 2024-25), not
+      method. Existing fetcher method was right; left unchanged.
+- [x] **Fixed: partial years.** Annual mean used however many quarters
+      existed -> 2026 (Mar-26 only) or 2010 (Dec-10 only) became one-quarter
+      "annual" values. Now requires all four quarters.
+- [x] **Reworked `fetch_salm_unemployment.py`**: per-TOWN files unchanged in
+      format and name (transform/to_csv.py and booklet/pages/data_page.py
+      read them directly -- checked before touching anything); NEW per-REGION
+      files in cache/unemployment/regions/ for the 15 SA2 + 5 LGA sheet rows
+      (incl. Toowoomba - East and Narrabri Surrounds, which aren't towns).
+      Regions matched by code then NAME-CHECKED against SALM's own name; a
+      mismatch is refused, not written (tested: 'Roma' pointed at Tara's
+      code is refused and the existing file left untouched).
+- [x] **`update_employment.py` built.** Tested against a mock built from the
+      real reference history + the real 20 region files: 20 regions -> 20
+      distinct rows, correct sections ("Goondiwindi" is both an LGA and an SA2
+      -- searched within section bounds), new 2025 column + row-2 label.
+      NOT yet tested against live Excel. Reuses update_crime's year/write
+      helpers (same row-1 layout) -- the two sheets must stay in step.
+- [x] **"NSW/VIC absent from SALM" was a wrong-code bug, not a data gap**
+      (same as Narrabri). Yarram fixed in towns.toml (205051104 / SA3 20505).
+- [ ] **Shepparton needs a decision**: towns.toml sa2_code 213041536 is not a
+      valid ASGS 2021 code. The town spans "Shepparton - North" (216031416) and
+      "Shepparton - South East" (216031594) -- which SA2(s) represent it?
+      Until then salm_unemployment reports FAILED (1 town).
+- [ ] **Roma SA2 2025: workbook says 3.4, the four 2025 quarters give 2.525**
+      (2.0/2.4/2.7/3.0; even Dec-25 is only 3.0). Roma matched closely
+      2019-2024; Roma Surrounds and the Maranoa LGA both agree with the
+      method. Hypothesis (UNTESTED): the workbook holds Roma's latest quarter
+      (Mar-26) instead of the 2025 mean. Needs the March-2026 SA2 file. The
+      wiring will write 2.525 with NO flag (shape checks don't catch it).
+      Other small gaps: LGA Goondiwindi 3.15 vs 3, Isaac 1.075 vs 1.
+- [ ] **State rows (NSW, "Queensland (benchmark)") not covered** -- SALM
+      doesn't publish states. NSW 2010-24 has long decimals (monthly
+      average); Queensland from 2010 is multiples of 0.025 (mean of four
+      1-decimal quarters); pre-2010 Queensland values look like old rounded
+      figures (8, 8, 7.2...). Source unconfirmed (looks like ABS Labour Force).
+- [ ] **SA2 cache is the Dec-25 vintage; latest release is Mar-26.** LGA is
+      cache-only (DEWR site 503s to automated requests) -- place the CSV at
+      cache/salm_smoothed_lga.csv. Automating that download is untested/open.
+- [ ] Region definitions live in fetch_salm_unemployment.py (SA2_REGIONS /
+      LGA_REGIONS) as Business's do -- a deviation from "towns.toml only";
+      candidate for a shared regions.toml later.
+
+## Employment: first live run + State rows IDENTIFIED (2026-09-28)
+
+- [x] **LIVE-CONFIRMED**: update_employment wrote all 15 SA2 rows to
+      AA10:AA24 in the real workbook, 0 flagged, no crash. Yarram's fixed
+      SA2 code resolves (4.15%). Run reports FAILED only because the LGA
+      file isn't at cache/salm_smoothed_lga.csv yet (by design) and
+      Shepparton's code is still invalid.
+- [x] **The two State rows are NOT one source -- both now identified from
+      real data, not guessed:**
+      * **NSW = annual mean of the 12 monthly ABS Labour Force Survey
+        ORIGINAL (not seasonally adjusted, not trend) unemployment rates.**
+        ABS Table 002 "Labour force status by Sex, New South Wales"
+        (62020002.xlsx, Data1, "Unemployment rate ; Persons ;", Original).
+        EXACT to 10 digits for 2010-2015 (2010: 5.2706994833 = workbook
+        5.270699483333333); no other series matched exactly in any year.
+        2016-2024 differ 0.002-0.05pp (ABS rebenchmarking of the Original
+        series). Trend and SA matched 0/16 exactly.
+      * **Queensland (benchmark) = the SALM convention applied to the
+        whole state**: state smoothed rate per quarter = sum of smoothed
+        unemployed / sum of smoothed labour force over all QLD SA2s (529
+        in the file), then the mean of the 4 quarters. Tracks the workbook
+        to mean |diff| 0.056pp, max 0.144pp (vs 0.24 / 1.02 for the ABS
+        series). Explains why it was 1.0pp above ABS in 2021 (double
+        smoothing lags the 2020 peak). NOT exact: probably 1dp-rounded
+        quarters (values are multiples of 0.025), vintage, and SA2s SALM
+        doesn't publish. Ruled out: ABS LFS Trend/SA/Original monthly
+        means, and quarter-end-month means at 1dp.
+- [ ] **NSW 2025 in the workbook (3.9) looks wrong**: ABS Original 12-month
+      mean for 2025 = 4.095 (SA 4.102, Trend 4.096). No partial-year window
+      of 2025 averages to 3.9 (running means: 4.36, 4.33 ... 4.10). Clean
+      "3.9" among 10-digit decimals = likely hand-typed placeholder.
+      0.2pp low. Queensland 2025 (4.1) is fine (agg 4.033, ABS 4.09).
+- [ ] **Build the State rows** (not done): NSW from ABS Table 002; the same
+      release publishes Vic 003, QLD 004, SA 005, WA 006, TAS 007, NT 008
+      (Trend/Original only), ACT 009 -- a natural template for future state
+      fetchers. URL contains the release month (…/aug-2026/62020002.xlsx),
+      so it must be discovered from the labour-force-australia latest-release
+      page. update_employment.py already handles the "State" section
+      unchanged (it is section-driven) -- needs only region JSON files with
+      section "State" and labels "NSW" / "Queensland (benchmark)".
+- [ ] Minor: fetch_salm's "File vintages" log line only prints when the LGA
+      file is present (early return skips it). Move before the LGA step.
+
+## Provenance of the 2026 exemplar -- Employment (established 2026-09-28)
+
+**Principle: the workbook's history is LAYERED.** Each year's value was frozen from
+whichever release was live at that year's update, then left alone. So history can
+NOT be reproduced from any single current release; only the LATEST column (2025) can
+be reproduced exactly, from vintage-pinned inputs. An exemplar regression test should
+therefore compare the newest column only, against pinned files.
+
+- **SA2 rows, 2025 = EXACT (14/15).** Source: the SALM SA2 **Dec-2025** file (the one
+  already in cache/salm_smoothed_sa2.csv). Method: mean of Mar/Jun/Sep/Dec 2025
+  smoothed rates, **rounded half-up to 1 decimal** (2.85->2.9, 0.875->0.9, 2.025->2.0).
+  Verified with decimal arithmetic. NOTE the newest column is rounded to 1dp while
+  earlier years hold full precision (1.675, 1.75) -- a convention change at entry.
+- **Roma SA2 2025 = 3.4 is an exemplar anomaly, NOT a vintage issue:** the same file
+  reproduces the other 14 exactly and gives 2.5 for Roma. (My earlier "latest quarter /
+  Mar-26" theory is now unlikely: the SA2 column was built from Dec-25, not Mar-26.)
+  Pipeline output 2.5 is the source-supported value.
+- **LGA rows 2025:** Mar-26 file, mean rounded to 1dp -> 3/5 exact (Maranoa 2.2,
+  Toowoomba 3.0, Western Downs 3.9). Goondiwindi (3.15 -> wb 3) and Isaac (1.075 ->
+  wb 1) differ. PREDICTION (untested): the exemplar used the Dec-25 LGA vintage, and
+  would match all 5. Needs the Dec-25 LGA file (DEWR blocks my sandbox).
+  Confirmed NOT the latest quarter (that would be 3.7/1.5/2.6/3.8/4.5).
+- **NSW 2024 = EXACT from the ABS Labour Force June-2025 release**
+  (.../labour-force-australia/jun-2025/6202012.xlsx, old combined-table layout, Original,
+  "Unemployment rate ; Persons ; > New South Wales", mean of 12 months = 3.903859 =
+  workbook 3.9038590083). No other vintage gives it (Dec-24 3.9055, Aug-25..Dec-25
+  3.8995, current 3.8988). 2010-2015 match every vintage (never revised).
+- **NSW 2025 = 3.9 matches NO vintage** (releases give 4.095). It equals 2024 rounded
+  (3.9039 -> 3.9): probably a carried-forward placeholder. Source-supported: 4.095.
+- **ABS archive is reachable** back years (old layout 6202012.xlsx to Mar-2026; new
+  per-state 62020002.xlsx from Apr-2026), so ABS vintages CAN be pinned. DEWR SALM
+  archive is not reachable from the sandbox.
+- **Queensland (benchmark) still not exact.** SA2-aggregate gets within 0.056pp mean but
+  2025 = 4.033 (-> 4.0) vs workbook 4.1. Needs the true source: check whether the SALM
+  XLSX downloads (not the CSV) carry a state-level Queensland row/tab.
+- [ ] Decide convention: round the newest column to 1dp (matches exemplar) or write
+      full precision (matches history)?
+
+## Exemplar archaeology from last year's raw downloads (2025.zip) -- 2026-09-28
+
+The zip holds the raw files behind last year's (2024) column for EVERY indicator, so each
+fetcher can be validated against the exemplar's frozen 2024 column. Done so far:
+
+- [x] **Employment 2024 column reproduced EXACTLY from source, all 4 cases:**
+      SA2 (15/15): SALM Dec-2024 XLSX, mean of Mar/Jun/Sep/Dec, unrounded.
+      LGA (5/5) + Queensland: "QGSO and BoM 2024.xlsx" sheet Labour = QGSO Regional
+      Database extract, "Labour Force - Small Area", "Smoothed - Unemployment Rate (Per
+      cent)", columns "LGA/33610 - Goondiwindi (R)" ... "S/3 - Queensland" ... "SA2/...";
+      rows "Qtr Ended 31 Mar 2024" etc.; mean of 4 one-decimal values (QLD 4,4.1,4.1,4 =
+      4.05). Queensland exists ONLY in this extract (neither SALM csv nor xlsx has state
+      rows -- checked). NSW (exact): ABS 6202004.xlsx (May-2025), Original, 12-mo mean.
+- [ ] **Employment 2025: needs the QGSO extract for Mar-Dec 2025** to reproduce LGA +
+      Queensland exactly, and to build an adapter. Automating it needs the QRSIS
+      collection id for "Labour Force - Small Area" (not yet found; ERP uses collgrp 1 /
+      coll 1961). Interim: adapter reads a manually placed extract (format above).
+- [ ] Acceptance test for AA (22 cells) must use tolerance 0.05 (exemplar values are
+      1dp-rounded; pipeline writes full precision -- Steve: rounding convention is
+      inconsistent across the workbook, some is display-only) and a documented EXCEPTIONS
+      list: Roma 3.4 (source 2.525), NSW 3.9 (source 4.095), plus LGA/QLD until the QGSO
+      2025 extract is in hand. Do NOT bake the exemplar's anomalies in as expected values.
+- [x] **BUSINESS: Toowoomba composite SOLVED.** "ABS SA2 Turnover Businesses.xlsx" sheet
+      "Extracted" lists the SA2s used. Composite = TEN urban Toowoomba SA2s (Darling
+      Heights, Drayton-Harristown, Middle Ridge, Newtown (Qld), North Toowoomba-Harlaxton,
+      Rangeville, Toowoomba Central/East/West, Wilsonton = 317011446,47,52-59). Reproduces
+      the 2023/24 composite EXACTLY on all 8 values and is the UNIQUE exact subset of the 10
+      (brute-forced). Supersedes the 3-SA2/4-SA2 definitions (730/781/1044 were wrong).
+      fetch_business.py updated; real fetcher output verified (1991/2934/3684/989 NPP).
+- [x] **Business method validated vs exemplar's newest column:** 22/22 blocks for the 11
+      non-Toowoomba regions match the 2026 workbook's 2024/25 column EXACTLY from the
+      current ABS release.
+- [ ] **Rangeville decision:** the exemplar's 2024/25 composite (NPP 1865/2745/3463/964,
+      PP 212/169/138/52) = the 10 MINUS Rangeville (unique exact subset; Rangeville's 126 is
+      the whole first-band gap). Last year's column included it -> looks like an oversight.
+      Fetcher uses all 10; its 2024/25 output will exceed the exemplar by Rangeville.
+      Also: the Toowoomba flag on Business NPP/PP should now disappear (was 3-SA2 based).
+- [ ] **number_format:** writers force "General" on written cells (audit.py:420/424,
+      base.py:297, update_business.py:214). Harmless in a NEW column, but strips display
+      formats in already-formatted cells. Proposed: copy number_format from the same row's
+      previous-year cell instead. Not yet changed (touches shared audit.py).
+- [ ] Validate remaining fetchers against the zip's 2024 raw files: BOCSAR (NSW + Narrabri
+      -- should explain the Theft 2024 gap), QPS (division + statewide), ATO Table 6, QGSO
+      ERP/NRW/FTE, ACARA, BoM/QGSO, Narrabri housing/building approvals, fuel report.
+
+## fetch_qrsis_labour.py built -- LGA + Queensland benchmark (2026-09-29)
+
+- [x] **Collection identified from a real QRSIS walkthrough** (Steve stepped
+      through the wizard and captured the actual HTML, same technique that
+      found ERP's collgrp_id/coll_id): collgrp_id=12 (Labour), coll_id=1953
+      ("Labour Force - Small Area, Qtr Ended 31 Dec 2010 to Qtr Ended 31 Mar
+      2026"). Real region types confirmed: GCCSA/LGA/RESREG/S/SA2/SA3/SA4/
+      SED-2017; Queensland = "S/3". date_format="Q1" (not Y1/Y2 as other
+      QRSIS collections in this project use) -- taken directly from the
+      captured hidden field, not guessed.
+- [x] **Built fetch_qrsis_labour.py**, copying fetch_qgso_housing.py's proven
+      live mechanism (only fetcher of this family confirmed working against
+      the real endpoint). Scoped to LGA + Queensland only -- SA2 stays with
+      fetch_salm_unemployment.py's DEWR source, already confirmed exact.
+- [x] **Found and fixed a real bug BEFORE it could bite**: the housing
+      fetcher's output-HTML region-code regex is
+      `(?:SA2|SA3|SA4|LGA)/[\w]+` -- it has no "S" alternative, so a
+      state-level section ("Region : S/3 - Queensland") would silently
+      vanish from parsing entirely, not error. Caught by inspection (the
+      housing fetcher has never fetched a state region, so this never
+      surfaced there) rather than by a live failure. Fixed in this file's
+      own copy of the parser; NOT touched in fetch_qgso_housing.py itself
+      since it doesn't currently fetch state regions either -- flagged in
+      case a future collection there ever does.
+- [x] **Full pipeline tested** (parse -> annualize -> write) against
+      synthetic output built to the real, proven output-HTML shape, using
+      last year's known-correct 2024 quarterly figures as input: reproduces
+      Queensland 2024 = 4.05 and Maranoa 2024 = 1.35 exactly, and confirms
+      the state section is no longer dropped.
+- [x] Registered in run_update.py as "qrsis_labour".
+- [ ] **NOT YET TESTED against the live QRSIS endpoint.** Everything above
+      is real (from the captured walkthrough) except the exact live
+      request/response cycle itself, which cannot be run from this sandbox.
+      Run `python .\\regional-indicators\\run_update.py --only qrsis_labour`
+      and check the log: "Available series" should list the 3 series named
+      in the docstring: if not, the SERIES_RATE string needs correcting.
+      If it succeeds, check the 5 LGA + Queensland cache/unemployment/
+      regions/ files against the March-2026 SALM LGA file's numbers (LGA)
+      and against nothing yet for Queensland (no independent check besides
+      the 2024 value already verified) -- then run update_employment.py and
+      confirm the AA column's remaining 6 blanks (Goondiwindi/Isaac/
+      Maranoa/Toowoomba/Western Downs LGA rows + Queensland) fill in.
+- [ ] Once confirmed live: this closes the LGA and Queensland gaps noted in
+      the "Employment (SALM)" and "Provenance of the 2026 exemplar" entries
+      above. Only remaining Employment gap after that: NSW 2025 (workbook's
+      3.9 has no source-supported match; source value is 4.095) and Roma
+      SA2 2025 (workbook 3.4; source value 2.525) -- both exemplar
+      anomalies, not pipeline bugs, per the exemplar-archaeology entry.
+
+## fetch_qrsis_labour.py: FIRST LIVE RUN SUCCEEDED (2026-09-29)
+
+- [x] **Live run confirmed working end to end, no code changes needed.**
+      All 6 regions parsed and wrote on the first try: series list matched
+      exactly, the S/3 state-section fix worked (Queensland was not
+      dropped), 15 years each.
+- [x] **All 5 LGA 2025 values match my SALM-file prediction exactly**
+      (Goondiwindi 3.150, Isaac 1.075, Maranoa 2.225, Toowoomba 3.000,
+      Western Downs 3.925) -- a real independent cross-check, since QRSIS
+      and the SALM LGA CSV are different query paths into the same
+      underlying DEWR data and agree to 3 decimals.
+- [x] **Queensland 2025 = 4.025%, workbook says 4.1 -- CONFIRMED an exemplar
+      anomaly, not a pipeline problem.** Checked the fetcher's own written
+      file: 2024 = 4.05, exactly matching the already-verified value, so
+      the QRSIS collection has NOT been revised since last year's extract
+      (rules out the vintage-drift explanation). The 2025 gap sits entirely
+      on the exemplar, same as NSW 2025 (source 4.095 vs workbook 3.9, off
+      0.195) and Roma SA2 2025 (source 2.525 vs workbook 3.4, off 0.875).
+      Full 2011-2025 history in the file is a plausible, unremarkable trend
+      (COVID peak 6.5 in 2020, recovery to 3.8 by 2023) -- no other year
+      looks anomalous. Source-supported 2025 value: 4.025.
+- [x] **update_employment.py LIVE-CONFIRMED: all 21 Employment region cells
+      wrote clean** (5 LGA + 15 SA2 + Queensland), 0 flagged. Every value
+      matches what the fetchers independently produced.
+      IMPORTANT CAVEAT, resolved not just noted: Queensland (and every
+      other cell) wrote with NO flag, which at first looked surprising
+      given the earlier finding that the real exemplar holds 4.1 in that
+      cell against a source value of 4.025. Root cause: test-copy.xlsx was
+      built from "Indicators Data-Charts 2025.origional.xlsx" -- LAST
+      YEAR's file, whose own newest column is 2024, so AA27 was EMPTY
+      going into this run. With nothing in that exact cell to compare
+      against, the audit only checked 4.025 against the 2001-2024 history,
+      where it sits right beside 2024's 4.05 and looks unremarkable. This
+      is not a contradiction of the earlier exemplar finding and not a
+      pipeline bug -- it is a property of which base file was used.
+      TO ACTUALLY VALIDATE THE FLAGGING (see Roma/NSW/Queensland flag
+      correctly), re-run against a fresh copy of the REAL 2026 exemplar
+      (Indicators_Data-Charts_2026.xlsx, which already has AA populated
+      with those known-anomalous values), not the 2025-original.
+
+## Employment: first flagging run against the real exemplar (2026-09-29)
+
+- [x] **First live run against Indicators_Data-Charts_2026.xlsx (not last
+      year's file): 9 written, 12 flagged.** Confirms the audit correctly
+      refuses to overwrite an already-populated, disagreeing cell -- exactly
+      the designed behaviour, and the first real test of it on this sheet.
+- [x] **Diagnosed the 12 flags precisely, not just accepted the count.**
+      Checked true stored values (openpyxl, not the log's display) for all
+      21 cells, flagged and clean: EVERY cell in this column is stored at
+      1 decimal place, including the ones that wrote clean -- they only
+      matched because round(source, 1) happened to equal the stored value,
+      not because they were more precise. Reclassified all 12 flags:
+      8 of 12 were pure rounding artifacts (writer passed full precision
+      into both the write and the conflict check; source rounds to exactly
+      the stored value -- e.g. Maranoa stored=2.2, source=2.225); only 4
+      are real (Goondiwindi LGA, Isaac, Roma, Queensland).
+- [x] **Fixed in update_employment.py**: the value being written for the
+      newest year is now rounded to 1dp (Decimal, ROUND_HALF_UP) before
+      both the write and the cell-conflict check. Historical years are
+      LEFT UNROUNDED (many existing cells hold long decimals, e.g.
+      3.966666666666667) -- this looks like a human-entry convention for
+      the current year specifically, not a sheet-wide rule, so only the
+      current year's value is touched. Verified the fix reproduces the
+      exact 8-resolved/4-still-flagged split.
+  - Caught a real correctness detail while implementing: plain Python
+    round() gives round(3.15, 1) == 3.1 due to 3.15 not being exactly
+    representable in binary float -- Decimal(str(value)) sidesteps this
+    and correctly gives 3.2. Doesn't change any real/artifact
+    classification here, but changes the number reported for Goondiwindi
+    LGA (true rounded source = 3.2, not 3.1).
+- [ ] **4 REAL discrepancies to resolve, all in the newest column only:**
+      | Cell | Stored (exemplar) | Source (rounded) |
+      |---|---|---|
+      | LGA Goondiwindi | 3.0 | 3.2 |
+      | LGA Isaac | 1.0 | 1.1 |
+      | SA2 Roma | 3.4 | 2.5 |
+      | Queensland (benchmark) | 4.1 | 4.0 |
+      Roma and Queensland were already investigated (see "Provenance of the
+      2026 exemplar" and "Queensland CONFIRMED an exemplar anomaly" entries
+      above) -- both look like un-sourced/placeholder entries, not pipeline
+      bugs. Goondiwindi LGA and Isaac are NEW findings from this run, not
+      yet investigated -- worth checking whether they're the same pattern
+      (placeholder) or a genuine SALM/QGSO data revision since the exemplar
+      was built, the same way BOCSAR's Theft category turned out to be.
+- [ ] **Rerun once the fix is placed** to confirm 8 cells now write clean
+      and exactly these 4 remain flagged:
+      python .\\regional-indicators\\transform\\xlsx_update\\update_employment.py .\\test-copy.xlsx .\\regional-indicators\\cache\\unemployment --visible
+      (rebuild test-copy.xlsx from the real 2026 exemplar first, not last
+      year's file, or nothing will be there to compare against.)
+
+## Employment: rounding fix CONFIRMED live; partial-year theory tested and rejected (2026-09-29)
+
+- [x] **Rounding fix confirmed exactly as predicted**: 17 written, 4 flagged
+      -- precisely Goondiwindi LGA, Isaac, Roma, Queensland, nothing else.
+      Employment sheet is now functionally complete: every cell the pipeline
+      can source either writes clean or is correctly, narrowly flagged.
+- [x] **Tested a concrete theory for the 4 remaining flags and it does NOT
+      hold up -- reporting the negative result rather than a nicer-sounding
+      guess.** Hypothesis: the exemplar's 2025 figures for these cells were
+      entered early in the year from partial 2025 data (before Q4 existed),
+      similar to how Roma's SA2 value was once suspected to be a single
+      latest-quarter figure. Tested 3-quarter mean, 2-quarter mean, and
+      Q1-only against real quarterly SALM data for Goondiwindi LGA, Isaac,
+      and Roma SA2: ONLY Isaac's 3-quarter mean matches (1.0 exactly);
+      Goondiwindi and Roma match NONE of these constructions. One hit out
+      of three is not a pattern -- likely coincidence for Isaac, not signal.
+      REJECTED as a general explanation. Queensland not testable this way
+      (only have its annual value cached, not the raw quarterly figures).
+- [ ] **4 discrepancies remain genuinely unexplained, not just unresolved
+      by a quick guess:** Goondiwindi LGA (3.0 vs source 3.2), Isaac (1.0
+      vs 1.1), Roma SA2 (3.4 vs 2.5), Queensland (4.1 vs 4.0). All are
+      2025-only -- every year of history checked tracks cleanly (within
+      the same ~10% margin seen everywhere else in this project). Next
+      steps, in order of effort: (1) ask Steve whether he has any notes or
+      memory of how these 4 specific cells were populated -- e.g. a
+      different source, a manual estimate, or a colleague's edit; (2) if
+      not, treat all 4 as open questions for Steve to resolve by eye
+      against the flagged HISTORICAL notes already shown, same as any
+      other flagged cell -- the pipeline has done what it can here.
+
+## Roma SA2 2025: exhaustively investigated, no source explains 3.4 (2026-09-29)
+
+Per Steve: Goondiwindi LGA, Isaac, and Queensland accepted as-is; Roma is the
+one that needed a closer look. Investigated fully:
+
+- [x] Checked for a transposition/copy-paste error: 3.4 does not appear
+      anywhere else in Roma's own row (2001-2025) or in Roma Surrounds'
+      row; not a dragged-formula or copied-cell artifact.
+- [x] Roma is a real outlier against ITS OWN history too, not just the
+      source: 2024=1.5 -> 2025=3.4 is a 2.3x jump on its own trend, on top
+      of not matching source at all.
+- [x] **Pulled Roma's SA2 data LIVE from QRSIS (QGSO's own system) --
+      independent of the DEWR SALM CSV entirely, different endpoint,
+      different collection.** Got the full quarterly series back to
+      Dec-2010, including Mar-2026 (the newest available quarter). Matches
+      the SALM CSV EXACTLY on every single year, including 2025 (2.525
+      both ways) and full 2025 quarters (2.0/2.4/2.7/3.0, climbing
+      steadily, still 3.0 at Mar-2026). This rules out a vintage/revision
+      explanation the same way it did for Queensland -- two independent
+      government sources agree to the decimal.
+- [x] Re-tested every partial-year construction (Q1-only, 2-quarter,
+      3-quarter mean) against these confirmed-correct quarters: none
+      produces anything near 3.4.
+- [x] **CONCLUSION: 3.4 is not supported by any tested government source,
+      any data vintage, or any partial-year calculation. No further
+      source-based investigation is possible from here -- if there's an
+      explanation, it's outside the data itself (a manual entry error, or
+      a figure from an entirely different, unidentified source for this
+      one cell).** Source-supported value: 2.5 (2.525 unrounded).
+      RECOMMENDATION: treat 2.5 as correct and overwrite, unless Steve has
+      a specific memory of where the 3.4 came from.
+
+## Housing: region-level LGA/SA2/State fetch built and live-tested, 3 real bugs found+fixed, update_housing.py built (2026-09-29)
+
+Sheet structure confirmed (2026-09-29): same LGA/SA2/State section markers as
+Employment (rows 4/41/120), 6-row blocks (1 name + up to 5 indicators), State's
+Queensland block has only 3 indicators (no approvals rows -- confirmed real,
+not a gap). A completely separate Narrabri (NSW) block starts row 131 with a
+different nested category structure -- OUT OF SCOPE this pass, same as BOCSAR
+was initially separated from QPS for Crime.
+
+- [x] **fetch_qgso_housing.py extended** with a new _fetch_regions() method,
+      querying sales (1925) and rent (1929) at LGA, SA2, AND State region
+      types together in one session per collection -- confirmed live all
+      three types work for these two collections. Existing per-town output
+      (used by to_csv.py/booklet) is UNTOUCHED, a separate code path.
+- [x] **3 real bugs found via live testing against the actual QRSIS endpoint,
+      not assumed:**
+      1. Output parser regex only recognised SA2/SA3/SA4/LGA region-code
+         prefixes -- a state section ("S/3 - Queensland") was silently
+         dropped. Same class of bug already found and fixed in
+         fetch_qrsis_labour.py's own copy of this parser for Employment;
+         this file's copy had never been exercised on a state region until
+         now, so it was still live here. Fixed (added "S" to the alternation).
+      2. `{**LGA_REGIONS, **SA2_REGIONS, **STATE_REGIONS}` merged by LABEL
+         first -- "Goondiwindi" is a label in both LGA_REGIONS and
+         SA2_REGIONS (same name, two different geographies, both real rows
+         on the sheet), so the dict merge silently dropped the LGA entry.
+         Fixed by keying region_map by CODE (unique across all three dicts)
+         built directly from each source dict, never merged by label; the
+         same collision would have recurred one step later in output
+         aggregation (by_region), also fixed to key by code + carry
+         (label, section) through explicitly rather than re-deriving it.
+      3. SA2_REGIONS codes were bare digits ("307011172"), but the parser's
+         region codes carry an "SA2/" prefix -- every SA2 region silently
+         matched zero results. Fixed by prefixing at map-build time.
+      All three confirmed fixed via a full live re-run: 20/20 regions
+      (6 LGA + 13 SA2 + 1 State) now present, Goondiwindi LGA and SA2 verified
+      as genuinely separate entries with different data.
+- [x] **update_housing.py built**, reusing update_employment.py's
+      section-finding helpers directly (SECTION_MARKERS are identical:
+      LGA/SA2/State) and update_crime.py's write helpers -- third successful
+      reuse of this chain (crime -> employment -> housing). Tested against a
+      mock built from the real 2026 sheet + the real 20 region files: 60/60
+      writes processed (20 regions x 3 indicators), 0 skipped, Goondiwindi's
+      two rows confirmed distinct end-to-end through the wiring, not just the
+      fetcher. NOT yet tested against live Excel.
+- [ ] **Building approvals still unresolved for BOTH rows, on every block.**
+      Tested live via the actual production _fetch_collection() code path:
+      selecting the LGA region type for the approvals_curr collection (2031)
+      returns ZERO available regions -- worse than the existing per-town
+      code's assumption (that LGA-level worked, just not SA2). This needs
+      either more investigation time or a live walkthrough of the working
+      Toowoomba-approvals path the way the Labour collection id was found --
+      the existing per-town code claims to get Toowoomba's LGA approvals
+      working, so there may be a session-flow difference not yet identified.
+- [ ] **Narrabri (NSW) housing block (rows 131-145) not started.** Different,
+      nested category/subcategory structure (Mean/Median Sales Price, Median
+      Weekly Rent split by House/3-Bedroom, Sales No., two separate approvals
+      categories). towns.toml notes a "Narrabri housing 2024.xlsx" source
+      from last year's manual downloads -- worth checking that file's
+      structure before guessing at a live NSW source.
+- [ ] Run against live Excel to confirm:
+      python .\\regional-indicators\\run_update.py --only qgso_housing
+      python .\\regional-indicators\\transform\\xlsx_update\\update_housing.py .\\test-copy.xlsx .\\regional-indicators\\cache\\housing --visible
+      (rebuild test-copy.xlsx from the real 2026 exemplar, not last year's
+      file, to get a meaningful flagging test like Employment's.)
+
+## Housing: sales-count methodology bug found, fixed, and CONFIRMED to also affect existing shipped code (2026-09-29)
+
+- [x] **First live run against the real 2026 exemplar surfaced a real, large
+      bug, not just flagging noise: "Detached dwelling: number of sales" was
+      wrong by a consistent ~4x (existing/source ratio 4.0x in nearly every
+      year, every one of the 20 regions -- 2.0x only in 2000, the collection's
+      first, partial year).** Price and rent flagged too, but only with small,
+      ordinary vintage-sized gaps (a few dollars/week) -- expected, not a bug.
+- [x] **Root cause found and fixed, took two attempts:**
+      Attempt 1 (WRONG, disproven by direct testing): assumed each "Year
+      Ended DD Mon YYYY" period was a rolling 12-month total, took only the
+      December value. Re-tested live -- gave the SAME ~4x gap, so this
+      theory was wrong.
+      Attempt 2 (CONFIRMED CORRECT): checked all 4 of Toowoomba LGA's real
+      2024 quarterly values directly (3307/3325/3441/3435) against the
+      workbook's known 13484 -- their SUM is 13508, a 0.2% margin, the same
+      small margin seen everywhere else in this project. "Year Ended..." is
+      just this collection's (misleading) label for a quarter-end reading;
+      each value is a per-quarter count, and the annual figure is their SUM
+      -- the same "sum, not mean or single-quarter" principle already
+      proven for QPS Crime early in this project, recurring in a new place.
+      Fixed and reverified: Toowoomba LGA 5/5 years within 3% of real
+      history; Roma SA2 2024 matches the exemplar's own value EXACTLY (795).
+- [ ] **IMPORTANT, NOT YET ACTIONED: the EXISTING, already-shipped per-town
+      code (_aggregate()'s "sales" branch) makes the SAME wrong assumption
+      this fix replaces** -- it filters to `"31 Dec" not in period: continue`
+      and takes that single value directly, calling it a "Dec-quarter
+      rolling 12-month total" in its own docstring. That docstring claim is
+      now shown to be incorrect by the same live evidence above. This is
+      NOT part of today's new region-level code -- it is the pre-existing
+      path already used to produce every project town's sales-count figures
+      in cache/housing/{town}_qgso.json, consumed by to_csv.py and the
+      booklet. NOT changed in this pass, deliberately -- touching a
+      long-used code path without confirming full scope first risks a
+      bigger, uncontrolled change than today's task called for. STEVE:
+      this likely means every town's housing_sales_count has been ~4x too
+      low in every past output using this fetcher. Recommend checking a
+      known town's actual booklet/CSV figure against this finding before
+      deciding whether/when to apply the same sum-of-4-quarters fix there.
+- [x] Re-ran full region fetch after the fix: 20/20 regions still write
+      correctly (the earlier LGA/SA2/label-collision fixes are unaffected
+      by this change, confirmed together in the same run).
