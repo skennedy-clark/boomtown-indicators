@@ -306,7 +306,22 @@ class ATOTable6Fetcher(BaseFetcher):
         }
         found = False
 
-        for pc in town.postcodes:
+        # BUG FOUND AND FIXED 2026-10-01, reported directly by Steve: this
+        # used to sum across EVERY postcode in town.postcodes (plural).
+        # Harmless for every other town (each has exactly one postcode in
+        # the list, so summing a one-element list is a no-op) -- but
+        # Toowoomba is configured with postcodes = ["4350", "4352"] (see
+        # towns.toml, for a wider "Greater Toowoomba" area used elsewhere
+        # in this project), so this was silently combining BOTH postcodes'
+        # ATO figures into Toowoomba's income row. Confirmed directly
+        # against the real ATO Table 6 file: postcode 4350 alone sums
+        # (Taxable + Non Taxable rows) to exactly the values Steve expected
+        # and that "Toowoomba (Central)" (postcodes = ["4350"] only)
+        # already produced correctly -- e.g. 58,143 earners / $4,065,212,899
+        # wages for 2023-24. Fixed to use town.postcode (singular, the
+        # primary postcode) -- this sheet's "Toowoomba" row has always
+        # meant just the one postcode, not the combined wider area.
+        for pc in [town.postcode]:
             key = pc.zfill(4)
             if key in taxable_data:
                 found = True
@@ -317,7 +332,7 @@ class ATOTable6Fetcher(BaseFetcher):
                     agg_c[k] += combined_data[key][k]
 
         if not found:
-            self.log.warning(f"  [{town.name}] no Table 6 data for {town.postcodes}")
+            self.log.warning(f"  [{town.name}] no Table 6 data for postcode {town.postcode}")
             self.result.towns_failed.append(town.name)
             return
 
@@ -342,7 +357,7 @@ class ATOTable6Fetcher(BaseFetcher):
         cal_year = str(int(fy_parts[0]) + 1) if len(fy_parts) == 2 else year
 
         out = {
-            "town": town.name, "state": town.state, "postcodes": town.postcodes,
+            "town": town.name, "state": town.state, "postcode": town.postcode,
             "source": "ATO Taxation Statistics Table 6",
             "latest_year": year, "cal_year": cal_year,
             "indicators": {
