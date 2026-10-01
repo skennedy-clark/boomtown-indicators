@@ -2314,3 +2314,152 @@ write its own row.)
       identified in this sweep -- every registered fetcher has a
       corresponding writer script except income_table6 (by design, per
       above).
+## Documentation catch-up, 2026-10-01 -- TODO.md had fallen behind the actual
+## committed code by several sessions' worth of work. Confirmed via direct
+## git clone + file inspection that all of the below is genuinely in the
+## repo and working, not just planned -- this entry exists because the
+## commit history and code were ahead of this file, not because any of it
+## is new as of today (except the fetch_income.py fix, which is new).
+
+### Crime sheet
+- [x] **Narrabri/NSW aggregate total row.** BOCSAR's total lives directly
+      on the town's own name row (163 Narrabri, 172 NSW), not a separate
+      labelled row the way QLD's "Total offences (person, property,
+      other)" gets its own row -- the writer never touched these two rows
+      at all. Fixed by detecting structurally (no "total"-labelled
+      indicator anywhere in a town's JSON, rather than hardcoding a
+      BOCSAR-specific check) and computing+writing the sum. Live-confirmed
+      against the real file.
+- [x] **Row 162: BOCSAR-block-local year header, mirrors row 1.** Confirmed
+      real via direct inspection -- an exact duplicate of row 1's year
+      headers, sitting immediately above the Narrabri block, never updated
+      when a new year column was created. Fixed with its own small
+      function (`_mirror_bocsar_year_header`), deliberately kept separate
+      from the shared `_find_year_column` (which Employment and Housing
+      also import -- row 162 in those sheets is an unrelated cell).
+      Idempotent, live-confirmed (AA162 now matches AA1).
+- [x] Per Steve: Crime data displays to 1 decimal place; rows 163/172
+      bold+underlined regardless of flag status, applied AFTER the shared
+      `apply_write_formatting()` so a genuine flag still shows red on top.
+      Live-confirmed, including the `.underline` API call (previously
+      unproven against real Excel in this project).
+
+### Employment sheet
+- [x] **NSW's State row had no fetcher at all** -- only the methodology
+      (ABS Table 002, Original series, 12-month mean) had been confirmed
+      in an earlier session, never turned into code. Built
+      `fetch_nsw_labour.py`: live-discovers the current release from
+      ABS's "latest-release" page (confirmed the raw HTML uses a relative
+      href, same lesson as the population fetchers' fix below), falls back
+      to a hardcoded URL if discovery fails. Live-confirmed: 2024 value
+      close to (not identical to -- expected, ABS's own "quarterly
+      rebenchmarking" note) the value confirmed exactly in an earlier
+      session; 2025 = 4.0951%, matching everything found before. Full
+      fetch_all() confirmed live. Registered in run_update.py.
+
+### Housing sheet -- the biggest fix of the project to date
+- [x] **Root cause of Building Approvals failing on EVERY run, for the
+      entire project, found and fixed.** `"concorded": "Y"` in both
+      approvals_hist and approvals_curr's config. Confirmed live, step by
+      step through the actual QRSIS wizard (not inferred): the real Time
+      Periods page for this collection ships a hidden
+      `p_concorded_data="N"` default; forcing "Y" instead silently empties
+      the server's region-type list to zero options for every geography
+      level, including LGA and State (which earlier documentation/TODO
+      entries had described as a deeper, unrelated limitation -- it was
+      the same bug). With "N", all 8 real region types appear
+      (GCCSA/LGA/RESREG/S/SA2/SA3/SA4/SED), and Roma's real SA2 code
+      appears among 548 real regions. NOTE: the project README documents
+      the opposite ("must send Y or list returns empty") -- a genuine,
+      flagged contradiction with documented project knowledge, not
+      silently overridden; this fix is confirmed by both live wizard
+      testing AND Steve's own production run.
+- [x] Extended `fetch_qgso_housing.py`'s region-level fetch
+      (`_fetch_regions`) to include approvals at LGA/SA2/State level, on
+      top of the per-town SA2-level fetch that already existed --
+      previously only sales/rent were fetched at region level. Live-tested
+      end to end: real, sensible approvals numbers at every geography
+      level (Brisbane in the thousands, Queensland statewide in the tens
+      of thousands, Roma in single digits). Confirmed in Steve's own run:
+      4 series written per region instead of 3, across every LGA and SA2
+      block.
+- [x] **Narrabri (LGA) block (rows 131-145): a completely separate NSW
+      structure, never automated before, now has two new fetchers and a
+      writer.**
+      - `fetch_narrabri_approvals.py` -- ABS's SDMX Data API
+        (data.api.abs.gov.au/rest, not the old api.data.abs.gov.au, which
+        no longer resolves). `BA_LGA<year>` dataflows (one per financial
+        year + ASGS boundary vintage) discovered live via the dataflow
+        listing rather than hardcoded, merged month-by-month across
+        versions to assemble complete calendar years (no single dataflow
+        spans a full calendar year). Known, non-blocking gap:
+        2018-2020 don't resolve Narrabri's region code (likely a
+        pre-2021 ASGS edition naming difference) -- doesn't matter for
+        the actual goal, since the sheet already has real history back to
+        2010 and only needed 2024 onward added.
+      - `fetch_narrabri_sales_rent.py` -- NSW DCJ's Rent and Sales Report,
+        LGA sheet. No predictable filename pattern exists across quarters
+        (confirmed: different naming conventions even within the same
+        calendar year) -- historical 2025 quarters hardcoded from
+        Steve-provided filenames, every one individually live-tested
+        before being trusted; current quarter discovered live from the
+        landing page for future cycles. Confirmed rent and sales report on
+        different quarters (different reporting lags), handled
+        independently rather than assumed to match.
+      - `update_housing.py` extended with `process_narrabri()`: 6 of 7
+        indicators found by their own column-B label; the 7th ("Total"
+        3-bedroom rent, which has no label of its own in the real sheet --
+        confirmed, not assumed) found as the row directly below "House
+        3-Bed". Per Steve: integer display format for all seven (not
+        Crime's 1-decimal convention -- these are dollar amounts and small
+        counts, not fractional rates). Full live run confirmed: all 7
+        indicators land on the exact predicted rows.
+      - All three new fetchers registered in run_update.py.
+      - Narrabri's 2024 "New Residential Building" flag (sheet shows 0,
+        source shows 10) confirmed genuine against the untouched original
+        file, not a leftover test artifact -- likely the same ABS
+        revision-lag pattern already documented for QLD approvals
+        (revisions run 12-18 months after the reference period).
+- [ ] **Open: Roma's SA2 approvals flag included a historical mismatch**
+      (2023: existing=8 vs source=2, a 4x gap), not just an unusual new
+      value like the other flagged rows (Goondiwindi, Moranbah, North
+      Toowoomba-Harlaxton), which look like ordinary small-area
+      volatility. Worth investigating specifically.
+
+### Income sheet
+- [x] **fetch_income_table6.py: Toowoomba bug, found and fixed.** Only
+      town in towns.toml with two postcodes (`["4350", "4352"]`, for a
+      wider "Greater Toowoomba" area used elsewhere in the project) --
+      every other town has exactly one, so the old code
+      (`for pc in town.postcodes:`) was a harmless no-op everywhere except
+      here, where it silently summed BOTH postcodes' figures together.
+      Found via Steve reporting expected values that exactly matched
+      "Toowoomba (Central)"'s output (postcode 4350 alone). Confirmed
+      exactly against the real ATO Table 6 file: the fix reproduces
+      Steve's expected numbers precisely; the old logic reproduces the
+      exact broken numbers from the real run. Fixed to use the singular
+      `town.postcode`.
+- [x] **fetch_income.py (Table 8): the identical bug, found and fixed
+      2026-10-01 while comparing the repo against session notes.** Same
+      root cause, different aggregation method (this file averages
+      postcodes' incomes rather than summing raw counts, but the fix is
+      identical) -- confirmed directly against the real ATO Table 8 file:
+      postcode 4350 alone gives $71,246 for 2023-24, exactly matching
+      "Toowoomba (Central)"; the old buggy average of 4350 ($71,246) and
+      4352 ($73,934) gives exactly $72,590 -- the precise wrong value this
+      fetcher used to produce. Fixed the same way as Table 6.
+- [ ] `test-copy.xlsx`'s Toowoomba Income cells (from the Table 6 fix's
+      first live run) hold stale pre-fix values and will flag as conflicts
+      on rerun -- correct audit behaviour, not a new bug, but those
+      specific cells need clearing or manual correction before the
+      corrected numbers can land.
+
+### Housekeeping, still open
+- [ ] Project README is meaningfully stale -- lists `population_erp`,
+      `population_nrw`, `business`, `crime_nsw` as "TODO" and `housing_nsw`
+      as unbuilt, all confirmed working. Also documents the wrong
+      concorded value (see above). Worth a cleanup pass.
+- [ ] Sheets not yet given the same close, sheet-by-sheet structural check
+      and write-side confirmation as Crime/Employment/Housing/Income:
+      Business, Population (UCL/NRW/ERP), Rainfall. All confirmed working
+      via the general fetch-side sweep, none has had the deeper pass.

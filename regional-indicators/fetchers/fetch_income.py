@@ -296,15 +296,32 @@ class ATOIncomeFetcher(BaseFetcher):
     # ── Per-town extraction ────────────────────────────────────────────────────
 
     def _extract_town(self, town, postcode_data: dict, year: str):
-        if not town.postcodes:
-            self.result.add_warning(town.name, "No postcodes configured — skipping")
+        if not town.postcode:
+            self.result.add_warning(town.name, "No postcode configured — skipping")
             self.result.towns_skipped.append(town.name)
             return
 
         combined_years: dict[str, list[float]] = {}
         found_any = False
 
-        for pc in town.postcodes:
+        # BUG FOUND AND FIXED 2026-10-01: same root cause as the identical
+        # bug fixed in fetch_income_table6.py the same session -- this used
+        # to iterate town.postcodes (plural), silently averaging in every
+        # postcode a town has, not just its primary one. Harmless for every
+        # other town (one postcode each, so averaging a single-element list
+        # is a no-op) -- but Toowoomba has postcodes = ["4350", "4352"]
+        # (see towns.toml, for a wider "Greater Toowoomba" area used
+        # elsewhere in this project), so this was blending 4352 into
+        # Toowoomba's income figure. Confirmed directly against the real
+        # ATO Table 8 file: postcode 4350 alone gives $71,246 for 2023-24,
+        # exactly matching "Toowoomba (Central)" (postcodes = ["4350"]
+        # only); the old buggy average of 4350 ($71,246) and 4352
+        # ($73,934) gives exactly $72,590 -- the precise wrong value this
+        # fetcher used to produce. Fixed to use town.postcode (singular,
+        # the primary postcode) -- this sheet's "Toowoomba" row has always
+        # meant just the one postcode, not the combined wider area, same
+        # conclusion as the Table 6 fix.
+        for pc in [town.postcode]:
             pc_str = str(pc).zfill(4)
             if pc_str in postcode_data:
                 found_any = True
@@ -319,12 +336,16 @@ class ATOIncomeFetcher(BaseFetcher):
 
         if not found_any:
             self.result.add_error(
-                town.name, "No income data found for any postcode"
+                town.name, "No income data found for its postcode"
             )
             self.result.towns_failed.append(town.name)
             return
 
-        # Average across postcodes where a town spans multiple
+        # "Average across postcodes" no longer applies now there's only
+        # ever one postcode per town here, but kept as a plain pass-through
+        # (sum of a one-element list / 1) rather than restructuring the
+        # output shape -- avg_by_year's downstream consumers expect this
+        # dict-of-floats form.
         avg_by_year = {
             yr: sum(vals) / len(vals)
             for yr, vals in sorted(combined_years.items())
@@ -336,7 +357,7 @@ class ATOIncomeFetcher(BaseFetcher):
         out = {
             "town":     town.name,
             "state":    town.state,
-            "postcodes": town.postcodes,
+            "postcode": town.postcode,
             "source":   "ATO Taxation Statistics Table 8",
             "latest_year": year,
             "avg_taxable_income_by_year": avg_by_year,
