@@ -49,7 +49,7 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-# Direct CSV URL — update issue number when new year published
+# update each cycle -- update issue number when new year published
 # Pattern: https://www.qgso.qld.gov.au/issues/{N}/estimated-resident-population-urban-centre-locality-qld-2001-{year}p.csv
 UCL_URL = (
     "https://www.qgso.qld.gov.au/issues/5496/"
@@ -57,9 +57,13 @@ UCL_URL = (
 )
 
 # QGSO statistics page — scraped as fallback when direct URL 404s
+# FIXED 2026-09-29: this was "population-estimates/state-regions", which
+# 404s -- confirmed live. Correct current page found via search and
+# verified live: "population-estimates/regions" (200, lists "Urban centre
+# and locality, Queensland, 2001 to 2025p" as a current release).
 QGSO_STATS_URL = (
     "https://www.qgso.qld.gov.au/statistics/theme/population/"
-    "population-estimates/state-regions"
+    "population-estimates/regions"
 )
 
 CACHE_KEY = "qgso_ucl_erp"
@@ -88,7 +92,7 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
                 "Could not download UCL population file.\n"
                 "  Manual fix: download the file from\n"
                 "  https://www.qgso.qld.gov.au/statistics/theme/population/"
-                "population-estimates/state-regions\n"
+                "population-estimates/regions\n"
                 f"  and save it as:  cache/{CACHE_KEY}.csv"
             )
             return
@@ -104,22 +108,31 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
             self._extract_town(town, ucl_data)
 
     def _find_current_url(self) -> str | None:
-        """Scrape QGSO statistics page to find the current CSV download URL."""
+        """Scrape QGSO statistics page to find the current CSV download URL.
+
+        BUG FOUND AND FIXED 2026-09-29, same class as fetch_population_nrw.py's
+        _scrape_for_url: both regexes here required an absolute
+        "https?://www.qgso.qld.gov.au/..." URL, but the real page only has
+        relative hrefs ("/issues/5496/...csv"). QGSO_STATS_URL itself was
+        ALSO wrong (see its definition above). Both confirmed and fixed live.
+        """
         try:
             resp = requests.get(QGSO_STATS_URL, timeout=30)
             resp.raise_for_status()
             # Look for CSV link matching the UCL population pattern
-            pattern = r'https?://[^\s"\']*urban-centre-locality-qld[^\s"\']*\.csv'
-            urls = re.findall(pattern, resp.text)
-            if urls:
-                self.log.info(f"  Found URL on page: {urls[0]}")
-                return urls[0]
+            pattern = r'/[^\s"\']*urban-centre-locality-qld[^\s"\']*\.csv'
+            paths = re.findall(pattern, resp.text)
+            if paths:
+                url = f"https://www.qgso.qld.gov.au{paths[0]}"
+                self.log.info(f"  Found URL on page: {url}")
+                return url
             # Also try issues URL pattern
-            issue_pat = r'https?://www\.qgso\.qld\.gov\.au/issues/\d+/[^\s"\']*ucl[^\s"\']*\.csv'
-            urls = re.findall(issue_pat, resp.text, re.IGNORECASE)
-            if urls:
-                self.log.info(f"  Found URL on page: {urls[0]}")
-                return urls[0]
+            issue_pat = r'/issues/\d+/[^\s"\']*ucl[^\s"\']*\.csv'
+            paths = re.findall(issue_pat, resp.text, re.IGNORECASE)
+            if paths:
+                url = f"https://www.qgso.qld.gov.au{paths[0]}"
+                self.log.info(f"  Found URL on page: {url}")
+                return url
         except Exception as exc:
             self.log.warning(f"  Page scrape failed: {exc}")
         return None

@@ -27,17 +27,35 @@ THE SAME REGION NAME IS USED IN TWO SECTIONS ("Goondiwindi" is both an LGA
 and an SA2 row) -- same disambiguation as Employment: every row-find is
 bounded to one section via update_employment.py's _find_region_row.
 
-NOT YET COVERED: both approvals rows, on every block. fetch_qgso_housing.py
-was extended 2026-09-29 to fetch region-level sales/price/rent at LGA, SA2,
-and State level, but building approvals could not be made to return any
-regions at LGA level in live testing (worse than previously documented,
-which assumed at least LGA worked) -- see that file's _fetch_regions()
-docstring. Still open; this script simply has no data for those two rows
-and never writes them.
-ALSO NOT COVERED: the separate Narrabri (NSW) block starting row 131,
-which uses a completely different nested category structure and needs its
-own fetcher entirely -- out of scope here, same as BOCSAR was initially
-separated from QPS for Crime.
+NOT YET COVERED (before 2026-10-01): both approvals rows, on every block.
+fetch_qgso_housing.py was extended 2026-09-29 to fetch region-level sales/
+price/rent at LGA, SA2, and State level, but building approvals could not
+be made to return any regions at LGA level in live testing -- FIXED
+2026-09-30: the root cause was a stray "concorded": "Y" setting, not a
+real limitation -- see fetch_qgso_housing.py's COLLECTIONS config. Both
+approvals rows now populate on every LGA/SA2/State block.
+
+NARRABRI (NSW) BLOCK, ADDED 2026-10-01: the separate block starting row
+131 (confirmed real, direct inspection) has a completely different,
+one-off nested structure -- a single named block, not a repeated LGA/SA2/
+State pattern, so it's handled by its own process_narrabri() below rather
+than forced through the generic section-based process_region(). Reads
+TWO separate cache files (cache/housing/regions/narrabri_approvals.json
+and narrabri_sales_rent.json, from fetch_narrabri_approvals.py and
+fetch_narrabri_sales_rent.py respectively) since the two underlying
+sources (ABS SDMX API for approvals, NSW DCJ Rent and Sales Report for
+sales/rent) are fetched independently. Seven indicators total, each
+located by its own distinctive column-B label within the block, EXCEPT
+the "Total" 3-bedroom rent row, which has no column-B label of its own in
+the real sheet -- confirmed live, found instead as the row immediately
+below "House 3-Bed", which it always sits beside.
+
+Per Steve's explicit request, every Narrabri write displays as a whole
+number (number_format "0") -- these are dollar amounts and small counts,
+not fractional rates like Crime, so unlike Crime's confirmed 1-decimal
+convention, Narrabri doesn't need decimal precision shown. This is a
+display-only format, same principle as Crime's "0.0" -- the underlying
+stored value is unchanged, matching how Excel's own number formats work.
 
 Reuses audit.py's shared write-with-flag mechanism via update_crime.py's
 _write_crime_row -- a shape-based series concern still writes the value
@@ -85,6 +103,124 @@ def _find_housing_indicator_row(sheet, block_start_row: int, label: str) -> int:
     )
 
 
+# ── Narrabri block (ADDED 2026-10-01) ────────────────────────────────────
+
+NARRABRI_NUMBER_FORMAT = "0"   # whole numbers, per Steve's explicit request -- see module docstring
+
+# key -> column-B label that uniquely identifies this row within the block.
+# Confirmed by direct inspection of the real starting file, 2026-10-01.
+NARRABRI_ROW_LABELS = {
+    "mean_sales_price":         "Mean Sale Price",
+    "median_sales_price":       "Median Sale Price",
+    "rent_house_3bed":          "House 3-Bed",
+    "sales_no":                 "Sales No.",
+    "new_residential_building": "New Residential Building",
+    "new_houses":                "New Houses",
+    # "rent_total_3bed" deliberately absent here -- it has no column-B
+    # label of its own in the real sheet; see _find_narrabri_data_row.
+}
+
+
+def _find_narrabri_block_row(sheet) -> int:
+    """Locate the one-off "Narrabri (LGA)" block's name row by searching
+    column A directly, rather than hardcoding row 131 -- robust against
+    the block shifting if rows are added elsewhere in the sheet, same
+    principle as every other row-finder in this project."""
+    used = sheet.used_range
+    last_row = used.last_cell.row
+    for row in range(1, last_row + 1):
+        if sheet.cells(row, 1).value == "Narrabri (LGA)":
+            return row
+    raise ValueError(f"Could not find 'Narrabri (LGA)' in column A of sheet '{sheet.name}'.")
+
+
+def _find_narrabri_data_row(sheet, block_row: int, key: str) -> int:
+    """Find one of the Narrabri block's 7 data rows. Six are found by
+    their own distinctive column-B label (NARRABRI_ROW_LABELS). The
+    seventh, "rent_total_3bed", has no column-B label at all in the real
+    sheet -- confirmed live -- so it's found instead as the row
+    immediately below "House 3-Bed", which it always sits beside there.
+    Searches within a generous window below the block start (40 rows,
+    comfortably past row 145, the last confirmed real row) rather than a
+    tight fixed range, since this is a single one-off block, not a
+    repeated per-region pattern with a known fixed size."""
+    SEARCH_WINDOW = 40
+    if key == "rent_total_3bed":
+        house_row = _find_narrabri_data_row(sheet, block_row, "rent_house_3bed")
+        return house_row + 1
+    label = NARRABRI_ROW_LABELS[key]
+    for row in range(block_row + 1, block_row + SEARCH_WINDOW):
+        if sheet.cells(row, 2).value == label:
+            return row
+    raise ValueError(
+        f"Could not find column-B label '{label}' (for '{key}') within "
+        f"{SEARCH_WINDOW} rows of the Narrabri block (starting row {block_row}) "
+        f"in sheet '{sheet.name}'."
+    )
+
+
+def process_narrabri(sheet, cache_dir: Path) -> list[tuple[str, bool, bool]]:
+    """Narrabri's 7 indicators, read from its two separate cache files
+    (approvals from ABS, sales/rent from NSW DCJ -- see module docstring),
+    each written to its own row within the single Narrabri block."""
+    results = []
+    files = {
+        "narrabri_approvals.json": "Building Approvals",
+        "narrabri_sales_rent.json": "Sales/Rent",
+    }
+    found_any_file = False
+
+    try:
+        block_row = _find_narrabri_block_row(sheet)
+    except ValueError as exc:
+        return [(f"Narrabri: SKIPPED (block not found) — {exc}", False, True)]
+
+    for filename, source_label in files.items():
+        path = cache_dir / "regions" / filename
+        if not path.exists():
+            results.append((f"Narrabri ({source_label}): no cache file, skipped — run the matching fetcher first", False, False))
+            continue
+        found_any_file = True
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        for key, entry in data.get("indicators", {}).items():
+            tag = f"Narrabri [{key}]"
+            row_label = entry.get("label")
+            values = entry.get("values", {})
+            if not row_label or not values:
+                results.append((f"{tag}: no data, skipped", False, False))
+                continue
+
+            latest = max(values, key=int)
+            year, value = int(latest), values[latest]
+            source_series = {int(y): v for y, v in values.items()}
+
+            try:
+                row = _find_narrabri_data_row(sheet, block_row, key)
+            except ValueError as exc:
+                results.append((f"{tag}: SKIPPED (row-finding) — {exc}", False, True))
+                continue
+
+            report, coord = _write_crime_row(sheet, row, year, value, source_series)
+            line, is_written, is_flagged = describe_write_outcome(tag, report, coord, f"{year} = {value:,.4g}")
+            if is_written or is_flagged:
+                # Integer display format, per Steve's explicit request --
+                # applied AFTER _write_crime_row, same reasoning as
+                # update_crime.py's CRIME_NUMBER_FORMAT override: that
+                # function's own apply_write_formatting() unconditionally
+                # sets number_format based on flag status, so anything set
+                # earlier would just be overwritten.
+                col = _find_year_column(sheet, year)
+                sheet.cells(row, col).number_format = NARRABRI_NUMBER_FORMAT
+            results.append((line, is_written, is_flagged))
+
+    if not found_any_file:
+        results.append(("Narrabri: SKIPPED — neither cache file found, run narrabri_approvals and narrabri_sales_rent first", False, True))
+
+    return results
+
+
 def process_region(sheet, section_rows: dict, data: dict):
     """One region's every indicator, latest complete year -> its row.
     Returns a list of (result_line, is_written, is_flagged) tuples, one
@@ -123,8 +259,10 @@ def process_region(sheet, section_rows: dict, data: dict):
 
 
 def update_housing(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
-    region_files = sorted((cache_dir / "regions").glob("*.json"))
-    if not region_files:
+    all_region_files = sorted((cache_dir / "regions").glob("*.json"))
+    narrabri_filenames = {"narrabri_approvals.json", "narrabri_sales_rent.json"}
+    region_files = [p for p in all_region_files if p.name not in narrabri_filenames]
+    if not region_files and not any((cache_dir / "regions" / n).exists() for n in narrabri_filenames):
         raise FileNotFoundError(
             f"No region files in {cache_dir / 'regions'} -- run "
             f"`run_update.py --only qgso_housing` first."
@@ -147,6 +285,18 @@ def update_housing(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> l
                     written += is_written
                     flagged += is_flagged
                     any_written |= is_written
+
+            # Narrabri is a single one-off block, not a repeated LGA/SA2/
+            # State region -- handled once here, not through the generic
+            # per-file loop above (its two cache files were excluded from
+            # region_files precisely so they don't get force-fed through
+            # process_region, which expects a recognised section).
+            for line, is_written, is_flagged in process_narrabri(sheet, cache_dir):
+                results.append(line)
+                written += is_written
+                flagged += is_flagged
+                any_written |= is_written
+
             if any_written:
                 wb.save()
         finally:

@@ -67,6 +67,7 @@ towns.toml field needed.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -88,14 +89,61 @@ NSW_WIDE_URL = (
     "/open-datasets/Incident_by_NSW.xlsx"
 )
 LGA_URL = "https://bocsarblob.blob.core.windows.net/bocsar-open-data/RCI_offencebymonth.xlsm"
+ABS_LGA_POP_BASE = "https://www.abs.gov.au/statistics/people/population/regional-population"
+ABS_LGA_POP_RELEASE = "2024-25"   # update each cycle if auto-advance below fails
 ABS_LGA_POP_URL = (
-    "https://www.abs.gov.au/statistics/people/population/regional-population"
-    "/2024-25/32180DS0004_2001-25.xlsx"
+    f"{ABS_LGA_POP_BASE}/{ABS_LGA_POP_RELEASE}/32180DS0004_2001-25.xlsx"
 )
+# update each cycle -- both the "/2024-25/" release folder AND the
+# "2001-25" filename suffix above advance every year ABS republishes this
+# series; the URL 404s once retired rather than silently serving stale data
+
+
+def _guess_next_lga_pop_release(release: str) -> tuple[str, str] | None:
+    """
+    "2024-25" -> ("2025-26", "26"). Returns (release_folder, filename_suffix)
+    or None if the shape doesn't match, so an unexpected format fails safe
+    (falls back to the hardcoded release) rather than guessing nonsense.
+    """
+    m = re.match(r"^(\d{4})-(\d{2})$", release)
+    if not m:
+        return None
+    start = int(m.group(1))
+    new_start, new_end2 = start + 1, (start + 2) % 100
+    return f"{new_start}-{new_end2:02d}", f"{new_end2:02d}"
+
+
+def _discover_current_lga_pop_url(log) -> str:
+    """
+    ADDED 2026-09-29, same guess-verify-fallback approach as
+    fetch_business.py's _discover_current_release(): guess next year's
+    likely release from this year's pattern, verify with a live HEAD
+    request, and only use it if confirmed. Tried live 2026-09-29: a guessed
+    "2025-26" release correctly 404s today while the hardcoded "2024-25"
+    returns 200 -- confirms the fallback path works, not just the mechanism
+    in the abstract.
+    """
+    guess = _guess_next_lga_pop_release(ABS_LGA_POP_RELEASE)
+    if not guess:
+        log.warning(f"  ABS release {ABS_LGA_POP_RELEASE!r} doesn't match the "
+                    f"expected 'YYYY-YY' shape -- using hardcoded URL")
+        return ABS_LGA_POP_URL
+    folder, suffix = guess
+    guess_url = f"{ABS_LGA_POP_BASE}/{folder}/32180DS0004_2001-{suffix}.xlsx"
+    try:
+        resp = requests.head(guess_url, timeout=15, allow_redirects=True)
+        if resp.status_code == 200:
+            log.info(f"  Auto-advanced ABS LGA population release: "
+                     f"{ABS_LGA_POP_RELEASE} -> {folder} (verified live)")
+            return guess_url
+    except requests.RequestException as exc:
+        log.warning(f"  Could not check guessed release {folder!r}: {exc}")
+    log.info(f"  Guessed release {folder!r} not live yet -- using hardcoded URL")
+    return ABS_LGA_POP_URL
 
 NSW_WIDE_CACHE_KEY = "bocsar_nsw_wide"
 LGA_CACHE_KEY = "bocsar_lga"
-ABS_POP_CACHE_KEY = "abs_lga_population_2001_2025"
+ABS_POP_CACHE_KEY = "abs_lga_population_2001_2025"   # cache filename only, cosmetic -- no need to keep in sync
 
 # Confirmed real, exact "Offence category" values (2026-09-24, direct
 # inspection of both BOCSAR files) -- the sheet's own row order.
@@ -117,7 +165,8 @@ class BOCSARCrimeFetcher(BaseFetcher):
     SUPPORTED_STATES = ["NSW"]
 
     def fetch_all(self):
-        pop_path = self.download(ABS_LGA_POP_URL, ABS_POP_CACHE_KEY, suffix=".xlsx")
+        pop_url = _discover_current_lga_pop_url(self.log)
+        pop_path = self.download(pop_url, ABS_POP_CACHE_KEY, suffix=".xlsx")
         if not pop_path:
             self.result.add_error("ALL", "Could not download ABS LGA population data")
             return

@@ -78,6 +78,14 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
+# update each cycle -- every nrw_lga_url / fte_lga_ucl_url below has the
+# release year range baked into its filename (e.g. "...lga-2008-2025.xlsx"),
+# a QGSO "issue" page that gets a new file each year. These 404 once QGSO
+# retires the old one rather than silently serving stale data -- check
+# https://www.qgso.qld.gov.au/issues/6606/ and /3341/ for the current
+# filenames when this breaks. Auto-advance is attempted first (see
+# _discover_current_nrw_urls below); the hardcoded values here are the
+# fallback if that fails.
 REGIONS = {
     "surat_basin": {
         "theme_url": (
@@ -164,9 +172,16 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
     # ── Fetch + parse: LGA-level NRW on-shift, full history ─────────────────
 
     def _fetch_and_parse_nrw_lga(self, region_key: str, region: dict) -> dict:
-        url = region["nrw_lga_url"]
+        # UPDATED 2026-09-29: scrape the live theme page FIRST now that
+        # _scrape_for_url is confirmed working (see its docstring -- it
+        # previously found nothing due to a relative-vs-absolute URL bug,
+        # now fixed and verified). This is self-updating year over year;
+        # the hardcoded region["nrw_lga_url"] is only the fallback if the
+        # live page's structure changes and scraping stops working.
+        url = self._scrape_for_url(region_key, region["theme_url"], "non-resident-workers-on-shift")
         if not url:
-            url = self._scrape_for_url(region_key, region["theme_url"], "non-resident-workers-on-shift")
+            url = region["nrw_lga_url"]
+            self.log.warning(f"  [{region_key}] Scrape failed -- falling back to hardcoded NRW URL, which may be stale")
         if not url:
             self.result.add_warning(
                 region_key,
@@ -187,9 +202,11 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
     # ── Fetch + parse: LGA + selected UCL FTE, 2024-2025 ─────────────────────
 
     def _fetch_and_parse_fte(self, region_key: str, region: dict) -> dict:
-        url = region["fte_lga_ucl_url"]
+        # UPDATED 2026-09-29: same reasoning as _fetch_and_parse_nrw_lga above.
+        url = self._scrape_for_url(region_key, region["theme_url"], "full-time-equivalent")
         if not url:
-            url = self._scrape_for_url(region_key, region["theme_url"], "full-time-equivalent")
+            url = region["fte_lga_ucl_url"]
+            self.log.warning(f"  [{region_key}] Scrape failed -- falling back to hardcoded FTE URL, which may be stale")
         if not url:
             self.result.add_warning(
                 region_key,
@@ -210,26 +227,32 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
     def _scrape_for_url(self, region_key: str, theme_url: str, slug_fragment: str) -> str | None:
         """Fallback for when a direct URL isn't hardcoded (Bowen Basin
         currently) or a hardcoded one 404s (issue number rolled over).
-        Unverified against the live site -- the direct Surat Basin URLs
-        above were confirmed by a human visiting the page; this scrape
-        has not been. If the theme page's file links are loaded via
-        JavaScript rather than present in the raw HTML, this will find
-        nothing no matter how correct the regex is -- worth checking
-        "view page source" vs. the visible tab content if this keeps
-        failing."""
+
+        BUG FOUND AND FIXED 2026-09-29: this previously required a FULL
+        "https://www.qgso.qld.gov.au/issues/..." URL in the regex and found
+        nothing, ever -- confirmed live it returned None for both Surat
+        Basin files. The docstring blamed JavaScript-rendered content, but
+        that was wrong: checked the raw HTML directly and the links ARE
+        there, just as RELATIVE paths ("href=\"/issues/6606/...xlsx\""),
+        never as an absolute URL. Fixed the regex to match the relative
+        form and prepend the domain when returning. Verified live after the
+        fix: correctly finds and returns both the real NRW and FTE URLs for
+        Surat Basin, matching the hardcoded values exactly.
+        """
         try:
             resp = requests.get(theme_url, timeout=30)
             resp.raise_for_status()
             region_word = region_key.split("_")[0]
             pattern = (
-                rf'https?://www\.qgso\.qld\.gov\.au/issues/\d+/'
+                rf'/issues/\d+/'
                 rf'{region_word}-basin-population-report-tables-'
                 rf'[^"\s]*{slug_fragment}[^"\s]*\.xlsx'
             )
-            urls = re.findall(pattern, resp.text, re.IGNORECASE)
-            if urls:
-                self.log.info(f"  [{region_key}] Found URL on page: {urls[0]}")
-                return urls[0]
+            paths = re.findall(pattern, resp.text, re.IGNORECASE)
+            if paths:
+                url = f"https://www.qgso.qld.gov.au{paths[0]}"
+                self.log.info(f"  [{region_key}] Found URL on page: {url}")
+                return url
         except Exception as exc:
             self.log.warning(f"  [{region_key}] Page scrape failed: {exc}")
         return None

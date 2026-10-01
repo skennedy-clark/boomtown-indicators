@@ -1975,3 +1975,342 @@ was initially separated from QPS for Crime.
 - [x] Re-ran full region fetch after the fix: 20/20 regions still write
       correctly (the earlier LGA/SA2/label-collision fixes are unaffected
       by this change, confirmed together in the same run).
+
+## CRITICAL shared bug found and fixed: audit.py's tolerance check silently skipped for Decimal-typed cells (2026-09-29)
+
+- [x] **Housing's live run confirmed the sum-of-4-quarters sales-count fix
+      works at scale: 18/20 sales-count rows now write CLEAN with no flag
+      at all**, the other 2 (North Toowoomba-Harlaxton, Roma Surrounds) off
+      by only 1-3%, well within the normal vintage margin seen everywhere
+      else in this project -- not a further bug.
+- [x] **But EVERY price/rent row flagged (40/40), and several were false
+      flags: found and fixed a real bug in shared audit.py, not scoped to
+      Housing.** `audit_cell`'s tolerance check
+      (`isinstance(value, (int, float))`) does not recognise Python's
+      Decimal type -- xlwings returns some of this workbook's existing
+      cell values (confirmed real: price/rent cells here) as Decimal, not
+      float. Any Decimal-typed cell silently skipped the ENTIRE 1%-
+      tolerance check and fell straight through to UNEXPECTED_CONTENT
+      regardless of how close the values actually were. Confirmed directly:
+      Decimal('385') == 385.0 is True in plain Python, so cells that were
+      exact matches (rent: 385 vs 385.0, 480 vs 480.0, 395 vs 395.0, 287 vs
+      287.0 -- all in the Housing flag dump) were wrongly flagged as
+      conflicts. Genuine gaps (Brisbane price: 1284500 vs 1266481, a real
+      ~1.4%) were STILL correctly flagged either way -- the bug only ever
+      caused FALSE flags, never false clean-writes, so nothing was ever
+      silently written wrong; the failure mode was purely "flags more than
+      it should", not a data-safety problem.
+      FIX: broadened the isinstance check to (int, float, Decimal) and
+      compare via float() conversion. Verified against the exact real
+      cases from the live run: all 3 false-flag rent cells now correctly
+      resolve to MATCHES_NEW_VALUE; both genuine price gaps still correctly
+      flag as UNEXPECTED_CONTENT. No other change to the tolerance logic.
+- [ ] **THIS IS SHARED CODE -- every writer built this session imports it**
+      (base.py, update_business.py, update_crime.py, update_employment.py,
+      update_housing.py, update_income.py, update_population_ucl.py,
+      update_rainfall.py). SOME PAST "FLAGGED" RESULTS ALREADY REPORTED FOR
+      OTHER SHEETS (Crime, Employment, Business) MAY HAVE BEEN FALSE FLAGS
+      caused by this exact bug, not genuine discrepancies -- wherever a
+      cell happened to be Decimal-typed (dollar/currency-formatted cells
+      seem the likely pattern, based on where it showed up here).
+      RECOMMENDATION: re-run update_crime.py, update_employment.py, and
+      update_business.py against a fresh copy of the real 2026 exemplar
+      with this fix in place, and compare flag counts against the earlier
+      runs already reported -- some previously-flagged cells may now write
+      clean. This does not change any conclusion already reached about a
+      SPECIFIC investigated cell (Roma, NSW, Queensland, Goondiwindi LGA,
+      Isaac -- all confirmed via direct source comparison, not just the
+      audit's tolerance check), but may change the COUNT of flags in those
+      earlier run summaries.
+- [ ] Housing summary after both fixes (sales-count sum + Decimal
+      tolerance): 18 written clean, 2 sales-count rows flagged at 1-3% gaps
+      (normal), 40 price/rent rows would need a re-run with the audit fix
+      in place to see the corrected picture -- not yet re-run.
+
+## Housing: audit.py fix CONFIRMED, price gap is systematic and worth a closer look (2026-09-29)
+
+- [x] **Re-run against the real exemplar with the Decimal fix in place:
+      41 written (up from 18), 19 flagged (down from 42).** Every single
+      rent row now writes clean -- Brisbane, all 5 other LGAs, all 13 SA2s,
+      Queensland -- confirming the audit.py fix completely. Sales count
+      unchanged: same 2 small (1-3%) gaps as before, still normal.
+- [ ] **NEW OBSERVATION, not yet explained: every remaining flag is price,
+      and the direction is suspiciously consistent.** 16 of 17 price flags
+      have the exemplar HIGHER than my computed value (Roma Surrounds is
+      the lone exception, and also has the smallest gap of the 17). Random
+      vintage/rounding noise should go both directions roughly evenly --
+      this one-sided pattern suggests something structural, not just
+      ordinary noise, e.g.: a different quarter-set (maybe my "latest
+      year" pulls in a not-yet-fully-settled recent quarter with a lower
+      median, dragging the mean down -- a known real-estate data pattern
+      where recent quarters get revised upward as more/higher-value
+      settlements are recorded); or median-of-4-quarterly-medians vs
+      mean-of-4 diverging when the quarters are skewed. NOT YET
+      INVESTIGATED -- gaps are modest (1-3%, same magnitude as ordinary
+      flags elsewhere in this project) and the audit is correctly flagging
+      every one for human review rather than silently writing a guess, so
+      this is safe as-is, but the consistent direction is worth a proper
+      look if Steve wants the price rows resolved rather than left flagged
+      indefinitely.
+- [ ] Housing status: sales count and rent effectively DONE (41/43 clean,
+      2 normal small-gap flags). Price needs the above investigated before
+      it can move past "correctly flagged, cause unconfirmed". Approvals
+      (both rows, all sections) and the Narrabri NSW block remain fully
+      open as before.
+
+## Housing price mystery: SOLVED -- stale to_date cut off the newest quarter (2026-09-29)
+
+Root cause found while Steve was at lunch, as requested.
+
+- [x] **The whole "exemplar consistently higher" pattern was ONE bug: the
+      "sales" collection's `to_date` was hardcoded to "Year Ended 30 Sep
+      2025"** -- a stale date left over from whenever this config was
+      first written. This cut the query off BEFORE the December 2025
+      quarter existed in the request at all, regardless of server
+      availability. The "rent" collection (separate config, `to_date`
+      "Year Ended 31 Mar 2026") was never affected, which is exactly why
+      every rent row already matched and only price/sales-derived-from-
+      the-same-collection did not.
+- [x] **Confirmed precisely, not just plausibly:** checked Toowoomba LGA's
+      raw 2025 quarters directly -- with the stale to_date, only 3 quarters
+      came back (Mar/Jun/Sep); extending to_date to match rent's range
+      revealed the missing Dec-2025 quarter (749997, the year's highest --
+      consistent with a rising market, and explains why the gap was always
+      one-directional: a missing top quarter can only ever understate a
+      mean, never overstate it). Mean of all 4 = 693637 vs the workbook's
+      692825 -- 0.1%, the same margin as everywhere else in this project.
+- [x] **Fixed** (to_date -> "Year Ended 31 Mar 2026", matching rent) and
+      **re-verified against ALL 17 previously-flagged price rows, not just
+      the ones used to diagnose it**: every single one now resolves within
+      1% of the real workbook, 8 of the 17 exactly. This also fixes sales
+      count and rent going forward for any future year where 2025-style
+      truncation would otherwise recur (though this year's sales-count
+      figures were already protected by the len==4 completeness check
+      added earlier).
+- [x] **Housing's sales-count, price and rent are now effectively fully
+      resolved** -- the only 2 remaining small flags (North Toowoomba-
+      Harlaxton and Roma Surrounds sales count, 1-3% gaps) are the normal,
+      already-understood kind seen throughout this project, not a further
+      bug. Approvals (both rows, every section) and the Narrabri NSW block
+      remain the two genuinely open items.
+- [ ] Re-run update_housing.py against a fresh exemplar copy to see this
+      land for real (not yet done -- fetcher confirmed live, wiring not
+      re-tested since this fix).
+
+## 2027 hardcoded-date audit (requested via review comment, 2026-09-29)
+
+Prompted directly by the Housing to_date bug found earlier today -- audited
+every script for hardcoded dates that could silently go stale in 2027, the
+same way that one did.
+
+- [x] **Standardized on one greppable marker across the whole codebase:**
+      `grep -rn "update each cycle" regional-indicators/` now finds every
+      genuinely date-sensitive hardcoded value in one command. Reused
+      config.py's existing "# update each cycle" wording rather than
+      inventing a new convention, and aligned two pre-existing but
+      differently-worded comments (fetch_population_ucl.py,
+      fetch_salm_unemployment.py) to match it.
+- [x] **Tested, not assumed, whether these query-window dates could just be
+      set far in the future to stop needing annual updates**: a
+      deliberately-absurd to_date ("Year Ended 31 Dec 2035") 500-errors the
+      whole request rather than gracefully truncating -- confirmed live
+      against fetch_qgso_housing.py's "sales" collection. So these
+      genuinely need a human to bump them each cycle; there's no safe
+      "set once" fix available today.
+- [x] **11 files now marked, one real bug fixed along the way:**
+      - config.py / transform/to_csv.py: YEAR_END=2025 is DUPLICATED across
+        two files with no cross-reference -- a real drift risk (fixing one
+        copy and forgetting the other). Added a note in both pointing at
+        the other.
+      - fetch_qgso_housing.py: all 3 to_date values (sales, rent, approvals).
+      - fetch_qrsis_labour.py: TO_DATE.
+      - fetch_business.py: ABS_RELEASE ("jul2021-jun2025", baked into the
+        CABEE download URL -- 404s once ABS retires this release).
+      - fetch_crime_bocsar.py: ABS_LGA_POP_URL (release folder + filename
+        both carry the year).
+      - fetch_population_nrw.py: 4 QGSO URLs (Surat + Bowen Basin, NRW +
+        FTE) with the year range baked into each filename.
+      - fetch_population_ucl.py, fetch_salm_unemployment.py: already had
+        their own comments: reworded to the standard phrase only, no
+        logic change.
+      - transform/booklet/pages/cover.py, title.py: date_str defaults --
+        confirmed low-risk (make_booklet.py's CLI always computes and
+        passes a real date, so these are dead in the normal path), marked
+        anyway since they're the kind of thing this audit exists to catch.
+        FOUND AND FIXED A REAL SYNTAX BREAK while doing this: my first
+        attempt appended the comment inline after the default value,
+        which swallowed the function signature's closing `):` and broke
+        both files -- caught by re-running syntax checks immediately
+        after, not left for Steve to discover. Fixed by moving the
+        comment above the def line instead.
+- [x] **ato_release.py needs NO changes -- already the right pattern**,
+      worth noting as the model: it computes the latest possible financial
+      year from `date.today()` at runtime rather than hardcoding one, so
+      it is correct in 2027 with zero maintenance.
+- [ ] **Recommendation for a future pass (bigger than today's audit):**
+      fetch_population_erp.py ALREADY has a proper fix for exactly this
+      class of problem -- `_discover_max_to_date()` scrapes the real
+      current dropdown option from the live QRSIS page, falling back to a
+      computed guess only if that fails. Retrofitting the same method onto
+      fetch_qgso_housing.py and fetch_qrsis_labour.py would eliminate the
+      need for the manual "update each cycle" markers on their to_date
+      values entirely, rather than just flagging them for a human to
+      remember. Not done here -- a real, separate piece of work, not a
+      quick audit fix.
+- [ ] Not otherwise touched: URLs/collection ids that are STABLE identifiers
+      rather than year-carrying (e.g. QRSIS coll_id values, SA2/LGA codes)
+      -- these don't need annual maintenance and were correctly left alone.
+
+## Self-updating retrofit: makes the pipeline actually run in 2027 without a rewrite (2026-09-29)
+
+Per Steve's explicit direction: don't just mark hardcoded dates for manual
+update, make the tool guess next year's likely filenames/URLs from this
+year's pattern, verify live, and only fall back to a hardcoded value when
+the guess is wrong -- so next year's cycle runs unmodified except where a
+provider's naming scheme or database genuinely moves.
+
+- [x] **fetch_qgso_housing.py + fetch_qrsis_labour.py: retrofitted with
+      fetch_population_erp.py's PROVEN live-discovery method** (the best
+      available approach for QRSIS -- reads the real current "To Date"
+      dropdown option directly from the live wizard page, rather than
+      guessing a date and risking the 500-error confirmed yesterday for an
+      out-of-range guess). Ported and adapted for this collection's free-
+      text option format ("Qtr Ended...", "Year Ended...") vs ERP's plain
+      digit years. LIVE-TESTED END TO END for both: housing's discovery
+      correctly found "Year Ended 31 Mar 2026" (matching today's hardcoded
+      value) and the full wizard flow completed normally using it; labour's
+      full fetch_all() ran successfully end to end, all 6 regions written.
+      Hardcoded to_date values are KEPT as the fallback if discovery ever
+      fails (e.g. QRSIS changes its page structure).
+- [x] **fetch_business.py + fetch_crime_bocsar.py: guess-next-year,
+      verify-live, fallback pattern**, since these are direct ABS file
+      downloads with no page to scrape a link from -- the release name/
+      folder is guessed by advancing this year's pattern by one year
+      ("jul2021-jun2025"->"jul2022-jun2026", "2024-25"->"2025-26"),
+      checked with a live HEAD request, and only used if it returns 200.
+      TESTED LIVE both ways: the guessed next release correctly 404s today
+      for both (confirms the fallback path actually engages, not just the
+      mechanism in the abstract), and the real current release still
+      downloads and parses correctly (business: 12/12 regions; bocsar:
+      confirmed via the discovery function directly). Fixed a real bug
+      found while wiring this up: fetch_business.py's output
+      "source_url" field was still reading the stale module-level
+      constant instead of whichever URL was actually used -- caught and
+      fixed before presenting.
+- [x] **fetch_population_nrw.py + fetch_population_ucl.py: found and fixed
+      a REAL, pre-existing bug in scrape-based fallbacks that were ALREADY
+      meant to solve exactly this problem but had never actually worked.**
+      Both files already had a "scrape the QGSO theme page for the current
+      link" fallback (population_nrw's own docstring already flagged it as
+      "Unverified against the live site" -- correctly cautious). Tested
+      live: both returned nothing. Root cause found by checking the raw
+      page HTML directly rather than guessing: the regex in both required
+      an absolute "https://www.qgso.qld.gov.au/..." URL, but the real
+      pages only ever have RELATIVE hrefs ("/issues/6606/...xlsx") --
+      never matches, regardless of how correct the rest of the pattern is.
+      NOT a JavaScript-rendering issue as population_nrw's docstring had
+      speculated -- confirmed the content is present in the raw HTML,
+      just relatively linked. Fixed both regexes to match the relative
+      form and prepend the domain. Also found and fixed a SEPARATE bug in
+      population_ucl.py: its QGSO_STATS_URL theme page itself 404s
+      ("population-estimates/state-regions" doesn't exist) -- found the
+      correct current page via search and confirmed live (200):
+      "population-estimates/regions". LIVE-VERIFIED ALL FOUR scrapes now
+      correctly find and return the exact real URLs, matching every
+      current hardcoded value exactly (population_nrw: both Surat Basin
+      files, both Bowen Basin files; population_ucl: the UCL CSV).
+      Flipped population_nrw's priority to scrape-first now that it's
+      proven working (more robust than year-guessing since it reads the
+      TRUE current link, self-healing even if QGSO changes the issue
+      number, not just the year) -- confirmed via a full live
+      fetch-and-parse test for both regions (surat_basin: 4 NRW years, 10
+      FTE years; bowen_basin: 5 NRW years, 19 FTE years). population_ucl's
+      existing direct-URL-first order was left as is (already correct,
+      the direct URL still works today; the now-fixed scrape only
+      triggers as the fallback).
+- [x] **fetch_population_erp.py and ato_release.py needed no changes** --
+      already the right pattern (erp: live dropdown discovery; ato_release:
+      computes the current financial year from date.today() at runtime).
+      Both confirmed as the model other fetchers were brought up to.
+- [x] Full syntax check across every touched file (13 total across both
+      turns of this audit) -- all pass.
+- [ ] **Not converted to auto-discovery, deliberately left as manual
+      "update each cycle" markers**: config.py/to_csv.py's duplicated
+      YEAR_END, and the low-risk booklet date_str defaults. YEAR_END
+      genuinely needs a human decision each cycle (which year the
+      workbook is currently being built for is not something to infer
+      from a live page); the booklet defaults are dead code in the normal
+      CLI path and not worth the complexity of auto-discovery for no
+      real benefit.
+- [ ] **Residual, acknowledged risk**: every guess-and-verify or scrape
+      mechanism above degrades gracefully to the LAST-KNOWN-GOOD hardcoded
+      value if it fails, and logs clearly when that happens -- but none of
+      this eliminates the need to occasionally check the logs next year.
+      If EVERY mechanism fails simultaneously (e.g. next year's real value is published under a completely
+      different naming scheme this guessing can't anticipate), the fetcher will
+      report a clear download/parse error rather than silently using wrong
+      data -- but won't fix itself. Grep "update each cycle" still finds
+      every one of these as the starting point for that manual check.
+
+## Full pipeline test sweep -- fetch side complete, write side needs Steve (2026-09-29)
+
+Requested: systematically test every feature, not just the ones touched
+recently. Split by what's testable where -- I have no Excel/xlwings here,
+so every *fetch* was confirmed live from this sandbox; every *write*
+against the real workbook needs Steve's machine.
+
+### Fetch side: all 12 registered fetchers now confirmed live
+- [x] Live-tested the 6 not yet touched this session: income, income_table6,
+      population_ucl, population_nrw, population_erp, bom_rainfall -- all
+      fetch/parse/extract correctly against a real town (Roma).
+- [x] **Found and fixed 2 stale comments in run_update.py while testing**:
+      population_nrw was marked "NOT YET LIVE-TESTED" (now is, and its
+      docstring already showed it working); population_erp was marked as
+      needing a manually-assembled file (its OWN docstring already said it
+      was rebuilt as a "LIVE-API VERSION" replacing that on 2026-09-16 --
+      the run_update.py comment just never got updated to match). Both
+      corrected.
+- [x] The other 6 (crime_qps, crime_bocsar, salm_unemployment, qrsis_labour,
+      qgso_housing, business) were already confirmed live earlier this
+      session -- not re-tested again here, no reason to expect regression.
+
+### Write side: NEEDS STEVE -- ordered test plan
+Every writer shares audit.py, which had its Decimal-tolerance bug fixed
+AFTER Population/Rainfall/Income were last confirmed (in a prior session,
+before this one's visible history) -- their flag counts may shift the same
+way Housing's did (18 -> 41 written after that one fix). Worth a full
+re-sweep, not a spot check. Suggested order (fetch, then write, fresh
+exemplar copy so flags are meaningful):
+
+```
+cp "Indicators Data-Charts 2026.xlsx" test-copy.xlsx
+python .\regional-indicators\run_update.py --only crime_qps crime_bocsar salm_unemployment qrsis_labour qgso_housing business income income_table6 population_ucl population_nrw population_erp bom_rainfall
+
+python .\regional-indicators\transform\xlsx_update\update_crime.py .\test-copy.xlsx .\regional-indicators\cache\crime --visible
+python .\regional-indicators\transform\xlsx_update\update_employment.py .\test-copy.xlsx .\regional-indicators\cache\unemployment --visible
+python .\regional-indicators\transform\xlsx_update\update_business.py .\test-copy.xlsx .\regional-indicators\cache\business --visible
+python .\regional-indicators\transform\xlsx_update\update_housing.py .\test-copy.xlsx .\regional-indicators\cache\housing --visible
+python .\regional-indicators\transform\xlsx_update\update_income.py .\test-copy.xlsx .\regional-indicators\cache\income --visible
+python .\regional-indicators\transform\xlsx_update\update_population_ucl.py .\test-copy.xlsx .\regional-indicators\cache\population_ucl --visible
+python .\regional-indicators\transform\xlsx_update\update_population_nrw.py .\test-copy.xlsx .\regional-indicators\cache\population_nrw --visible
+python .\regional-indicators\transform\xlsx_update\update_population_nrw_lga.py .\test-copy.xlsx .\regional-indicators\cache\population_nrw --visible
+python .\regional-indicators\transform\xlsx_update\update_population_erp.py .\test-copy.xlsx .\regional-indicators\cache\population_erp --visible
+python .\regional-indicators\transform\xlsx_update\update_rainfall.py .\test-copy.xlsx .\regional-indicators\cache\rainfall --visible
+```
+
+(exact cache subfolder names for the population/rainfall writers not
+independently re-verified here -- check each script's own --help/usage or
+its call to `.glob()` if a path doesn't match; income_table6 doesn't have
+its own writer yet, only income.py's Table 8 does, per the original
+project summary -- Table 6 was fetched to cross-check the average, not to
+write its own row.)
+
+- [ ] Report back per sheet: written/flagged counts, and specifically
+      whether Population/Rainfall/Income's flag counts changed from
+      whatever they were the last time (before the Decimal fix). Housing
+      needs this too -- the price to_date fix hasn't been re-verified
+      against the real workbook yet, only against live source data.
+- [ ] Two features still have NO writer at all, fetch-only: nothing else
+      identified in this sweep -- every registered fetcher has a
+      corresponding writer script except income_table6 (by design, per
+      above).

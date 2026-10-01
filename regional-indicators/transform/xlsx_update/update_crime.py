@@ -70,6 +70,17 @@ from audit import audit_cell, audit_series, audit_historical_series, WriteAuditR
 SHEET_NAME = "Crime"
 FIRST_YEAR_COLUMN = 3   # column C -- confirmed
 YEAR_HEADER_ROW = 1
+# BUG FOUND 2026-09-30, real run against the real 2025-origional file: row
+# 162 is an EXACT mirror of row 1's year headers (2001-2024, same columns),
+# sitting immediately above the Narrabri/BOCSAR block (which starts row
+# 163). Confirmed by direct inspection, not assumed -- this is a
+# section-local year header for the BOCSAR block specifically, distinct
+# from the sheet-wide row 1 header the rest of Crime uses. Kept as a
+# SEPARATE constant, and mirrored via its own small function below, rather
+# than folded into _find_year_column -- that function is SHARED (Employment
+# and Housing both import it), and row 162 in those sheets is an unrelated
+# cell; this must never run for anything but Crime.
+BOCSAR_YEAR_HEADER_ROW = 162
 TOWN_BLOCK_SIZE = 13    # name row + 12 indicator rows, confirmed
 
 # GENERALIZED 2026-09-24, per Steve's explicit direction ("knowing
@@ -128,6 +139,25 @@ def _find_year_column(sheet, year: int) -> int:
     return new_col
 
 
+def _mirror_bocsar_year_header(sheet, year: int) -> bool:
+    """Keep row 162 (the BOCSAR block's own local year-header row) in sync
+    with row 1 whenever a year column exists/gets created. Idempotent --
+    safe to call every run; only writes if row 162's copy is missing or
+    wrong for that column. See BOCSAR_YEAR_HEADER_ROW's definition for why
+    this exists and why it's Crime-specific, not part of the shared
+    _find_year_column. Returns True if it actually wrote something, so the
+    caller can fold this into any_written -- otherwise, on a hypothetical
+    run where every other write gets flagged rather than written, this
+    change would silently never reach wb.save()."""
+    col = _find_year_column(sheet, year)  # never creates a second time; row 1 already has it by this point
+    existing = sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).value
+    if existing != year:
+        sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).value = year
+        sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).number_format = "General"
+        return True
+    return False
+
+
 def _find_town_row(sheet, town_name: str) -> int:
     used = sheet.used_range
     max_row = used.last_cell.row
@@ -177,6 +207,29 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
     return series
 
 
+# ADDED 2026-09-30, per Steve's explicit direction: Crime data displays to
+# 1 decimal place, and the BOCSAR aggregate rows (163 Narrabri, 172 NSW --
+# see BOCSAR_YEAR_HEADER_ROW above for why these two are special) are
+# bold+underlined regardless of flag status, as a structural marker for
+# "this is a name-row aggregate", not a review flag. Both are applied
+# AFTER apply_write_formatting() below, never before -- that function
+# unconditionally sets number_format/bold/color based on flag status, so
+# anything set earlier would just get overwritten.
+CRIME_NUMBER_FORMAT = "0.0"
+BOCSAR_TOTAL_ROWS = {163, 172}  # Narrabri, NSW -- the name rows holding the aggregate, see the fix above
+
+
+def _apply_crime_specific_formatting(cell, row: int) -> None:
+    cell.number_format = CRIME_NUMBER_FORMAT
+    if row in BOCSAR_TOTAL_ROWS:
+        cell.font.bold = True
+        # NOT YET CONFIRMED against real Excel -- .bold and .color are
+        # already proven in this project's real runs, .underline is not.
+        # If this errors, tell me the exact message; same fix pattern as
+        # the earlier Font.color-cannot-be-None crash.
+        cell.font.underline = True
+
+
 def _write_crime_row(sheet, row: int, year: int, value, source_series: dict | None):
     col = _find_year_column(sheet, year)
     cell = sheet.cells(row, col)
@@ -193,6 +246,8 @@ def _write_crime_row(sheet, row: int, year: int, value, source_series: dict | No
     if report.safe_to_write or report.should_write_with_flag:
         cell.value = value
     apply_write_formatting(cell, report.safe_to_write, report.should_write_with_flag)
+    if report.safe_to_write or report.should_write_with_flag:
+        _apply_crime_specific_formatting(cell, row)
 
     return report, cell.address
 
@@ -221,6 +276,23 @@ def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> lis
             sheet = wb.sheets[SHEET_NAME]
             any_written = False
 
+            # Determine the year being written from the first cache file's
+            # latest data, and mirror row 1's header into row 162 (the
+            # BOCSAR block's own copy) BEFORE the main loop, once, rather
+            # than repeating this per indicator write.
+            if cache_files:
+                with open(cache_files[0], encoding="utf-8") as f:
+                    _first_data = json.load(f)
+                _first_indicators = _first_data.get("indicators", {})
+                _all_years = {
+                    int(y)
+                    for entry in _first_indicators.values()
+                    for y in entry.get("values", {})
+                }
+                if _all_years:
+                    if _mirror_bocsar_year_header(sheet, max(_all_years)):
+                        any_written = True
+
             for path in cache_files:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
@@ -234,6 +306,28 @@ def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> lis
                     results.append(f"{town}: SKIPPED (row-finding) — {exc}")
                     flagged_count += len(indicators)
                     continue
+
+                # BUG FIXED 2026-09-30, found via a real run against
+                # Narrabri/NSW: some sources (confirmed: BOCSAR) put their
+                # aggregate total directly ON the town's own name row,
+                # rather than as a separate labelled indicator row the way
+                # QLD's QPS fetcher does ("Total offences (person,
+                # property, other)" gets its own row below the town).
+                # Confirmed on the real 2025-origional file: row 163
+                # ("Narrabri") and row 172 ("NSW") both hold a plain
+                # aggregate NUMBER already (not a formula) -- e.g. Q163 =
+                # sum of Q164:Q171 -- so this writer needs to also update
+                # that cell, which it previously never touched at all.
+                # Detected structurally (no "total"-labelled indicator
+                # anywhere in this town's JSON), not by checking which
+                # state/source this is, so a future state fetcher
+                # (VIC/TAS/NT/WA) gets the right behaviour automatically
+                # based on whether ITS OWN json includes an explicit total.
+                has_own_total_row = any(
+                    "total" in (entry.get("label") or "").lower()
+                    for entry in indicators.values()
+                )
+                town_total_series: dict[int, float] = {}
 
                 # GENERALIZED 2026-09-24: reads label and values directly
                 # from each fetcher's own JSON, not a hardcoded per-state
@@ -251,6 +345,10 @@ def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> lis
                     if not values_by_year:
                         results.append(f"{town} {key}: no data, skipped")
                         continue
+
+                    if not has_own_total_row:
+                        for y, v in values_by_year.items():
+                            town_total_series[int(y)] = town_total_series.get(int(y), 0) + v
 
                     latest_year_str = max(values_by_year, key=int)
                     latest_year = int(latest_year_str)
@@ -271,6 +369,23 @@ def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> lis
                             flagged_count += 1
                     except ValueError as exc:
                         results.append(f"{town} {key}: SKIPPED (row-finding) — {exc}")
+                        flagged_count += 1
+
+                if not has_own_total_row and town_total_series:
+                    total_latest_year = max(town_total_series)
+                    total_value = town_total_series[total_latest_year]
+                    report, coord = _write_crime_row(
+                        sheet, town_row, total_latest_year, total_value, town_total_series
+                    )
+                    line, is_written, is_flagged = describe_write_outcome(
+                        f"{town} total (own name row)", report, coord,
+                        f"{total_latest_year} = {total_value}"
+                    )
+                    results.append(line)
+                    if is_written:
+                        written_count += 1
+                        any_written = True
+                    if is_flagged:
                         flagged_count += 1
 
             if any_written:

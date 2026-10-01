@@ -37,6 +37,9 @@ CONTACT = {
 }
 
 
+# update each cycle -- the date_str default below is dead in the normal CLI
+# path (make_booklet.py always computes and passes a real date_str); only
+# matters if this is called directly
 def build_title_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"):
     """
     Append title/contact page content to `doc`.

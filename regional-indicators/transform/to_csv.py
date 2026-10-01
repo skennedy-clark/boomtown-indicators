@@ -40,7 +40,9 @@ log = get_child_logger("regional-indicators", "to_csv")
 # ── Year range ─────────────────────────────────────────────────────────────────
 
 YEAR_START = 2000
-YEAR_END   = 2025   # update each cycle
+YEAR_END   = 2025   # update each cycle -- ALSO update the other copy of this constant
+                     # (config.py and transform/to_csv.py both define it separately;
+                     # they can silently drift out of sync -- see TODO.md 2027 date audit)
 ALL_YEARS  = [str(y) for y in range(YEAR_START, YEAR_END + 1)]
 
 

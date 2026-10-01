@@ -44,6 +44,9 @@ from fetchers.fetch_crime_bocsar import BOCSARCrimeFetcher
 from fetchers.fetch_qgso_housing import QGSOHousingFetcher
 from fetchers.fetch_salm_unemployment import SALMUnemploymentFetcher
 from fetchers.fetch_qrsis_labour import QRSISLabourFetcher
+from fetchers.fetch_nsw_labour import NSWLabourFetcher
+from fetchers.fetch_narrabri_approvals import NarrabriApprovalsFetcher
+from fetchers.fetch_narrabri_sales_rent import NarrabriSalesRentFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 from fetchers.fetch_business import ABSBusinessFetcher
 
@@ -52,16 +55,18 @@ FETCHER_REGISTRY: dict[str, type] = {
     "income_table6":  ATOTable6Fetcher,
     "population_ucl": QGSOPopulationUCLFetcher,
     "population_nrw": QGSOPopulationNRWFetcher,  # Surat/Bowen Basin non-resident
-                                                   # workers -- NOT YET LIVE-TESTED
-    "population_erp": QGSOPopulationERPFetcher,  # main SA2/LGA ERP row -- currently
-                                                   # only works if a manually-assembled
-                                                   # cache/qgso_and_bom_{YEAR}.xlsx is
-                                                   # present; see its docstring for the
-                                                   # path to full automation
+                                                   # workers -- live-tested 2026-09-29
+    "population_erp": QGSOPopulationERPFetcher,  # main SA2/LGA ERP row -- live QRSIS
+                                                   # API since 2026-09-16, no manual file
+                                                   # needed (this comment was stale --
+                                                   # corrected 2026-09-29 after re-testing)
     "crime_qps":      QPSCrimeFetcher,
     "crime_bocsar":   BOCSARCrimeFetcher,   # NSW; template for future crime_vic/tas/nt/wa
     "salm_unemployment": SALMUnemploymentFetcher,
     "qrsis_labour":      QRSISLabourFetcher,   # QLD LGA + Queensland benchmark, companion to salm_unemployment
+    "nsw_labour":        NSWLabourFetcher,     # NSW State row, completing Employment's State section -- built 2026-09-30
+    "narrabri_approvals": NarrabriApprovalsFetcher,  # Narrabri (LGA) building approvals, Housing sheet -- built 2026-10-01
+    "narrabri_sales_rent": NarrabriSalesRentFetcher,  # Narrabri (LGA) sales/rent, Housing sheet -- built 2026-10-01
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,
     "business":          ABSBusinessFetcher,

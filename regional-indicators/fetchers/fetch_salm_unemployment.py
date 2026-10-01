@@ -95,7 +95,8 @@ RESOURCE_PAGE  = (
     "salm-smoothed-sa2-datafiles-asgs-2021"
 )
 
-# Known-good URL from December quarter 2025 release (try first, fallback if 404)
+# update each cycle -- fallback only (live scraping is tried first; this is
+# used when that fails). Known-good URL from the December quarter 2025 release.
 FALLBACK_CSV_URL = (
     "https://www.dewr.gov.au/download/17068/"
     "salm-smoothed-sa2-datafiles-asgs-2021-december-quarter-2025/"

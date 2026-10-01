@@ -103,14 +103,17 @@ COLLECTIONS = {
         # confirmed live, not assumed. Update this value again as later
         # quarters become available; matching "rent"'s to_date keeps both
         # collections' completeness in step going forward.
-        "to_date":    "Year Ended 31 Mar 2026",
+        "to_date":    "Year Ended 31 Mar 2026",   # update each cycle -- confirmed 2026-09-29 this
+                                                  # collection 500-errors on a to_date beyond what its
+                                                  # own dropdown offers (tested deliberately), so this
+                                                  # cannot be set generously far ahead to self-maintain
         "geo":        "SA2",       # region type to select
     },
     "rent": {
         "id":         "1929",
         "series":     [SERIES_RENT],
         "from_date":  "Year Ended 31 Dec 2000",
-        "to_date":    "Year Ended 31 Mar 2026",
+        "to_date":    "Year Ended 31 Mar 2026",   # update each cycle -- see "sales" above
         "geo":        "SA2",
     },
     "approvals_hist": {
@@ -120,7 +123,23 @@ COLLECTIONS = {
         "to_date":    "Dec 2018",
         "period":     "Monthly",
         "date_fmt":   "M1",
-        "concorded":  "Y",
+        # BUG FOUND AND FIXED 2026-09-30, root cause of "No SA2 regions
+        # matched" failing on EVERY run this entire project: "Y" here made
+        # _set_time_period append p_concorded_data=Y to the time-period
+        # POST. Confirmed live, step by step, that this collection's own
+        # Time Periods page ships a hidden p_concorded_data="N" default --
+        # forcing "Y" instead silently empties the server's region-type
+        # list completely (confirmed: 0 available region types come back
+        # with "Y", vs the real 8 -- GCCSA/LGA/RESREG/S/SA2/SA3/SA4/SED --
+        # with "N"). Same confirmed for approvals_curr (2031) below: both
+        # collections' own default is "N", not "Y". With "N", Roma's real
+        # code (SA2/307011176) is present among 548 real SA2 regions,
+        # verified directly, not assumed. "N" is also this dict's existing
+        # default in _set_time_period (concorded = cfg.get("concorded",
+        # "N")), so this key could be removed entirely; left explicit here
+        # as a record of what was tested and confirmed, not just a default
+        # nobody set on purpose.
+        "concorded":  "N",
         "geo":        "SA2",
         "approvals":  True,
     },
@@ -128,10 +147,10 @@ COLLECTIONS = {
         "id":         "2031",
         "series":     [SERIES_APPROVALS],
         "from_date":  "Jan 2019",
-        "to_date":    "Jan 2026",
+        "to_date":    "Jan 2026",   # update each cycle
         "period":     "Monthly",
         "date_fmt":   "M1",
-        "concorded":  "Y",
+        "concorded":  "N",   # see approvals_hist above -- same bug, same live-confirmed fix
         "geo":        "SA2",
         "approvals":  True,
     },
@@ -199,6 +218,15 @@ REGION_SERIES_LABELS = {
     SERIES_SALES_PRICE: "Detached dwelling: median sale price ($)",
     SERIES_SALES_COUNT: "Detached dwelling: number of sales (Number)",
     SERIES_RENT:        "House - 3 bedrooms - median rent of lodgements ($/week)",
+    # ADDED 2026-09-30: region-level approvals, following the concorded=N
+    # fix confirmed live for the per-town approvals collections -- LGA/SA2/
+    # State region types all confirmed available under the same fix (80 real
+    # LGA regions including Brisbane+Toowoomba; S/3 Queensland present too),
+    # so the earlier "LGA returns zero regions" note (see _fetch_regions'
+    # docstring) was the same bug, not a real limitation. Handled with its
+    # own monthly-sum branch in _fetch_regions, not the quarterly mean/sum
+    # logic the other three series use.
+    SERIES_APPROVALS:   "Building Approvals: Residential dwelling units (Private) New Houses (Number)",
 }
 
 def _q(*pairs) -> list[tuple]:
@@ -382,8 +410,8 @@ class QGSOHousingFetcher(BaseFetcher):
             matched = self._match_series(wanted, avail_series)
             if not matched:
                 raise RuntimeError(f"No region series matched for collection {cfg['id']}")
-            self._select_series(session, udqctl_id, matched)
-            self._set_time_period(session, udqctl_id, cfg["id"], cfg)
+            time_periods_html = self._select_series(session, udqctl_id, matched)
+            self._set_time_period(session, udqctl_id, cfg["id"], cfg, time_periods_html)
 
             self._select_region_type(session, udqctl_id, "LGA - Local Government Area")
             self._select_region_type(session, udqctl_id, "SA2 - Statistical Area Level 2")
@@ -420,6 +448,66 @@ class QGSOHousingFetcher(BaseFetcher):
                         # note below.
                         by_region.setdefault(code, {}).setdefault(series_name, {}) \
                                  .setdefault(yr, {})[period] = v
+
+        # ADDED 2026-09-30: region-level Building Approvals, following the
+        # concorded=N fix (see COLLECTIONS["approvals_hist"/"approvals_curr"]
+        # above) -- separate pass, not folded into the sales/rent loop above,
+        # because this data is MONTHLY (needs _parse_month_year + summing,
+        # not the quarterly mean/sum logic sales/rent use) and comes from TWO
+        # collections (hist: 2001-2018, curr: 2019-onward) that must be
+        # merged into one continuous series per region, matching exactly how
+        # the existing per-town code already does this merge (see
+        # _aggregate()'s "Merge into existing if present (hist + curr)").
+        for coll_key in ("approvals_hist", "approvals_curr"):
+            cfg = COLLECTIONS[coll_key]
+            session = requests.Session()
+            session.headers.update(HEADERS)
+            udqctl_id = self._select_collection(session, cfg["id"])
+            if not udqctl_id:
+                raise RuntimeError(f"Failed to get udqctl_id for collection {cfg['id']}")
+
+            avail_series = self._get_options(session, "QIS1110W$UDQSER.ProcessSeries",
+                                              udqctl_id, "infoser.htm", "p_new_multi")
+            matched = self._match_series(cfg["series"], avail_series)
+            if not matched:
+                raise RuntimeError(f"No series matched for collection {cfg['id']}")
+            time_periods_html = self._select_series(session, udqctl_id, matched)
+            self._set_time_period(session, udqctl_id, cfg["id"], cfg, time_periods_html)
+
+            self._select_region_type(session, udqctl_id, "LGA - Local Government Area")
+            self._select_region_type(session, udqctl_id, "SA2 - Statistical Area Level 2")
+            self._select_region_type(session, udqctl_id, "S - State")
+
+            avail_regions = self._get_options(session, "QIS1110W$UDQREG.ProcessRegions",
+                                               udqctl_id, "inforeg.htm", "p_new_multi")
+            wanted_codes = list(region_map.keys())
+            matched_regions = [r for r in avail_regions if any(r.startswith(c) for c in wanted_codes)]
+            if not matched_regions:
+                raise RuntimeError(f"No regions matched for collection {cfg['id']}")
+            self._select_regions(session, udqctl_id, matched_regions)
+
+            html = self._submit_report(session, udqctl_id, cfg["id"])
+            raw = self._parse_output_html(html)
+            self.log.info(f"  Region fetch {coll_key}: {len(raw)} regions parsed")
+
+            for region_code, periods in raw.items():
+                match = next(((c, lbl_sec) for c, lbl_sec in region_map.items()
+                              if region_code.startswith(c)), None)
+                if not match:
+                    continue
+                code, _ = match
+                for period, vals in periods.items():
+                    parsed = self._parse_month_year(period)
+                    if not parsed:
+                        continue
+                    yr, _mo = parsed
+                    if not (YEAR_START <= yr <= YEAR_END):
+                        continue
+                    v = vals.get(SERIES_APPROVALS)
+                    if v is None:
+                        continue
+                    by_region.setdefault(code, {}).setdefault(SERIES_APPROVALS, {}) \
+                             .setdefault(yr, {})[period] = v
 
         out_dir = CACHE_DIR / "housing" / "regions"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -468,6 +556,21 @@ class QGSOHousingFetcher(BaseFetcher):
                         str(yr): int(sum(period_vals.values()))
                         for yr, period_vals in by_year.items() if len(period_vals) == 4
                     }
+                elif series_name == SERIES_APPROVALS:
+                    # Sum of whatever monthly values are present for the year
+                    # -- NOT requiring exactly 12, matching the existing
+                    # per-town code's leniency (a year straddling the
+                    # hist/curr collection boundary, or the current
+                    # in-progress year, will have fewer than 12; that's
+                    # expected, not an error, same as elsewhere in this
+                    # project's "skip incomplete years" vs "sum what's there"
+                    # distinction -- approvals counts are a genuine running
+                    # total for whatever months have been approved so far,
+                    # unlike a rate that would be misleading if partial).
+                    values = {
+                        str(yr): int(sum(period_vals.values()))
+                        for yr, period_vals in by_year.items() if period_vals
+                    }
                 else:
                     round_fn = round if series_name == SERIES_SALES_PRICE else (lambda x: round(x, 4))
                     values = {
@@ -488,8 +591,9 @@ class QGSOHousingFetcher(BaseFetcher):
                     "SUM of the 4 quarterly values for the calendar year (each 'Year "
                     "Ended...' period is a per-quarter count despite its label -- do not "
                     "average or take a single quarter). All three match real history to "
-                    "within the usual small vintage margin. Building approvals NOT "
-                    "included -- see module docstring, still unresolved."
+                    "within the usual small vintage margin. Building approvals = sum of "
+                    "whatever monthly values are present for the year (fixed 2026-09-30, "
+                    "see COLLECTIONS[\"approvals_curr\"] for the concorded=N root cause)."
                 ),
                 "indicators": indicators,
             }
@@ -523,11 +627,11 @@ class QGSOHousingFetcher(BaseFetcher):
         matched = self._match_series(cfg["series"], avail_series)
         if not matched:
             raise RuntimeError(f"No series matched for collection {cfg['id']}")
-        self._select_series(session, udqctl_id, matched)
+        time_periods_html = self._select_series(session, udqctl_id, matched)
         self.log.info(f"    Series selected: {matched}")
 
         # Step 3: time period
-        self._set_time_period(session, udqctl_id, cfg["id"], cfg)
+        self._set_time_period(session, udqctl_id, cfg["id"], cfg, time_periods_html)
 
         # Step 4: region type
         # Determine which region type to select based on region codes
@@ -591,7 +695,7 @@ class QGSOHousingFetcher(BaseFetcher):
                 self.log.error(f"    Available: {available}")
         return matched
 
-    def _select_series(self, session, udqctl_id, series):
+    def _select_series(self, session, udqctl_id, series) -> str:
         for s in series:
             session.post(
                 BASE_URL + "QIS1110W$UDQSER.ProcessActions",
@@ -600,16 +704,72 @@ class QGSOHousingFetcher(BaseFetcher):
                 timeout=30,
             )
             time.sleep(0.2)
-        session.post(
+        resp = session.post(
             BASE_URL + "QIS1110W$UDQSER.ProcessActions",
             data=_q("udqctl_id", udqctl_id, "info_page", "infoser.htm",
                     "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
+        # ADDED 2026-09-29, porting fetch_population_erp.py's proven pattern:
+        # this response IS the next page (Time Periods) -- Oracle PL/SQL
+        # WebTK returns each next screen directly from the POST, no separate
+        # fetch needed. Returned so _set_time_period can read the real
+        # available to_date range instead of relying only on a hardcoded
+        # guess (see _discover_max_to_date below).
+        return resp.text
 
-    def _set_time_period(self, session, udqctl_id, coll_id, cfg):
+    def _discover_max_to_date(self, time_periods_html: str) -> str | None:
+        """
+        Parse the real 'To Date' dropdown out of the Time Periods page and
+        return its newest (default-selected, or first-listed) option.
+
+        GENERALIZED from fetch_population_erp.py's version 2026-09-29: that
+        one only accepts plain digit years (ERP's collection uses a bare
+        year <select>). This collection's options are free text ("Qtr Ended
+        31 Mar 2026", "Year Ended 31 Dec 2025") -- confirmed real from
+        Steve's captured QRSIS walkthrough of the Labour collection, which
+        showed this exact To Date <select>, most-recent-first, with the
+        newest option marked selected="selected". Accepts any non-empty
+        option text rather than digit-only, and prefers the selected option;
+        if none is marked selected, falls back to the FIRST option in the
+        list (confirmed real ordering: most-recent-first) rather than trying
+        to parse and sort arbitrary date-format strings, which would be
+        fragile across the different label styles ("Year Ended", "Qtr
+        Ended") this project's various collections use.
+        """
+        soup = BeautifulSoup(time_periods_html, "lxml")
+        to_date_marker = soup.find("input", {"name": "p_names", "value": "to_date"})
+        if not to_date_marker:
+            return None
+        select = to_date_marker.find_next("select")
+        if not select:
+            return None
+        options = [o.get_text(strip=True) for o in select.find_all("option") if o.get_text(strip=True)]
+        if not options:
+            return None
+        selected = select.find("option", selected=True)
+        if selected and selected.get_text(strip=True):
+            return selected.get_text(strip=True)
+        return options[0]
+
+    def _set_time_period(self, session, udqctl_id, coll_id, cfg, time_periods_html: str = ""):
         from_date  = cfg["from_date"]
-        to_date    = cfg["to_date"]
+        # UPDATED 2026-09-29: discover the real current to_date from the live
+        # page rather than trusting only the hardcoded config value -- same
+        # self-updating approach already proven in fetch_population_erp.py.
+        # Falls back to cfg["to_date"] (still kept, and still needs manual
+        # updates -- see "update each cycle" comment on it) if discovery
+        # fails, so a page-structure change degrades to the old behaviour
+        # rather than breaking outright.
+        to_date = self._discover_max_to_date(time_periods_html) if time_periods_html else None
+        if to_date:
+            self.log.info(f"    Discovered real max To Date from the page: {to_date}")
+        else:
+            to_date = cfg["to_date"]
+            self.log.warning(
+                f"    Could not discover the real To Date option from the page -- "
+                f"falling back to the hardcoded {to_date!r}, which may now be stale."
+            )
         period     = cfg.get("period", "Quarterly")
         date_fmt   = cfg.get("date_fmt", "Y1")
         concorded  = cfg.get("concorded", "N")

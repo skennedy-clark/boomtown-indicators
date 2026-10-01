@@ -99,7 +99,12 @@ HEADERS = {
 
 SERIES_RATE = "Smoothed - Unemployment Rate (Per cent)"
 FROM_DATE   = "Qtr Ended 31 Dec 2010"
-TO_DATE     = "Qtr Ended 31 Mar 2026"
+TO_DATE     = "Qtr Ended 31 Mar 2026"   # update each cycle -- likely the same
+                                        # 500-error-on-future-date behaviour
+                                        # confirmed for fetch_qgso_housing.py's
+                                        # collections (same QRSIS wizard
+                                        # mechanism), not independently
+                                        # re-tested for this collection
 PERIOD      = "Quarterly"
 DATE_FMT    = "Q1"
 
@@ -157,9 +162,9 @@ class QRSISLabourFetcher(BaseFetcher):
         if SERIES_RATE not in avail_series:
             self.result.add_error("ALL", f"Series '{SERIES_RATE}' not found. Available: {avail_series}")
             return
-        self._select_series(session, udqctl_id, [SERIES_RATE])
+        time_periods_html = self._select_series(session, udqctl_id, [SERIES_RATE])
 
-        self._set_time_period(session, udqctl_id)
+        self._set_time_period(session, udqctl_id, time_periods_html)
 
         # Multiple region types in one session (LGA + State), per the real
         # wizard's MULTIPLE-select region-type page.
@@ -213,7 +218,7 @@ class QRSISLabourFetcher(BaseFetcher):
         resp.raise_for_status()
         return _parse_options(resp.text, select_name)
 
-    def _select_series(self, session, udqctl_id, series):
+    def _select_series(self, session, udqctl_id, series) -> str:
         for s in series:
             session.post(
                 BASE_URL + "QIS1110W$UDQSER.ProcessActions",
@@ -222,17 +227,51 @@ class QRSISLabourFetcher(BaseFetcher):
                 timeout=30,
             )
             time.sleep(0.2)
-        session.post(
+        resp = session.post(
             BASE_URL + "QIS1110W$UDQSER.ProcessActions",
             data=_q("udqctl_id", udqctl_id, "info_page", "infoser.htm",
                     "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
+        # ADDED 2026-09-29, same port as fetch_qgso_housing.py: this response
+        # IS the next page (Time Periods) -- Oracle PL/SQL WebTK returns each
+        # next screen directly from the POST. Returned so _set_time_period
+        # can discover the real current to_date instead of relying only on
+        # the hardcoded TO_DATE.
+        return resp.text
 
-    def _set_time_period(self, session, udqctl_id):
+    def _discover_max_to_date(self, time_periods_html: str) -> str | None:
+        """See fetch_qgso_housing.py's identical method for the full
+        rationale -- ported here unchanged (duplicated deliberately, per
+        this project's practice of not coupling fetchers to each other)."""
+        soup = BeautifulSoup(time_periods_html, "lxml")
+        to_date_marker = soup.find("input", {"name": "p_names", "value": "to_date"})
+        if not to_date_marker:
+            return None
+        select = to_date_marker.find_next("select")
+        if not select:
+            return None
+        options = [o.get_text(strip=True) for o in select.find_all("option") if o.get_text(strip=True)]
+        if not options:
+            return None
+        selected = select.find("option", selected=True)
+        if selected and selected.get_text(strip=True):
+            return selected.get_text(strip=True)
+        return options[0]
+
+    def _set_time_period(self, session, udqctl_id, time_periods_html: str = ""):
+        to_date = self._discover_max_to_date(time_periods_html) if time_periods_html else None
+        if to_date:
+            self.log.info(f"  Discovered real max To Date from the page: {to_date}")
+        else:
+            to_date = TO_DATE
+            self.log.warning(
+                f"  Could not discover the real To Date option from the page -- "
+                f"falling back to the hardcoded {to_date!r}, which may now be stale."
+            )
         data = _q("udqctl_id", udqctl_id, "coll_id", COLL_ID, "error_msg", "",
                   "date_format", DATE_FMT, "period", PERIOD,
-                  "from_date", FROM_DATE, "to_date", TO_DATE)
+                  "from_date", FROM_DATE, "to_date", to_date)
         data.append(("p_op_mode", "Next"))
         session.post(BASE_URL + "QIS1110W$UDQCTL.ProcessActions", data=data, timeout=30)
 

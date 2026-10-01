@@ -149,6 +149,9 @@ def _gap(doc, pts):
 
 # ── Page builder ──────────────────────────────────────────────────────────────
 
+# update each cycle -- the date_str default below is dead in the normal CLI
+# path (make_booklet.py always computes and passes a real date_str); only
+# matters if this is called directly
 def build_cover_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"):
     town_name  = town_cfg["name"]
     town_slug  = town_cfg["slug"]

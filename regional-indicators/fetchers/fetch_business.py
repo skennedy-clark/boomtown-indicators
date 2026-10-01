@@ -82,6 +82,7 @@ sheet and towns.toml, with corrections found along the way:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -97,13 +98,62 @@ except ImportError:
     raise ImportError("pip install openpyxl requests")
 
 
-ABS_RELEASE = "jul2021-jun2025"
-ABS_DC9_URL = (
-    f"https://www.abs.gov.au/statistics/economy/business-indicators/"
-    f"counts-australian-businesses-including-entries-and-exits/"
-    f"{ABS_RELEASE}/8165DC09.xlsx"
+ABS_RELEASE = "jul2021-jun2025"   # update each cycle if auto-advance below
+                                  # fails -- see _discover_current_release()
+ABS_DC9_BASE = (
+    "https://www.abs.gov.au/statistics/economy/business-indicators/"
+    "counts-australian-businesses-including-entries-and-exits"
 )
+ABS_DC9_URL = f"{ABS_DC9_BASE}/{ABS_RELEASE}/8165DC09.xlsx"
 PRIMARY_PRODUCTION_CODE = "A"
+
+
+def _guess_next_release(release: str) -> str | None:
+    """
+    "jul2021-jun2025" -> "jul2022-jun2026". ABS's CABEE release name is a
+    rolling 5-year window that has advanced by exactly 1 year on every past
+    release (confirmed from this file's own history: "Current release used:
+    jul2021-jun2025 (published 16 Dec 2025)" in the module docstring).
+    Returns None if the string doesn't match the expected shape, so a
+    naming-scheme change fails safe (falls back to the hardcoded release)
+    rather than guessing something nonsensical.
+    """
+    m = re.match(r"^jul(\d{4})-jun(\d{4})$", release)
+    if not m:
+        return None
+    start, end = int(m.group(1)), int(m.group(2))
+    return f"jul{start + 1}-jun{end + 1}"
+
+
+def _discover_current_release(log) -> str:
+    """
+    ADDED 2026-09-29 so this fetcher runs next year without a code change,
+    per Steve's explicit direction: guess next year's likely release name
+    from this year's pattern, verify it's real with a live HEAD request, and
+    only use it if confirmed -- never guess blind. Falls back to the
+    hardcoded ABS_RELEASE (still kept, and still needs manual updating if
+    this guessing ever stops working -- e.g. if ABS changes the naming
+    scheme, retires the 5-year rolling window, or skips a year) if the guess
+    doesn't check out. Tried live 2026-09-29: a guessed "jul2022-jun2026"
+    correctly 404s today (ABS hasn't published it yet) while the hardcoded
+    "jul2021-jun2025" returns 200 -- confirms the fallback path, not just
+    the guess-and-check mechanism in the abstract.
+    """
+    guess = _guess_next_release(ABS_RELEASE)
+    if not guess:
+        log.warning(f"  Release name {ABS_RELEASE!r} doesn't match the expected "
+                    f"'julYYYY-junYYYY' shape -- cannot guess next year's, using hardcoded value")
+        return ABS_RELEASE
+    guess_url = f"{ABS_DC9_BASE}/{guess}/8165DC09.xlsx"
+    try:
+        resp = requests.head(guess_url, timeout=15, allow_redirects=True)
+        if resp.status_code == 200:
+            log.info(f"  Auto-advanced ABS release: {ABS_RELEASE} -> {guess} (verified live)")
+            return guess
+    except requests.RequestException as exc:
+        log.warning(f"  Could not check guessed release {guess!r}: {exc}")
+    log.info(f"  Guessed release {guess!r} not live yet -- using {ABS_RELEASE!r}")
+    return ABS_RELEASE
 
 # Confirmed real SA2 codes for every region the Business sheet tracks,
 # 2026-09-23 (see module docstring for the verification trail).
@@ -140,8 +190,11 @@ class ABSBusinessFetcher(BaseFetcher):
     SUPPORTED_STATES = []
 
     def fetch_all(self):
-        cache_key = f"abs_dc9_{ABS_RELEASE}"
-        path = self.download(ABS_DC9_URL, cache_key, suffix=".xlsx")
+        release = _discover_current_release(self.log)
+        url = f"{ABS_DC9_BASE}/{release}/8165DC09.xlsx"
+        self._source_url = url   # read by _write_region so recorded provenance matches what was actually fetched, not the hardcoded fallback
+        cache_key = f"abs_dc9_{release}"
+        path = self.download(url, cache_key, suffix=".xlsx")
         if not path:
             self.result.add_error("ALL", "Data cube 9 download failed")
             return
@@ -237,7 +290,7 @@ class ABSBusinessFetcher(BaseFetcher):
             "region": region_name,
             "sa2_codes": sa2_codes,
             "source": "ABS Counts of Australian Businesses, Data cube 9",
-            "source_url": ABS_DC9_URL,
+            "source_url": self._source_url,
             "note": (
                 f"Industry code 'A' (Agriculture, Forestry and Fishing) = Primary "
                 f"Production; all other industry codes (including 'X', Currently "
