@@ -123,6 +123,23 @@ def _find_town_indicator_row(
     matches: list[int] = []
     in_town_block = False
     current_section: str | None = None
+
+    # BUG FIXED 2026-10-06: the FIRST section header can sit in the
+    # header rows ABOVE FIRST_DATA_ROW, where the scan below never looks.
+    # Confirmed on the real Population sheet: A2 = "LGA" (sharing the row
+    # with the calendar-year headers), so every row in the LGA section
+    # was scanned with current_section still None, and any call passing
+    # section="LGA" found nothing. Never hit before because no writer
+    # had asked for section="LGA" -- the first to need it is
+    # update_population_erp_lga.py. Seed the starting section from the
+    # header rows; calls that don't pass `section` are unaffected.
+    header_a = sheet.range((1, 1), (FIRST_DATA_ROW - 1, 1)).value
+    if not isinstance(header_a, list):
+        header_a = [header_a]
+    for head_val in header_a:
+        if head_val in SECTION_LABELS:
+            current_section = head_val
+
     for offset, (col_a, col_b) in enumerate(ab_values):
         row = FIRST_DATA_ROW + offset
 

@@ -1,6 +1,6 @@
 """
-config.py
----------
+regional-indicators/config.py
+-----------------------------
 Loads and validates towns.toml, exposes typed Town objects and source settings.
 Also manages the cache index so fetchers can check whether a file is already
 downloaded before hitting a remote source.
@@ -61,6 +61,9 @@ class Town:
     qps_division:     str        = ""
     qgso_sa2:         str        = ""   # ASGS Ed 2 SA2 code used by QGSO files
     qgso_lga:         str        = ""   # QGSO LGA identifier e.g. "LGA/34860"
+    lga_code:         str        = ""   # ABS LGA code, digits only, e.g. "15750".
+                                        # Only needed where qgso_lga is absent
+                                        # (non-QLD towns) -- see abs_lga_code.
     bom_station:      str        = ""   # BOM rainfall station number
     csg_notice_year:  int        = 0
     benchmark:        bool       = False
@@ -77,6 +80,19 @@ class Town:
             .replace(")", "")
             .replace("-", "_")
         )
+
+    @property
+    def abs_lga_code(self) -> str:
+        """ABS LGA code (digits only) for this town's LGA, or "" if none
+        is configured. Uses lga_code when given; otherwise takes the
+        digits from qgso_lga ("LGA/37310" -> "37310") -- QGSO uses the
+        ABS code, so Queensland towns need nothing extra in towns.toml.
+        """
+        if self.lga_code:
+            return self.lga_code
+        if self.qgso_lga.startswith("LGA/"):
+            return self.qgso_lga[4:]
+        return ""
 
     @property
     def output_dir(self) -> Path:
@@ -158,6 +174,7 @@ class Config:
                     qps_division=t.get("qps_division", ""),
                     qgso_sa2=t.get("qgso_sa2", ""),
                     qgso_lga=t.get("qgso_lga", ""),
+                    lga_code=str(t.get("lga_code", "")),
                     bom_station=t.get("bom_station", ""),
                     csg_notice_year=t.get("csg_notice_year", 0),
                     benchmark=t.get("benchmark", False),
@@ -212,6 +229,24 @@ class Config:
             if t.state not in ("QLD", "NSW", "VIC", "WA", "SA", "TAS", "NT", "ACT"):
                 errors.append(f"[{t.name}] unknown state '{t.state}'")
 
+        # LGA codes: digits only, and one LGA code never under two names
+        lga_name_by_code: dict[str, str] = {}
+        for t in self.towns:
+            code = t.abs_lga_code
+            if not code:
+                continue
+            if not code.isdigit():
+                errors.append(
+                    f"[{t.name}] LGA code must be digits only (lga_code = \"15750\" "
+                    f"or qgso_lga = \"LGA/37310\"), got '{code}'"
+                )
+            previous = lga_name_by_code.setdefault(code, t.lga)
+            if previous != t.lga:
+                errors.append(
+                    f"[{t.name}] LGA code {code} is named '{t.lga}' here but "
+                    f"'{previous}' on another town"
+                )
+
         if errors:
             raise ValueError("towns.toml validation errors:\n  " + "\n  ".join(errors))
 
@@ -229,6 +264,22 @@ class Config:
             if t.name == name:
                 return t
         return None
+
+    def lgas(self) -> list[tuple[str, str, str]]:
+        """Distinct LGAs across ALL towns, benchmarks included, as
+        (lga name, ABS LGA code, state), in towns.toml order. Several
+        towns share an LGA (six under Western Downs) -- each LGA is
+        returned once. Towns with no LGA code configured are skipped.
+        """
+        seen: set[str] = set()
+        result: list[tuple[str, str, str]] = []
+        for t in self.towns:
+            code = t.abs_lga_code
+            if not code or not t.lga or code in seen:
+                continue
+            seen.add(code)
+            result.append((t.lga, code, t.state))
+        return result
 
     def qld_study_towns(self) -> list[Town]:
         return [t for t in self.study_towns() if t.is_qld]

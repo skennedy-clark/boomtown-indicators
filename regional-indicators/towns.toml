@@ -1,4 +1,4 @@
-# towns.toml
+# regional-indicators/towns.toml
 # Configuration for all towns tracked in the indicators project.
 # Auto-updated from uploaded towns.toml — April 2026
 #
@@ -297,6 +297,19 @@ sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-t
 notes            = "West Toowoomba SA2 sub-area"
 
 
+# ─── BENCHMARKS ─────────────────────────────────────────────────────────────
+# benchmark = true: comparison regions, not study towns. Town-level fetchers
+# skip these (they use study towns only); LGA-level fetchers include them.
+
+[towns.brisbane]
+name             = "Brisbane"
+state            = "QLD"
+lga              = "Brisbane"
+qgso_lga         = "LGA/31000"
+benchmark        = true
+notes            = "ADDED 2026-10-06. Benchmark LGA for the Population sheet's LGA section (row 3-4). LGA level only -- no postcode/SA2/UCL configured on purpose, and benchmark = true keeps it out of every town-level fetcher. LGA code 31000 confirmed live against the ABS LGA codelist."
+
+
 # ─── NEW SOUTH WALES TOWNS ──────────────────────────────────────────────────
 
 [towns.narrabri]
@@ -308,6 +321,7 @@ sa2_code         = "110031197"
 sa2_name         = "Narrabri"
 sa3_code         = "11003"
 lga              = "Narrabri"
+lga_code         = "15750"
 bom_station      = "54038"
 csg_notice_year  = 2015
 benchmark        = false

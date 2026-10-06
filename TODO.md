@@ -2463,3 +2463,62 @@ write its own row.)
       and write-side confirmation as Crime/Employment/Housing/Income:
       Business, Population (UCL/NRW/ERP), Rainfall. All confirmed working
       via the general fetch-side sweep, none has had the deeper pass.
+---
+
+## Population: LGA-level ERP built end to end (2026-10-06)
+
+Roadmap order confirmed by Steve: (1) finish testing every sheet's writer
+against `test-copy.xlsx`, (2) web export, (3) chart series (new work),
+(4) booklets, (5) THEN mismatches. File roles: the 2025 original is the
+starting point, `test-copy.xlsx` is the only file edited, the 2026 file
+is the target / answer key.
+
+### Why Population!AA4 (and AA6, AA9, AA12, AA14, AA17, AA20) were empty
+Nothing fetched or wrote LGA-level "Population (ERP)" at all --
+`fetch_population_erp.py` only requests the SA2 region type and its
+writer only writes the SA2 section.
+
+- [x] `towns.toml`: Brisbane added as an ordinary town entry with
+      `benchmark = true` (LGA level only; town-level fetchers use study
+      towns, so they skip it -- confirmed, the other three population
+      fetchers return the same counts as before). Narrabri gains
+      `lga_code = "15750"` (it has no `qgso_lga`). No separate LGA
+      table: `config.lgas()` derives the distinct LGAs from the towns'
+      existing `lga` / `qgso_lga` fields, each once.
+- [x] `fetchers/fetch_population_erp_lga.py` (registered as
+      `population_erp_lga`): ABS Data API, dataflow `ERP_LGA<year>`,
+      newest vintage discovered live. One query returns all seven LGAs
+      including Narrabri (NSW). LIVE-CONFIRMED: every year 2001-2025
+      for all seven matches the 2026 answer key, zero mismatches.
+      QRSIS collection 1961 was also tested at LGA level and returns
+      identical Queensland figures, but is Queensland-only.
+- [x] `transform/xlsx_update/update_population_erp_lga.py`: writes with
+      `section="LGA"`.
+- [x] `base.py` bug fixed: the "LGA" section header is in ROW 2 (above
+      FIRST_DATA_ROW), so `section="LGA"` could never match. Starting
+      section is now seeded from the header rows. No effect on calls
+      that don't pass `section`.
+- [x] Tests: `tests/test_population_erp_lga.py` (9 tests) plus
+      `tests/fake_xlwings_sheet.py`, a read-only openpyxl-backed
+      stand-in for an xlwings sheet. Whole suite: 25 passed.
+- [ ] **NEEDS STEVE: first real Excel run.** Writer logic was run
+      against the real test-copy's cell contents through the stand-in
+      (7 written, 0 flagged, all equal the answer key; SA2 and NRW-LGA
+      row finding unchanged) but not through Excel itself.
+
+### Population points still missing after this (2025 column)
+- [ ] AA47 Toowoomba - East (SA2), target 10,831 -- no town in
+      `towns.toml` maps to SA2 317011457, so it is never fetched.
+- [ ] AA54 Chinchilla (UCL), target 6,565 -- the original has a stray
+      formula `=(Y54-W54)/W54` in that cell; audit correctly refuses.
+- [ ] AA61 / AA69 / AA72 / AA78 UCL non-resident workers (Dysart 2,355,
+      Moranbah 2,625, Roma 185, Toowoomba 120) -- fetched correctly,
+      blocked by the shape-based "isolated outlier" series flag (no
+      source history exists at UCL level to clear it).
+- [ ] History revisions: the answer key carries ABS-revised ERP for
+      2017-2024 on nearly every LGA/SA2/UCL row; the pipeline only
+      appends the new year. Decide whether writers should also refresh
+      revised back years.
+- [ ] TODO.md's earlier write-side test plan lists `cache\population_ucl`,
+      `cache\population_nrw`, `cache\population_erp` as writer inputs --
+      wrong, all population fetchers save to `cache\population`.

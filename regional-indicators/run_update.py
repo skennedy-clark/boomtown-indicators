@@ -39,6 +39,7 @@ from fetchers.fetch_income_table6 import ATOTable6Fetcher
 from fetchers.fetch_population_ucl import QGSOPopulationUCLFetcher
 from fetchers.fetch_population_nrw import QGSOPopulationNRWFetcher
 from fetchers.fetch_population_erp import QGSOPopulationERPFetcher
+from fetchers.fetch_population_erp_lga import ABSPopulationERPLGAFetcher
 from fetchers.fetch_crime_qps import QPSCrimeFetcher
 from fetchers.fetch_crime_bocsar import BOCSARCrimeFetcher
 from fetchers.fetch_qgso_housing import QGSOHousingFetcher
@@ -60,6 +61,8 @@ FETCHER_REGISTRY: dict[str, type] = {
                                                    # API since 2026-09-16, no manual file
                                                    # needed (this comment was stale --
                                                    # corrected 2026-09-29 after re-testing)
+    "population_erp_lga": ABSPopulationERPLGAFetcher,  # LGA-section "Population (ERP)" row, all 7 LGAs
+                                                         # incl. Brisbane + Narrabri -- ABS Data API, built 2026-10-06
     "crime_qps":      QPSCrimeFetcher,
     "crime_bocsar":   BOCSARCrimeFetcher,   # NSW; template for future crime_vic/tas/nt/wa
     "salm_unemployment": SALMUnemploymentFetcher,
