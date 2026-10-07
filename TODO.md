@@ -2501,16 +2501,24 @@ writer only writes the SA2 section.
 - [x] Tests: `tests/test_population_erp_lga.py` (9 tests) plus
       `tests/fake_xlwings_sheet.py`, a read-only openpyxl-backed
       stand-in for an xlwings sheet. Whole suite: 25 passed.
-- [ ] **NEEDS STEVE: first real Excel run.** Writer logic was run
-      against the real test-copy's cell contents through the stand-in
-      (7 written, 0 flagged, all equal the answer key; SA2 and NRW-LGA
-      row finding unchanged) but not through Excel itself.
+- [x] **CONFIRMED in real Excel (Steve's run, 2026-10-06):** all seven
+      LGA cells written on a fresh test-copy -- AA4 1,375,301 / AA6 10,438
+      / AA9 23,186 / AA12 13,370 / AA14 12,797 / AA17 186,276 /
+      AA20 35,452 -- every one equal to the answer key.
 
 ### Population points still missing after this (2025 column)
 - [ ] AA47 Toowoomba - East (SA2), target 10,831 -- no town in
       `towns.toml` maps to SA2 317011457, so it is never fetched.
-- [ ] AA54 Chinchilla (UCL), target 6,565 -- the original has a stray
-      formula `=(Y54-W54)/W54` in that cell; audit correctly refuses.
+- [ ] AA54 Chinchilla (UCL), target 6,565 -- the 2025 original has a
+      stray growth formula `=(Y54-W54)/W54` in that cell (nothing in the
+      workbook refers to it), so the audit correctly refuses to write.
+      NOT to be fixed with a one-off override: Steve's decision
+      2026-10-06 -- no hardcoded fix for one file in one year, this runs
+      again next year on a different file. A per-cell override in
+      `verified_overrides.toml` was drafted and WITHDRAWN for that
+      reason. Steve has removed the formula from his 'origional' file by
+      hand for now and will put it back later to test the pre-flight
+      audit below.
 - [ ] AA61 / AA69 / AA72 / AA78 UCL non-resident workers (Dysart 2,355,
       Moranbah 2,625, Roma 185, Toowoomba 120) -- fetched correctly,
       blocked by the shape-based "isolated outlier" series flag (no
@@ -2522,3 +2530,181 @@ writer only writes the SA2 section.
 - [ ] TODO.md's earlier write-side test plan lists `cache\population_ucl`,
       `cache\population_nrw`, `cache\population_erp` as writer inputs --
       wrong, all population fetchers save to `cache\population`.
+
+- [ ] **Include population projections** (added by Steve 2026-10-06).
+      Not fetched or written at all today. The answer key replaces the
+      old "Population projection: district 2018e (Medium Series)" rows
+      with the 2023-edition Queensland projections, 2021 to 2046:
+      - LGA: High, Low and Medium series for Brisbane, Goondiwindi,
+        Isaac, Maranoa, Toowoomba, Western Downs (18 new rows);
+      - SA2: Medium series for the 13 SA2s;
+      - Narrabri: NSW Planning projections (noted in the answer key at
+        Population!AG13, planning.nsw.gov.au population projections);
+      - year headers extended from 2041 out to 2055.
+      Different shape from every other writer: new ROWS and many future
+      year columns, not one new column. Needs its own design pass.
+- [ ] **Pre-flight "is this workbook ready to be used" audit** (requested
+      by Steve 2026-10-06). One read-only pass over the starting file,
+      run BEFORE any writer, that:
+      1. works out every cell the writers are going to write this year
+         (sheet, row, new-year column) without writing anything;
+      2. reports anything already sitting in those cells -- stray
+         formulas, leftover values, notes -- as trash to clean first;
+      3. says plainly "ready" or lists what to fix, cell by cell.
+      Must be generic: driven by the same row/column finding the writers
+      use, no year, file name or cell address hardcoded, so it works on
+      next year's file unchanged.
+      Evidence it needs to know the TARGET rows, not just scan the
+      column (checked on the 2025 original, 2026-10-06): across
+      Business R, Crime AA, Employment AA, Housing AB, Income Z and
+      Population AA, the only pre-existing content in a new-year column
+      is Population!AA54 (the stray formula -- trash) and
+      Population!AA88 downward (projection rows, legitimately filled
+      for future years -- not trash). A plain column scan cannot tell
+      those apart.
+      Design note: being read-only it can use openpyxl (the corruption
+      risk is on SAVE only), so it would run without Excel and can be
+      unit-tested.
+
+---
+
+## Exogenous sheet audit (2026-10-06) -- findings only, nothing changed yet
+
+Three sections on the sheet. Only Rainfall has any code.
+
+| Section   | Rows    | New-year cells in answer key | Fetcher | Writer |
+|-----------|---------|------------------------------|---------|--------|
+| Rainfall  | 3-62    | 12 towns x (total, summer, winter, historic average) | `fetch_bom_rainfall.py` | `update_rainfall.py` |
+| Education | 65-101  | 12 towns x (FTE enrolments, FTE teaching staff) = 24 | `fetch_schools.py` | `update_education.py` |
+| Fuel      | 104-147 | 8 towns RULP price + Qld/Australia benchmark rows   | `fetch_fuel.py` | `update_fuel.py` |
+
+### Rainfall -- tested 2026-10-06 (live fetch; writer logic run against the
+### real sheet contents through tests/fake_xlwings_sheet.py, not real Excel)
+
+- [x] **BLOCKER FIXED 2026-10-06: the writer wrote NOTHING to the 2025
+      original.** It found rows by station NUMBER in column A; those
+      numbers exist only in the 2026 answer key's labels. Now finds each
+      block by its town header row, checks the Summer / Winter /
+      Historic Average labels are really in the three rows below. The
+      station number is not used to find anything (a station can close
+      and a town move to another -- the sheet already records this for
+      Goondiwindi and Wandoan, whose labels keep the original number);
+      towns.toml alone says which station is current, and a label number
+      that differs from it only prints a note. Run against the
+      real original's contents through the stand-in sheet: 40 written, 0
+      flagged, new column Z created. Needs Steve's real Excel run.
+- [x] **Fixed: BOM official historic average was never fetched** (404 for
+      every station) -- link needed the station number zero-padded to six
+      digits. Live result: 6 of the 12 workbook stations have a page
+      (Dalby 599.1, Miles 646.9, Moranbah 597.3, Narrabri 581.7, Roma
+      554.3, Toowoomba 737.2); the other six genuinely have none and
+      still carry last year's figure forward with a note.
+      NOTE this activates, for the first time, the existing behaviour of
+      writing the official average across EVERY year column in the row
+      (e.g. Dalby's whole row 587.6 -> 599.1), not just the new year.
+      That whole-row write is now limited to columns that hold a year.
+- [x] Toowoomba's rows are no longer written four times; towns with no
+      block (Toowoomba sub-areas, Shepparton, Yarram) are listed once as
+      expected instead of reported as failures.
+- [x] Tests: `tests/test_update_rainfall.py` (8). Whole suite: 33 passed.
+- [ ] Goondiwindi (41507) and Moranbah (34035) are not in SILO and
+      `manual_rainfall_data.toml` is empty, so nothing is fetched. Answer
+      key has 2025 values for both (Goondiwindi 525.4, Moranbah 989.0).
+- [ ] **Source mismatch, needs Steve's decision.** SILO's "patched" data
+      fills missing days by interpolation; the answer key looks like raw
+      BOM station totals. 2025 annual totals, SILO vs answer key:
+      exact for Dalby 538.4, Miles 530.5, Tara 475.8, Wallumbilla 499.0,
+      Wandoan 638.4; different for Dysart 738.3 vs 720.0, Roma 380.6 vs
+      374.4, Toowoomba 849.9 vs 843.6, Narrabri 626.8 vs 626.0.
+- [ ] **Chinchilla (Harewood 42078): answer key leaves 2025 BLANK**; SILO
+      returns 625.7 and the writer would fill it in. Also 2024: SILO
+      678.1 vs sheet 585.6. Looks like a station with gaps that SILO is
+      filling -- decide whether a gap-filled figure is acceptable here.
+- [ ] **Previous year is revised in the answer key**, not just the new
+      year added: 2024 changed for Dalby (947.4 -> 767.8), Tara (800.8 ->
+      765.8), Goondiwindi (259.7 -> 785.6), Wallumbilla (280.0 -> 556.1).
+      SILO's 2024 agrees with the revised Dalby and Tara figures. The
+      writer only writes the newest year. Same question as the ERP
+      history revisions on Population.
+- [ ] Historic Average also changed in the answer key for most towns
+      (e.g. Dalby 587.6 -> 598.6, Toowoomba 699.6 -> 740.1) -- consistent
+      with someone re-reading BOM's page; fixing the URL bug above should
+      reproduce this, to be confirmed.
+
+### Fuel -- built 2026-10-06
+- [x] `fetchers/fetch_fuel.py` (registered as `fuel`): finds the newest
+      "Annual Fuel Price Report" PDF on RACQ's fuel pages, downloads it,
+      reads Appendix 1 "Average RULP Prices in Queensland" with pypdfium2
+      (41 locations, annual averages 2015-2025). Falls back to a PDF
+      saved by hand in `cache/fuel/`, with the page to get it from in the
+      error message. LIVE-CONFIRMED: all eight 2025 figures equal the
+      answer key (Bowen 178.4, Brisbane 185.2, Dalby 171.2, Goondiwindi
+      170.8, Miles 174.5, Moranbah 189.5, Roma 169.1, Toowoomba 174.8).
+- [x] `transform/xlsx_update/update_fuel.py`: fills whichever town blocks
+      the Fuel section has (no towns.toml, nothing hardcoded), using the
+      Fuel row's own year header. Run against the real original's
+      contents through the stand-in sheet: 8 written, 0 flagged, all
+      equal the answer key. NEEDS STEVE'S REAL EXCEL RUN.
+- [x] Tests: `tests/test_fuel.py` (6). Whole suite: 39 passed.
+- [ ] Sheet history differs from the 2025 report for two cells, reported
+      by the writer but not changed: Dalby 2023 (sheet 174.4, report
+      178.4), Miles 2023 (sheet 177.9, report 180.3; the answer key has
+      180.3). Part of the general "revise history?" question.
+- [ ] Derived rows 122-138 (annual fuel cost = price x litres per year,
+      and its year-on-year change) are formulas that need extending by
+      one column each year; the 2025 original stops at 2023 (column X),
+      the answer key runs to 2025. Not written yet -- belongs with the
+      chart-series work.
+- [ ] Benchmark rows the answer key adds at the bottom (rows 143-147) do
+      not exist in the 2025 original, and the pipeline doesn't create
+      rows. Queensland = plain mean of all RACQ locations (178.98 for
+      2025 -- already in the cache as `queensland_mean_of_locations`,
+      matches the answer key for 2019-2025). Australia = Australian
+      Institute of Petroleum annual retail price data
+      (aip.com.au AIP_Annual_Retail_Price_Data.xlsx), 183.1 for 2025 --
+      not fetched.
+- [ ] BOM stations not in SILO (Goondiwindi 41507, Moranbah 34035):
+      Steve has a browser-driving script that pulls the data, but
+      prefers the simpler route of the fetcher generating the BOM links
+      for a person to open (it already prints them) and the figures
+      going into `manual_rainfall_data.toml`.
+
+### Fuel -- CONFIRMED in real Excel (Steve's run, 2026-10-07)
+- [x] 8 written, 0 flagged: Z106-Z120, with the Dalby and Miles 2023
+      notes as expected.
+
+### Education -- built 2026-10-07
+- [x] `fetchers/fetch_schools.py` (registered as `schools`): ACARA School
+      Profile. Tries this year's file then earlier ones, preferring the
+      multi-year "School Profile 2008-<year>.xlsx" (about 30 MB, half a
+      minute to read) over the single-year file; falls back to a copy
+      saved by hand in `cache/schools/`. Town figure = sum of FTE
+      enrolments / FTE teaching staff over every school whose Postcode
+      (text) equals the town's PRIMARY postcode. LIVE-CONFIRMED: all 24
+      figures for 2025 equal the answer key, and the existing 2024
+      column is reproduced exactly for all 12 towns.
+- [x] Toowoomba uses postcode 4350 only (23,463.7), not 4350 + 4352
+      (27,968.5) -- the answer key's figure is the single-postcode one.
+      Same rule as Income.
+- [x] `transform/xlsx_update/update_education.py`: finds each town's
+      block inside the Education section, checks both row labels, uses
+      the Education row's own year header. Run against the real
+      original's contents through the stand-in sheet: 24 written, 0
+      flagged, all equal the answer key. NEEDS STEVE'S REAL EXCEL RUN.
+- [x] Tests: `tests/test_schools.py` (5). Whole suite: 44 passed.
+- [ ] Earlier years on the sheet differ from ACARA's current file for
+      Chinchilla, Goondiwindi, Wandoan, Toowoomba (many years, mostly
+      under 2%, up to 15% for Wandoan) and 2008 only for Dalby and Roma.
+      Reported by the writer, not changed. Part of the general "revise
+      history?" question.
+- [ ] `update_education.py` and `update_fuel.py` carry the same three
+      section helpers (column A read, year column in the section's own
+      header row, existing series). Pull into one shared module once
+      both are confirmed in real Excel.
+
+### Housekeeping from the 2026-10-06 push
+- [ ] `tests/fake_xlwings_sheet.py` is NOT in the pushed repo, so three
+      tests in `tests/test_population_erp_lga.py` error on import
+      (22 passed, 3 errors). Add the file.
+- [ ] Pushed `update_population_erp_lga.py` has one stale docstring line
+      mentioning `[lga_regions.*]`; code is identical. Cosmetic.

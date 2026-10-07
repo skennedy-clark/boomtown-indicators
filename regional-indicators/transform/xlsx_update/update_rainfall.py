@@ -19,12 +19,29 @@ workbook):
     town uses "Summer (Jan-Mar, Oct-Dec)"/"Winter (Apr-Sept)". Matching
     on exact label text would break on several real towns.
   - What IS confirmed consistent everywhere, including the messy cases:
-    row POSITION. Station/total row, then Summer directly below, then
-    Winter, then Historic Average, in that exact order, every single
-    town checked (Chinchilla through Wandoan, including Moranbah's
-    currently-empty block). This script matches by searching for the
-    station NUMBER as a substring of column A (robust to the label
-    inconsistencies above), then writes by fixed row offset.
+    block LAYOUT. A town header row, then the station/total row, then
+    Summer, Winter and Historic Average directly below, in that order,
+    for every town (Chinchilla through Wandoan, including Moranbah's
+    near-empty block).
+
+ROW FINDING REWRITTEN 2026-10-06 -- by TOWN header, not station number.
+The first version searched column A for the station number. Those
+numbers exist only in the hand-built 2026 reference file's labels; the
+file this actually runs on each year (last year's delivered workbook)
+has plain station names, so against the real 2025 working file it
+found no rows and wrote nothing (0 written, every town skipped).
+Now: find the block by its town header row and check the Summer /
+Winter / Historic Average labels really are in the three rows below the
+station row. The station number is NOT used to find anything: a station
+can close and a town move to another (the sheet already records two
+such changes, Goondiwindi and Wandoan, whose labels keep the original
+station's number), so towns.toml alone says which station is current.
+If a label's number differs from towns.toml the run prints a one-line
+note and carries on. Works on both the 2025 and 2026 label styles.
+Towns with no block on the sheet (Toowoomba's three sub-areas,
+Shepparton, Yarram) are listed once at the end as expected, not
+reported as failures -- which also stops Toowoomba's rows being
+written four times over via its sub-areas' shared station.
 
 DOES NOW WRITE "Historic Average" (added 2026-09-22, previously out of
 scope). Confirmed via Steve reading BOM's own "Climate Averages" page
@@ -54,12 +71,10 @@ full year-by-year record for each town, so source_series is always
 available here (unlike some indicators where only the latest year is
 ever fetched).
 
-*** NOT YET TESTED against a live Excel instance. *** Row/column
-finding logic is tested against a mock built to exactly match the real
-Exogenous sheet structure (including the label inconsistencies above),
-but the actual write against the real workbook hasn't run yet -- test
-against a throwaway copy first, same as everything else in this
-project's history.
+Tested 2026-10-06 against the real 2025 working file's cell contents
+and the 2026 reference file's, through tests/fake_xlwings_sheet.py (a
+stand-in for the Excel sheet object -- this script cannot run for real
+outside Windows/Mac Excel). First real Excel run still to be confirmed.
 
 Usage:
     python update_rainfall.py <path-to-Indicators_Data-Charts.xlsx> <cache/rainfall dir> [--visible]
@@ -68,6 +83,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -128,18 +144,54 @@ def _find_year_column(sheet, year: int) -> int:
     return new_col
 
 
-def _find_rainfall_station_row(sheet, station_number: str) -> int:
-    """Search the Rainfall section (between the 'Rainfall' section
-    header and the next section header) for a row whose column A
-    CONTAINS station_number as a substring -- not an exact match,
-    since real label text is confirmed inconsistent (trailing spaces,
-    different arrow characters) but the station number itself is the
-    one thing guaranteed present and unambiguous in every case.
+class NoRainfallBlock(Exception):
+    """This town has no block in the Rainfall section at all. Not an
+    error -- several towns.toml entries (Toowoomba's three sub-areas,
+    Shepparton, Yarram) are fetched but were never on this sheet."""
 
-    Returns the station/total row number. Summer is row+1, Winter is
-    row+2, Historic Average is row+3 -- confirmed consistent by
-    position across every town checked, including the inconsistently-
-    labelled ones.
+
+SUB_ROW_LABEL_PREFIXES = ("Summer", "Winter", "Historic Average")
+NEXT_SECTION_HEADERS = ("Education", "Fuel", "Business", "Crime",
+                        "Employment", "Housing", "Income", "Population")
+
+
+def _find_rainfall_station_row(sheet, town: str, station_number: str) -> int:
+    """Find `town`'s block in the Rainfall section and return its
+    station/total row. Summer is row+1, Winter row+2, Historic Average
+    row+3.
+
+    REWRITTEN 2026-10-06. The first version searched column A for the
+    station NUMBER ("Harewood 042078"). Those numbers were only added
+    to the labels in the hand-built 2026 reference file; the real
+    starting file each year is last year's delivered workbook, whose
+    labels are just the station name ("Harewood", "Dalby Airport").
+    Confirmed against the 2025 working file: not one station number in
+    column A, so every town was SKIPPED and nothing was written at all.
+
+    What IS the same in both files is the block layout:
+        <town name>              <- header row, column A only
+        <station label>          <- total   (returned row)
+        Summer ...               <- row+1
+        Winter ...               <- row+2
+        Historic Average         <- row+3
+    so the block is found by its TOWN header row (compared with
+    surrounding whitespace stripped -- "Chinchilla " has a trailing
+    space in the real sheet), and the three sub-row labels are then
+    CHECKED rather than assumed, so a shifted or malformed block stops
+    here instead of writing into the wrong rows.
+
+    The station number plays NO part in finding the row. A station can
+    close and a town move to another one (Steve, 2026-10-06) -- the
+    sheet already shows this: "New Kildonan 041507/ WTP (2020->)" and
+    "Gililgulgul 035029/ TM (2021->)" keep the ORIGINAL station's number
+    in the label after the change. So towns.toml is the one place that
+    says which station is current, the town header is the one thing
+    that identifies the block, and a label number that differs from
+    towns.toml is not an error. See _station_label_note for the
+    advisory line printed in that case.
+
+    Raises NoRainfallBlock if the town has no block on the sheet, and
+    ValueError for anything that needs a human to look.
     """
     used = sheet.used_range
     max_row = used.last_cell.row
@@ -147,43 +199,96 @@ def _find_rainfall_station_row(sheet, station_number: str) -> int:
     col_a = sheet.range((1, 1), (max_row, 1)).value
     if not isinstance(col_a, list):
         col_a = [col_a]
+    labels = [str(v).strip() if v is not None else "" for v in col_a]
 
     in_section = False
-    matches = []
-    for offset, val in enumerate(col_a):
+    header_rows = []
+    for offset, text in enumerate(labels):
         row = 1 + offset
-        text = str(val).strip() if val is not None else ""
-
         if text == SECTION_HEADER:
             in_section = True
             continue
-        if in_section and val is not None and text and text != SECTION_HEADER:
-            # A bare town-name header row (no station number in it) --
-            # or a genuine data row. Only station rows matter here.
-            if in_section and station_number in text:
-                matches.append(row)
-            # Detect leaving the Rainfall section: a short non-town-like
-            # label that doesn't contain digits and isn't a known
-            # sub-row label is treated as the next section's header.
-            if text in ("Education", "Fuel", "Business", "Crime",
-                        "Employment", "Housing", "Income", "Population"):
-                in_section = False
+        if not in_section:
+            continue
+        if text in NEXT_SECTION_HEADERS:
+            break
+        if text == town.strip():
+            header_rows.append(row)
 
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) == 0:
+    if not header_rows:
+        raise NoRainfallBlock(town)
+    if len(header_rows) > 1:
         raise ValueError(
-            f"Could not find a Rainfall row containing station number "
-            f"'{station_number}' in sheet '{sheet.name}'. Check the "
-            f"number is right and the row actually exists -- this "
-            f"function does not guess or create a new row."
+            f"AMBIGUOUS: {len(header_rows)} rows in the Rainfall section are "
+            f"headed '{town}' (rows {header_rows}). Check for a duplicated block."
         )
-    raise ValueError(
-        f"AMBIGUOUS: {len(matches)} rows in the Rainfall section contain "
-        f"'{station_number}' (rows {matches}). Check for a genuine "
-        f"duplicate or a substring collision (e.g. one station number "
-        f"contained within another)."
-    )
+
+    station_row = header_rows[0] + 1
+
+    def label_at(row: int) -> str:
+        return labels[row - 1] if row - 1 < len(labels) else ""
+
+    for offset, expected in enumerate(SUB_ROW_LABEL_PREFIXES, start=1):
+        found = label_at(station_row + offset)
+        if not found.startswith(expected):
+            raise ValueError(
+                f"'{town}' block starts at row {header_rows[0]}, but row "
+                f"{station_row + offset} reads {found!r} where a label starting "
+                f"'{expected}' was expected. The block isn't laid out as "
+                f"station / Summer / Winter / Historic Average -- not writing "
+                f"into it."
+            )
+
+    station_label = label_at(station_row)
+    if not station_label:
+        raise ValueError(
+            f"'{town}' block at row {header_rows[0]} has no station label in "
+            f"row {station_row}."
+        )
+
+    return station_row
+
+
+def _station_label_note(sheet, station_row: int, station_number: str) -> str:
+    """Advisory only -- never blocks a write. If the station label in
+    column A mentions a station number and none of the numbers in it is
+    the one towns.toml gives for this town, return a one-line note
+    saying so; otherwise "".
+
+    Expected and harmless after a station change (the label keeps the
+    old number, towns.toml holds the new one). Worth a glance in any
+    other case, since it could also mean towns.toml points at the wrong
+    station -- which is why it is reported rather than ignored.
+    """
+    label = sheet.cells(station_row, 1).value
+    label = str(label).strip() if label is not None else ""
+    wanted = str(station_number).lstrip("0")
+    numbers_in_label = [n.lstrip("0") for n in re.findall(r"\d{5,6}", label)]
+    if numbers_in_label and wanted not in numbers_in_label:
+        return (
+            f"note: the sheet's label reads {label!r} but towns.toml uses "
+            f"station {station_number} for this town. Fine if the station "
+            f"was replaced -- consider updating the label; otherwise check "
+            f"towns.toml."
+        )
+    return ""
+
+
+def _year_columns(sheet) -> list[int]:
+    """Column numbers that actually hold a year in the header row. Used
+    wherever a whole row is touched, so nothing is ever written under a
+    column that isn't a year -- used_range can run past the last year
+    (the same trap documented in _find_year_column)."""
+    used = sheet.used_range
+    max_col = used.last_cell.column
+    header_row = sheet.range((YEAR_HEADER_ROW, FIRST_YEAR_COLUMN), (YEAR_HEADER_ROW, max_col)).value
+    if not isinstance(header_row, list):
+        header_row = [header_row]
+    return [
+        FIRST_YEAR_COLUMN + offset
+        for offset, cell_year in enumerate(header_row)
+        if isinstance(cell_year, (int, float)) and 1990 <= cell_year <= 2100
+    ]
 
 
 def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> dict:
@@ -278,8 +383,10 @@ def _write_historic_average_row(sheet, row: int, new_value: float) -> tuple[bool
                     f"station/bad fetch -- worth a human look before overwriting."
                 )
 
-    for offset in range(max_col - FIRST_YEAR_COLUMN + 1):
-        col = FIRST_YEAR_COLUMN + offset
+    # CHANGED 2026-10-06: only columns that hold a year in row 1, not
+    # every column out to used_range's edge (which can run past the last
+    # year -- see _year_columns).
+    for col in _year_columns(sheet):
         cell = sheet.cells(row, col)
         cell.value = new_value
         cell.number_format = "General"
@@ -307,6 +414,119 @@ def _write_rainfall_row(sheet, row: int, year: int, value, source_series: dict |
     return report, cell.address
 
 
+def write_rainfall(sheet, cache_files: list[Path]) -> tuple[list[str], int, int]:
+    """Audit and write every cached town's latest year into `sheet`.
+    Split out from the Excel open/save handling (2026-10-06) so the
+    row-finding and audit logic can be exercised against any sheet-like
+    object (see tests/fake_xlwings_sheet.py). Returns
+    (result lines, written count, flagged count).
+    """
+    results: list[str] = []
+    written_count = 0
+    flagged_count = 0
+    no_block: list[str] = []
+
+    for path in cache_files:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        town = data["town"]
+        station = str(data["bom_station"])
+        indicators = data.get("indicators", {})
+        total_by_year  = indicators.get("rainfall", {})
+        summer_by_year = indicators.get("rainfall_summer", {})
+        winter_by_year = indicators.get("rainfall_winter", {})
+
+        if not total_by_year:
+            results.append(f"{town}: no data, skipped")
+            continue
+
+        latest_year_str = max(total_by_year, key=int)
+        latest_year = int(latest_year_str)
+
+        try:
+            station_row = _find_rainfall_station_row(sheet, town, station)
+        except NoRainfallBlock:
+            no_block.append(town)
+            continue
+        except ValueError as exc:
+            results.append(f"{town} (station {station}): SKIPPED (row-finding) — {exc}")
+            flagged_count += 3  # would have been 3 writes (total/summer/winter)
+            continue
+
+        label_note = _station_label_note(sheet, station_row, station)
+        if label_note:
+            results.append(f"{town}: {label_note}")
+
+        summer_row = station_row + 1
+        winter_row = station_row + 2
+
+        for label, row, values_by_year in (
+            ("total",  station_row, total_by_year),
+            ("summer", summer_row,  summer_by_year),
+            ("winter", winter_row,  winter_by_year),
+        ):
+            if latest_year_str not in values_by_year:
+                results.append(f"{town} {label}: no {latest_year} data, skipped")
+                continue
+
+            value = values_by_year[latest_year_str]
+            source_series = {int(y): v for y, v in values_by_year.items()}
+
+            try:
+                report, coord = _write_rainfall_row(sheet, row, latest_year, value, source_series)
+                if report.safe_to_write:
+                    results.append(
+                        f"{town} {label}: WRITTEN {latest_year} = {value} -> {coord}"
+                    )
+                    written_count += 1
+                else:
+                    results.append(
+                        f"{town} {label}: FLAGGED, not written — {report.summary_line()}"
+                    )
+                    flagged_count += 1
+            except ValueError as exc:
+                results.append(f"{town} {label}: SKIPPED (row-finding) — {exc}")
+                flagged_count += 1
+
+        # Historic Average: a different write pattern (whole row,
+        # not one year) and a different source (BOM's official
+        # Climate Averages page, not SILO/manual monthly data) --
+        # handled separately from the total/summer/winter loop above.
+        historic_row = station_row + 3
+        official_avg = data.get("bom_official_historic_avg_mm")
+        official_note = data.get("bom_official_historic_avg_note", "")
+
+        if official_avg is not None:
+            try:
+                written, message = _write_historic_average_row(sheet, historic_row, official_avg)
+                results.append(f"{town} historic average: {message}")
+                if written:
+                    written_count += 1
+                else:
+                    flagged_count += 1
+            except Exception as exc:
+                results.append(f"{town} historic average: SKIPPED (row-finding) — {exc}")
+                flagged_count += 1
+        else:
+            written, message = _carry_forward_historic_average(sheet, historic_row, latest_year)
+            results.append(
+                f"{town} historic average: {message} — fresh fetch unavailable: {official_note}"
+            )
+            if written:
+                written_count += 1
+            else:
+                flagged_count += 1
+
+    if no_block:
+        results.append(
+            f"No block on the {SHEET_NAME} sheet's Rainfall section, nothing to write "
+            f"(expected): {', '.join(no_block)}"
+        )
+
+    return results, written_count, flagged_count
+
+
 def update_rainfall(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
     cache_files = sorted(cache_dir.glob("*_bom_rainfall.json"))
     if not cache_files:
@@ -315,107 +535,14 @@ def update_rainfall(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> 
             f"run fetch_bom_rainfall.py first."
         )
 
-    results = []
-    written_count = 0
-    flagged_count = 0
-
     app = xw.App(visible=visible, add_book=False)
     app.display_alerts = False
     try:
         wb = app.books.open(str(xlsx_path))
         try:
             sheet = wb.sheets[SHEET_NAME]
-            any_written = False
-
-            for path in cache_files:
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-
-                town = data["town"]
-                station = str(data["bom_station"])
-                indicators = data.get("indicators", {})
-                total_by_year  = indicators.get("rainfall", {})
-                summer_by_year = indicators.get("rainfall_summer", {})
-                winter_by_year = indicators.get("rainfall_winter", {})
-
-                if not total_by_year:
-                    results.append(f"{town}: no data, skipped")
-                    continue
-
-                latest_year_str = max(total_by_year, key=int)
-                latest_year = int(latest_year_str)
-
-                try:
-                    station_row = _find_rainfall_station_row(sheet, station)
-                except ValueError as exc:
-                    results.append(f"{town} (station {station}): SKIPPED (row-finding) — {exc}")
-                    flagged_count += 3  # would have been 3 writes (total/summer/winter)
-                    continue
-
-                summer_row = station_row + 1
-                winter_row = station_row + 2
-
-                for label, row, values_by_year in (
-                    ("total",  station_row, total_by_year),
-                    ("summer", summer_row,  summer_by_year),
-                    ("winter", winter_row,  winter_by_year),
-                ):
-                    if latest_year_str not in values_by_year:
-                        results.append(f"{town} {label}: no {latest_year} data, skipped")
-                        continue
-
-                    value = values_by_year[latest_year_str]
-                    source_series = {int(y): v for y, v in values_by_year.items()}
-
-                    try:
-                        report, coord = _write_rainfall_row(sheet, row, latest_year, value, source_series)
-                        if report.safe_to_write:
-                            results.append(
-                                f"{town} {label}: WRITTEN {latest_year} = {value} -> {coord}"
-                            )
-                            written_count += 1
-                            any_written = True
-                        else:
-                            results.append(
-                                f"{town} {label}: FLAGGED, not written — {report.summary_line()}"
-                            )
-                            flagged_count += 1
-                    except ValueError as exc:
-                        results.append(f"{town} {label}: SKIPPED (row-finding) — {exc}")
-                        flagged_count += 1
-
-                # Historic Average: a different write pattern (whole row,
-                # not one year) and a different source (BOM's official
-                # Climate Averages page, not SILO/manual monthly data) --
-                # handled separately from the total/summer/winter loop above.
-                historic_row = station_row + 3
-                official_avg = data.get("bom_official_historic_avg_mm")
-                official_note = data.get("bom_official_historic_avg_note", "")
-
-                if official_avg is not None:
-                    try:
-                        written, message = _write_historic_average_row(sheet, historic_row, official_avg)
-                        results.append(f"{town} historic average: {message}")
-                        if written:
-                            written_count += 1
-                            any_written = True
-                        else:
-                            flagged_count += 1
-                    except Exception as exc:
-                        results.append(f"{town} historic average: SKIPPED (row-finding) — {exc}")
-                        flagged_count += 1
-                else:
-                    written, message = _carry_forward_historic_average(sheet, historic_row, latest_year)
-                    results.append(
-                        f"{town} historic average: {message} — fresh fetch unavailable: {official_note}"
-                    )
-                    if written:
-                        written_count += 1
-                        any_written = True
-                    else:
-                        flagged_count += 1
-
-            if any_written:
+            results, written_count, flagged_count = write_rainfall(sheet, cache_files)
+            if written_count:
                 wb.save()
         finally:
             wb.close()

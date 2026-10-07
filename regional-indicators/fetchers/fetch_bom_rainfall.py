@@ -286,7 +286,18 @@ class BOMRainfallFetcher(BaseFetcher):
         per Steve's explicit instruction, but the note always explains
         what happened so it's visible either way.
         """
-        url = BOM_AVERAGES_URL.format(station=station)
+        # BUG FIXED 2026-10-06: BOM's page name uses the station number
+        # zero-padded to SIX digits (cw_041522.shtml). towns.toml holds
+        # the 5-digit form (41522), which was being used as-is -- every
+        # station returned 404, so this figure was never actually fetched
+        # and the writer silently fell back to carrying last year's
+        # average forward. Confirmed live: cw_41522 -> 404, cw_041522 ->
+        # 200. With the fix, 6 of the 12 workbook stations have a page
+        # (Dalby, Miles, Moranbah, Narrabri, Roma, Toowoomba); the other
+        # six genuinely have none (also 404 when padded) and still fall
+        # back, with the note below saying so.
+        station_padded = str(station).zfill(6)
+        url = BOM_AVERAGES_URL.format(station=station_padded)
         try:
             resp = requests.get(url, timeout=30,
                                  headers={"User-Agent": "boomtown-indicators/1.0 (UQ research pipeline)"})
@@ -341,7 +352,7 @@ class BOMRainfallFetcher(BaseFetcher):
             return None, (
                 f"Could not fetch BOM's official historic average for station "
                 f"{station} ({exc}). Kept the existing Historic Average; worth "
-                f"checking manually: {BOM_AVERAGES_URL.format(station=station)}"
+                f"checking manually: {url}"
             )
 
     def _monthly_from_manual_data(self, town_name: str) -> dict:

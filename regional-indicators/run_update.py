@@ -50,6 +50,8 @@ from fetchers.fetch_narrabri_approvals import NarrabriApprovalsFetcher
 from fetchers.fetch_narrabri_sales_rent import NarrabriSalesRentFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 from fetchers.fetch_business import ABSBusinessFetcher
+from fetchers.fetch_fuel import RACQFuelFetcher
+from fetchers.fetch_schools import ACARASchoolsFetcher
 
 FETCHER_REGISTRY: dict[str, type] = {
     "income":         ATOIncomeFetcher,
@@ -73,6 +75,8 @@ FETCHER_REGISTRY: dict[str, type] = {
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,
     "business":          ABSBusinessFetcher,
+    "fuel":              RACQFuelFetcher,      # Exogenous sheet Fuel section -- RACQ Annual Fuel Price Report PDF, built 2026-10-06
+    "schools":           ACARASchoolsFetcher,  # Exogenous sheet Education section -- ACARA School Profile, built 2026-10-07
     # "population":   ABSPopulationFetcher,       # TODO
     # "unemployment": ABSLabourFetcher,           # TODO
     # "housing":      QGSOHousingFetcher,         # TODO (QLD only, semi-manual)
