@@ -1,21 +1,22 @@
 """
-transform/booklet/make_booklet.py
-----------------------------------
-Entry point for booklet generation.
+regional-indicators/transform/booklet/make_booklet.py
+
+Entry point for booklet generation: builds a town's indicators booklet
+as a Word document.
 
 Page orientation:
-    Pages 1-2  (cover, title)   : Portrait  A4
-    Pages 3-10 (map, data pages): Landscape A4
-    Final page (back)           : Portrait  A4  [TODO]
+    Pages 1-2  (cover, title)    Portrait A4
+    Pages 3-10 (map, data pages) Landscape A4
+A portrait back page is not yet implemented.
 
-OOXML section model used here:
-    A pPr-level sectPr closes the section ENDING at that paragraph.
-    The body-level sectPr closes the final section.
-    So we:
-      1. Build portrait content (pages 1-2)
-      2. Insert a pPr sectPr (portrait) to close section 1
-      3. Build landscape content (pages 3-10)
-      4. The body sectPr (landscape) closes section 2
+OOXML section model:
+    A sectPr inside a paragraph's pPr closes the section that ends at
+    that paragraph. The sectPr at body level closes the final section.
+    The document is therefore assembled as:
+      1. Portrait content (pages 1-2).
+      2. A pPr sectPr (portrait) that closes section 1.
+      3. Landscape content (pages 3-10).
+      4. The body sectPr (landscape), which closes section 2.
 
 Usage:
     python transform/booklet/make_booklet.py --town Chinchilla
@@ -52,7 +53,7 @@ from pages.data_page  import (build_unemployment_page, build_house_price_page,
                                build_rent_page, build_approvals_page,
                                build_rainfall_page, build_crime_page)
 
-# A4 dimensions in twips (1440 twips = 1 inch = 25.4mm)
+# A4 dimensions in twips (1440 twips = 1 inch = 25.4 mm).
 A4_SHORT_TW = int(210 / 25.4 * 1440)   # 11905  portrait width / landscape height
 A4_LONG_TW  = int(297 / 25.4 * 1440)   # 16837  portrait height / landscape width
 MARGIN_TW   = int(MARGIN_MM / 25.4 * 1440)
@@ -82,17 +83,17 @@ def load_town_cfg(town_name: str) -> dict:
 
 # ── Section helpers ───────────────────────────────────────────────────────────
 #
-# python-docx merges/drops the body sectPr when a pPr sectPr is present.
-# We work around this by:
-#   1. Inserting a pPr sectPr (portrait) to close section 1 (pages 1-2)
-#   2. Post-processing the saved ZIP to inject the landscape body sectPr
-#      directly into document.xml before </w:body>
-#
-# This two-step approach is necessary because python-docx's CT_Body
-# serializer absorbs the body sectPr into the pPr sectPr during save().
+# python-docx does not keep a separate body sectPr when a pPr sectPr is
+# present: its CT_Body serialiser absorbs the body sectPr into the pPr
+# sectPr during save(). The two sections are therefore produced in two
+# steps:
+#   1. A pPr sectPr (portrait) is inserted to close section 1
+#      (pages 1-2).
+#   2. The saved ZIP is post-processed to insert the landscape body
+#      sectPr into document.xml, directly before </w:body>.
 
 def _insert_portrait_break(doc: Document) -> None:
-    """Insert a pPr sectPr (portrait A4) to close the portrait section."""
+    """Insert a pPr sectPr (portrait A4) that closes the portrait section."""
     p  = doc.add_paragraph()
     pf = p.paragraph_format
     pf.space_before = Pt(0)
@@ -102,7 +103,7 @@ def _insert_portrait_break(doc: Document) -> None:
     pgSz   = OxmlElement("w:pgSz")
     pgSz.set(qn("w:w"), str(A4_SHORT_TW))
     pgSz.set(qn("w:h"), str(A4_LONG_TW))
-    # no orient attr = portrait
+    # no orient attribute: portrait
     sectPr.append(pgSz)
     pgMar = OxmlElement("w:pgMar")
     m = str(MARGIN_TW)
@@ -114,10 +115,10 @@ def _insert_portrait_break(doc: Document) -> None:
 
 
 def _fix_body_section(docx_path: Path) -> None:
-    """
-    Post-process the saved docx ZIP to inject a landscape body sectPr.
-    python-docx drops the body sectPr when a pPr sectPr is present,
-    so we inject it directly into the document.xml XML string.
+    """Post-process the saved docx ZIP to insert a landscape body sectPr.
+
+    python-docx drops the body sectPr when a pPr sectPr is present, so
+    it is inserted into the document.xml text directly.
     """
     import zipfile, shutil
     tmp = docx_path.with_suffix(".tmp.docx")
@@ -145,7 +146,7 @@ def _fix_body_section(docx_path: Path) -> None:
 
 
 def _plain_page_break(doc: Document):
-    """Simple page break within the current section."""
+    """Add a page break within the current section."""
     p   = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after  = Pt(0)
@@ -158,13 +159,14 @@ def _plain_page_break(doc: Document):
 # ── Document bootstrap ────────────────────────────────────────────────────────
 
 def new_document() -> Document:
-    """
-    Create a blank document. We do NOT set the initial section here —
-    it will be set by _insert_section_break (portrait) and
-    _set_body_section (landscape) at assembly time.
+    """Create a blank document.
+
+    Page setup is not applied here. The sections are defined at assembly
+    time by _insert_portrait_break (portrait) and _fix_body_section
+    (landscape).
     """
     doc = Document()
-    # Remove python-docx's default empty paragraph
+    # Remove the empty paragraph python-docx adds by default.
     for p in list(doc.paragraphs):
         p._element.getparent().remove(p._element)
     return doc
@@ -190,7 +192,7 @@ def main():
 
     doc = new_document()
 
-    # ── PORTRAIT content: pages 1 & 2 ────────────────────────────────────────
+    # ── Portrait content: pages 1-2 ──────────────────────────────────────────
     if build_all or "cover" in pages:
         print("  [portrait]  Page 1: cover...")
         build_cover_page(doc, town_cfg, date_str)
@@ -200,10 +202,10 @@ def main():
         print("  [portrait]  Page 2: title...")
         build_title_page(doc, town_cfg, date_str)
 
-    # Close portrait section — pages 1-2 are portrait A4
+    # Close the portrait section (pages 1-2, portrait A4).
     _insert_portrait_break(doc)
 
-    # ── LANDSCAPE content: pages 3-10 ────────────────────────────────────────
+    # ── Landscape content: pages 3-10 ────────────────────────────────────────
     if build_all or "map" in pages:
         print("  [landscape] Page 3: map...")
         build_map_page(doc, town_cfg)
@@ -249,8 +251,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{town_cfg['name']}_Indicators_{year}.docx"
     doc.save(str(out_path))
-    # Post-process: inject landscape body sectPr into saved ZIP
-    # (python-docx drops body sectPr when pPr sectPr is present)
+    # Insert the landscape body sectPr into the saved ZIP (see the
+    # section helpers above).
     _fix_body_section(out_path)
     print(f"\nSaved: {out_path}")
 

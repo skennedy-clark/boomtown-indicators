@@ -1,58 +1,51 @@
 """
-fetchers/fetch_crime_qps.py
-----------------------------
-Fetches QPS Reported Offence Rates by police division from the Queensland
+regional-indicators/fetchers/fetch_crime_qps.py
+
+Fetches Queensland Police Service (QPS) reported offence rates by police
+division, plus the Queensland statewide benchmark, from the Queensland
 Government open data portal.
 
-Source: data.qld.gov.au — Offence rates, police divisions, monthly from July 2001
-Direct download (no auth, updated monthly):
+Source: data.qld.gov.au - Offence rates, police divisions, monthly from
+July 2001. Direct download (no authentication, updated monthly):
   https://open-crime-data.s3-ap-southeast-2.amazonaws.com/Crime%20Statistics/division_Reported_Offences_Rates.csv
+The statewide file has the same layout without the Division column:
+  https://open-crime-data.s3-ap-southeast-2.amazonaws.com/Crime%20Statistics/QLD_Reported_Offences_Rates.csv
 
 Raw data structure:
-  Columns: Division | Month Year | Homicide (Murder) | ... | (94 columns total)
+  Columns: Division | Month Year | Homicide (Murder) | ... (94 columns)
   Values : rates per 100,000 persons, monthly
 
-METHODOLOGY, CORRECTED 2026-09-24 -- two real bugs found and fixed,
-confirmed against the real reference workbook, not assumed:
+Methodology:
+  Annual value. The annual rate is the sum of the 12 monthly rates (a
+  rate per year), not their mean. Taking the mean understates every
+  figure by a factor of about 12.
 
-  BUG 1: annual aggregation used statistics.mean() of the 12 monthly
-  rates. An ANNUAL rate should be the SUM across the year (this is a
-  rate PER YEAR, not an average monthly rate) -- confirmed via an
-  almost-exact 12.024x ratio between the old (wrong) output and the
-  real workbook values, across four independent indicators. Every
-  crime figure this fetcher had ever produced was wrong by roughly a
-  factor of 12. Fixed: sum(), not mean().
+  Total. "Total offences (person, property, other)" is the sum of three
+  raw columns only: Offences Against the Person + Offences Against
+  Property + Other Offences. QPS publishes eight summary categories
+  (Person, Property, Drug, Prostitution, Weapons, Good Order, Traffic,
+  Other); summing all eight does not reproduce the reference workbook.
 
-  BUG 2: "Total offences (person, property, other)" was computed as
-  the sum of ALL 8 QPS-published summary category columns (Person,
-  Property, Drug, Prostitution, Weapons, Good Order, Traffic, Other).
-  The row's own name says literally "(person, property, other)" --
-  confirmed directly: summing just those THREE raw columns (Offences
-  Against the Person + Offences Against Property + Other Offences),
-  then applying the sum-not-mean fix, matches the real workbook value
-  to within 0.2% (residual is ordinary rounding, not a methodology
-  error) -- summing all 8 does not. Fixed: total = person + property
-  + other_offences only, not all 8 categories.
+  Incomplete years are skipped, so the in-progress current year never
+  produces a partial-year sum.
 
-  Both fixes verified together against all 11 individual real 2001
-  values for Chinchilla plus the Total row -- every one matches the
-  real workbook to within ~0.1%.
+  With these rules the output matches the reference workbook to within
+  about 0.2% (rounding) for the Chinchilla 2001 values and the Total
+  row.
 
-  Also EXTENDED to cover all 12 rows the real Crime sheet actually has
-  per town (confirmed via direct inspection) -- the old version only
-  produced 5 of these (all, drug, good_order, theft, traffic). Added:
-  breach_dv, offences_property, offences_person, other_offences,
-  prostitution, unlawful_entry, weapons. Confirmed via the raw column
-  order these are genuinely independent top-level categories, not
-  double-counted sub-items of each other or of Total (Total only sums
-  person/property/other, so none of the other 8 categories are
-  included in it at all).
+  Indicators. All 12 rows of the Crime sheet are produced per town: the
+  11 raw columns in INDICATOR_COLS plus the computed total. The raw
+  columns are independent top-level categories; none is a sub-item of
+  another, and only person, property and other contribute to the total.
 
-Output: values are rates per 1,000 persons (raw CSV is per 100,000;
-divided by 100), one JSON per town with the full historical series.
+Output: cache/crime/<slug>_crime_qps.json per town, and
+cache/crime/queensland_crime_qps.json for the state, each with the full
+historical series. Values are rates per 1,000 persons (the raw CSV is
+per 100,000; divided by 100).
 
-QPS Division → Town mapping is via towns.toml qps_division field.
-Chinchilla uses the Dalby division. Toowoomba sub-areas share Toowoomba division.
+Geography: each town maps to a QPS division through the qps_division
+field in towns.toml. Chinchilla uses the Dalby division. The Toowoomba
+sub-areas share the Toowoomba division.
 """
 
 from __future__ import annotations
@@ -85,18 +78,17 @@ _MONTH_YR = re.compile(r'^[A-Z]{3}(\d{2})$')
 
 CACHE_KEY = "qps_division_offence_rates"
 
-# Queensland statewide rates -- confirmed real, direct source (2026-09-24):
-# QPS publishes this directly, same convention as the division file, no
-# population lookup or cross-division aggregation needed.
+# Queensland statewide rates. QPS publishes these directly in the same
+# layout as the division file, so no population lookup or aggregation
+# across divisions is needed.
 QLD_RATES_URL = (
     "https://open-crime-data.s3-ap-southeast-2.amazonaws.com"
     "/Crime%20Statistics/QLD_Reported_Offences_Rates.csv"
 )
 QLD_CACHE_KEY = "qps_qld_statewide_offence_rates"
 
-# Confirmed real column names for all 12 indicator rows the Crime sheet
-# actually has per town (2026-09-24, direct inspection). "total" isn't
-# a raw column -- computed separately, see _extract_town.
+# Raw column names for the indicator rows of the Crime sheet. "total" is
+# not a raw column; it is computed from TOTAL_COMPONENTS in the parsers.
 INDICATOR_COLS = {
     "breach_dv":          "Breach Domestic Violence Protection Order",
     "drug":               "Drug Offences",
@@ -111,18 +103,14 @@ INDICATOR_COLS = {
     "weapons":            "Weapons Act Offences",
 }
 
-# "Total offences (person, property, other)" -- confirmed real
-# definition, literally just these three, not all 8 summary columns.
+# "Total offences (person, property, other)" sums these three columns
+# only, not all eight summary categories.
 TOTAL_COMPONENTS = ["offences_person", "offences_property", "other_offences"]
 
-# GENERALIZED 2026-09-24, per Steve's explicit direction ("knowing
-# there will be a fetch victoria, tasmania, nt, wa at some point"):
-# update_crime.py now reads each indicator's sheet-row label directly
-# from this fetcher's own JSON output, instead of trusting a hardcoded
-# per-state dict in the wiring script. INDICATOR_COLS' values already
-# happen to be identical to the real sheet row labels (confirmed via
-# direct inspection), so they're reused directly here rather than
-# duplicated.
+# Sheet-row label for each indicator, written into the JSON output so
+# that update_crime.py reads labels from the fetcher output and needs no
+# per-state label table. The raw column names are identical to the sheet
+# row labels, so INDICATOR_COLS is reused here.
 INDICATOR_LABELS = {**INDICATOR_COLS, "total": "Total offences (person, property, other)"}
 
 
@@ -150,13 +138,9 @@ class QPSCrimeFetcher(BaseFetcher):
         for town in self.applicable_towns():
             self._extract_town(town, division_data)
 
-        # Queensland state benchmark -- confirmed real, direct source
-        # (2026-09-24, Steve): QPS publishes a genuine statewide rates
-        # file, same convention as the division-level one. No population
-        # lookup or cross-division aggregation needed at all -- verified
-        # directly against all 12 of the workbook's known 2024 Queensland
-        # benchmark values, every one matches within the same ~0.2-0.7%
-        # margin as the town-level data.
+        # Queensland state benchmark, from the statewide rates file. The result
+        # matches the reference workbook's 2024 Queensland values to within
+        # about 0.2-0.7%, the same margin as the town-level data.
         qld_path = self.download(QLD_RATES_URL, QLD_CACHE_KEY, suffix=".csv")
         if qld_path:
             self._extract_queensland(qld_path)
@@ -166,15 +150,14 @@ class QPSCrimeFetcher(BaseFetcher):
     # ── Parser ─────────────────────────────────────────────────────────────────
 
     def _parse_csv(self, path: Path) -> dict:
-        """
-        Parse the QPS division rates CSV.
+        """Parse the QPS division rates CSV.
 
         Returns:
           { "Roma": { 2022: {"drug": 27.6, ..., "unlawful_entry": ...}, ... }, ... }
 
-        Values are ANNUAL SUMS of the 12 monthly per-1,000 rates
-        (raw CSV is per-100,000; divided by 100) -- confirmed correct
-        methodology, see module docstring for how this was verified.
+        Values are annual sums of the 12 monthly rates, converted to per
+        1,000 persons (the raw CSV is per 100,000; divided by 100). See the
+        module docstring for the methodology.
         """
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
@@ -212,13 +195,11 @@ class QPSCrimeFetcher(BaseFetcher):
                 for ind_key, col_name in INDICATOR_COLS.items():
                     monthly[key][ind_key].append(safe(col_name))
 
-            # Annual SUM per division per year, convert /100k -> /1k.
-            # Skip incomplete years (confirmed real risk 2026-09-24: the
-            # in-progress current year only had 8 of 12 months -- summing
-            # a partial year would silently understate it, misleadingly
-            # looking like a huge crime drop once compared to a real full
-            # year. Same "skip incomplete years" pattern already proven
-            # correct in fetch_bom_rainfall.py.
+            # Annual sum per division per year, converted from per 100,000 to
+            # per 1,000. Years with fewer than 12 months are skipped: summing a
+            # partial year (normally the in-progress current year) would
+            # understate it and read as a sharp fall in crime. The same rule is
+            # used in fetch_bom_rainfall.py.
             result: dict[str, dict[int, dict]] = defaultdict(dict)
             incomplete_years = []
             for (division, yr), indicators in monthly.items():
@@ -231,7 +212,7 @@ class QPSCrimeFetcher(BaseFetcher):
                 for ind_key, values in indicators.items():
                     if values:
                         annual[ind_key] = round(sum(values) / 100, 6)
-                # Total = person + property + other ONLY, confirmed real definition
+                # Total = person + property + other only.
                 if all(k in annual for k in TOTAL_COMPONENTS):
                     annual["total"] = round(sum(annual[k] for k in TOTAL_COMPONENTS), 6)
                 result[division][yr] = annual
@@ -277,9 +258,8 @@ class QPSCrimeFetcher(BaseFetcher):
         latest_yr = years[-1]
         latest = data[latest_yr]
 
-        # GENERALIZED 2026-09-24: each indicator now carries its own
-        # sheet-row label alongside its values, so update_crime.py
-        # needs no hardcoded per-state label dict at all.
+        # Each indicator carries its sheet-row label alongside its values,
+        # so update_crime.py needs no per-state label table.
         indicators = {}
         for key in list(INDICATOR_COLS) + ["total"]:
             indicators[key] = {
@@ -294,8 +274,8 @@ class QPSCrimeFetcher(BaseFetcher):
             "source":       "QPS Reported Offence Rates by Division",
             "source_url":   DIVISION_RATES_URL,
             "note": (
-                "Rates per 1,000 persons. Annual value = SUM of 12 monthly rates "
-                "(not mean -- corrected 2026-09-24, see module docstring). "
+                "Rates per 1,000 persons. Annual value = sum of the 12 monthly "
+                "rates (not the mean; see the module docstring). "
                 "Total offences = Offences Against the Person + Offences Against "
                 "Property + Other Offences only (not all 8 category columns)."
             ),
@@ -319,14 +299,12 @@ class QPSCrimeFetcher(BaseFetcher):
     # ── Queensland statewide benchmark ────────────────────────────────────────
 
     def _parse_statewide_csv(self, path: Path) -> dict:
-        """Same proven methodology as _parse_csv (sum 12 months, skip
-        incomplete years, total = person+property+other only) -- kept as
-        a separate, self-contained method rather than refactoring the
-        already-tested division parser, since there's no Division column
-        to group by here at all (the whole file IS one implicit
-        "division": statewide). Verified directly against all 12 of the
-        workbook's known 2024 Queensland values before this was written,
-        see module docstring.
+        """Parse the QPS statewide rates CSV.
+
+        Same methodology as _parse_csv (sum of 12 months, incomplete years
+        skipped, total = person + property + other only). It is a separate
+        method because the statewide file has no Division column to group
+        by; the whole file is a single implicit division.
 
         Returns: { 2022: {"drug": 27.6, ..., "total": ...}, ... }
         """
@@ -394,9 +372,8 @@ class QPSCrimeFetcher(BaseFetcher):
         latest_yr = years[-1]
         latest = data[latest_yr]
 
-        # GENERALIZED 2026-09-24: each indicator now carries its own
-        # sheet-row label alongside its values, so update_crime.py
-        # needs no hardcoded per-state label dict at all.
+        # Each indicator carries its sheet-row label alongside its values,
+        # so update_crime.py needs no per-state label table.
         indicators = {}
         for key in list(INDICATOR_COLS) + ["total"]:
             indicators[key] = {

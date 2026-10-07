@@ -1,83 +1,52 @@
 """
 regional-indicators/transform/xlsx_update/update_rainfall.py
------------------------------------------------------------------------
-Writes fetch_bom_rainfall.py's cached output (total/summer/winter) into
-the Exogenous sheet's Rainfall section.
 
-DELIBERATELY DOES NOT REUSE base.py's _find_year_column/
-_find_town_indicator_row -- confirmed real, structural differences from
-the Population sheet (2026-09-21 inspection of the actual reference
-workbook):
-  - Single header row (row 1, calendar years only, no separate fiscal-
-    year row) starting at COLUMN B, not column C.
-  - The row label is the station's own name+number (e.g. "Harewood
-    042078"), not a fixed indicator string shared across every town.
-  - Confirmed real inconsistencies in the row labels themselves: Miles'
-    label has a trailing space ("Miles Post Office 042023 "), Wandoan
-    uses ASCII "->" where Goondiwindi uses a real arrow "->" character,
-    Narrabri's sub-rows are plain "Summer"/"Winter" where every other
-    town uses "Summer (Jan-Mar, Oct-Dec)"/"Winter (Apr-Sept)". Matching
-    on exact label text would break on several real towns.
-  - What IS confirmed consistent everywhere, including the messy cases:
-    block LAYOUT. A town header row, then the station/total row, then
-    Summer, Winter and Historic Average directly below, in that order,
-    for every town (Chinchilla through Wandoan, including Moranbah's
-    near-empty block).
+Writes annual and seasonal rainfall into the Exogenous sheet.
 
-ROW FINDING REWRITTEN 2026-10-06 -- by TOWN header, not station number.
-The first version searched column A for the station number. Those
-numbers exist only in the hand-built 2026 reference file's labels; the
-file this actually runs on each year (last year's delivered workbook)
-has plain station names, so against the real 2025 working file it
-found no rows and wrote nothing (0 written, every town skipped).
-Now: find the block by its town header row and check the Summer /
-Winter / Historic Average labels really are in the three rows below the
-station row. The station number is NOT used to find anything: a station
-can close and a town move to another (the sheet already records two
-such changes, Goondiwindi and Wandoan, whose labels keep the original
-station's number), so towns.toml alone says which station is current.
-If a label's number differs from towns.toml the run prints a one-line
-note and carries on. Works on both the 2025 and 2026 label styles.
-Towns with no block on the sheet (Toowoomba's three sub-areas,
-Shepparton, Yarram) are listed once at the end as expected, not
-reported as failures -- which also stops Toowoomba's rows being
-written four times over via its sub-areas' shared station.
+Input:  cache/rainfall/<slug>_bom_rainfall.json, produced by
+        fetchers/fetch_bom_rainfall.py.
+Target: the "Rainfall" section of the Exogenous sheet.
 
-DOES NOW WRITE "Historic Average" (added 2026-09-22, previously out of
-scope). Confirmed via Steve reading BOM's own "Climate Averages" page
-directly (a different, genuinely accessible BOM product from the
-interactive portal that blocks automated access) that this row is
-meant to be BOM's own official Mean Annual Rainfall figure for the
-station, not a self-computed rolling average -- fetch_bom_rainfall.py
-now fetches this automatically per station. If unavailable (not every
-station has this page -- confirmed real, e.g. Chinchilla's station
-genuinely doesn't have one), the existing value is left untouched and
-a clear note is produced instead, per Steve's explicit instruction:
-never blank it or guess, just flag that it needs a manual check.
-Written differently from total/summer/winter: the SAME value goes
-across every year column in the row (confirmed that's how this row is
-actually used in the real workbook -- a flat constant for charting,
-not a per-year series), with a 20%-difference sanity check against
-whatever's already there before overwriting.
+Sheet layout:
+  Row 1  calendar years from column B (a single header row).
+  Each town is a block of five rows:
+      <town name>            heading, column A only
+      <station label>        annual total
+      Summer ...             October-March total
+      Winter ...             April-September total
+      Historic Average       long-term mean annual rainfall
 
-Reuses audit.py's audit_cell/audit_series/audit_historical_series/
-WriteAuditReport directly (those are genuinely generic, not
-Population-sheet-specific) -- just not base.py's row/column finders,
-which are.
+Row finding: a block is located by its town heading, compared with
+surrounding whitespace removed. The three labels below the station row
+are then verified, so a block with a different layout is rejected
+instead of being written to. Station labels are free text and are not
+used for matching; their wording differs between towns and between
+editions of the workbook.
 
-Every write gets the ground-truth historical audit, not just the
-shape-based one -- fetch_bom_rainfall.py's cache already carries the
-full year-by-year record for each town, so source_series is always
-available here (unlike some indicators where only the latest year is
-ever fetched).
+Station numbers: the station a town uses is defined only by
+`bom_station` in towns.toml. A station can close and be replaced, and
+the sheet's label may keep the earlier station's number. A number in
+the label that differs from towns.toml is reported as a note and does
+not block the write.
 
-Tested 2026-10-06 against the real 2025 working file's cell contents
-and the 2026 reference file's, through tests/fake_xlwings_sheet.py (a
-stand-in for the Excel sheet object -- this script cannot run for real
-outside Windows/Mac Excel). First real Excel run still to be confirmed.
+Towns that are fetched but have no block on the sheet are listed once
+at the end of the run.
+
+Annual, summer and winter totals are written for the latest year only.
+The cache carries the full series, so each write is checked against it
+with audit_historical_series in addition to the cell and series audits.
+
+Historic Average holds the Bureau of Meteorology's published mean
+annual rainfall for the station and is constant across the row. When
+the fetcher obtained a current figure it is written to every year
+column, provided it is within 20% of the existing value; a larger
+difference is reported and nothing is written. When no current figure
+is available the existing value is carried into the new year column.
+
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_rainfall.py <path-to-Indicators_Data-Charts.xlsx> <cache/rainfall dir> [--visible]
+    python update_rainfall.py <workbook.xlsx> <cache/rainfall dir> [--visible]
 """
 
 from __future__ import annotations
@@ -94,26 +63,17 @@ from audit import audit_cell, audit_series, audit_historical_series, WriteAuditR
 
 SHEET_NAME = "Exogenous"
 SECTION_HEADER = "Rainfall"
-FIRST_YEAR_COLUMN = 2   # column B -- confirmed different from Population's column C
-YEAR_HEADER_ROW = 1     # single header row -- confirmed different from Population's row 2
+FIRST_YEAR_COLUMN = 2   # column B
+YEAR_HEADER_ROW = 1     # single calendar-year header row
 
 
 def _find_year_column(sheet, year: int) -> int:
-    """Exogenous-specific: single calendar-year header row starting at
-    column B. Creates a new column (no separate fiscal-year row to
-    also fill in, unlike Population) if the year isn't there yet.
+    """Return the column for `year` in row 1, appending one if needed.
 
-    Deliberately does NOT use sheet.used_range.last_cell.column to
-    decide where "the end of the year data" is -- confirmed real bug
-    (2026-09-22): the Exogenous sheet's used_range extends well past
-    the Rainfall section's actual last year column, because of
-    unrelated content further down the sheet (Education/Fuel sections,
-    or leftover formatting) that has nothing to do with row 1's year
-    headers. Trusting used_range caused a real write to land in AA
-    instead of the correct Z on a real test file. Searches row 1
-    itself for the rightmost cell that actually contains a year,
-    and appends immediately after that -- not vulnerable to whatever
-    else is going on elsewhere in the sheet.
+    The last year column is found by scanning row 1 for year values, not
+    from the sheet's used range, which extends beyond the year columns
+    because of other sections lower on the sheet. A new column is placed
+    directly after the last year.
     """
     used = sheet.used_range
     max_col = used.last_cell.column
@@ -145,9 +105,10 @@ def _find_year_column(sheet, year: int) -> int:
 
 
 class NoRainfallBlock(Exception):
-    """This town has no block in the Rainfall section at all. Not an
-    error -- several towns.toml entries (Toowoomba's three sub-areas,
-    Shepparton, Yarram) are fetched but were never on this sheet."""
+    """Raised when a town has no block in the Rainfall section.
+
+    Not an error: some configured towns are not presented on this sheet.
+    """
 
 
 SUB_ROW_LABEL_PREFIXES = ("Summer", "Winter", "Historic Average")
@@ -156,42 +117,17 @@ NEXT_SECTION_HEADERS = ("Education", "Fuel", "Business", "Crime",
 
 
 def _find_rainfall_station_row(sheet, town: str, station_number: str) -> int:
-    """Find `town`'s block in the Rainfall section and return its
-    station/total row. Summer is row+1, Winter row+2, Historic Average
-    row+3.
+    """Return the station (annual total) row of `town`'s block.
 
-    REWRITTEN 2026-10-06. The first version searched column A for the
-    station NUMBER ("Harewood 042078"). Those numbers were only added
-    to the labels in the hand-built 2026 reference file; the real
-    starting file each year is last year's delivered workbook, whose
-    labels are just the station name ("Harewood", "Dalby Airport").
-    Confirmed against the 2025 working file: not one station number in
-    column A, so every town was SKIPPED and nothing was written at all.
+    Summer is row+1, Winter row+2 and Historic Average row+3. The block
+    is found by its town heading and the three labels below the station
+    row are verified.
 
-    What IS the same in both files is the block layout:
-        <town name>              <- header row, column A only
-        <station label>          <- total   (returned row)
-        Summer ...               <- row+1
-        Winter ...               <- row+2
-        Historic Average         <- row+3
-    so the block is found by its TOWN header row (compared with
-    surrounding whitespace stripped -- "Chinchilla " has a trailing
-    space in the real sheet), and the three sub-row labels are then
-    CHECKED rather than assumed, so a shifted or malformed block stops
-    here instead of writing into the wrong rows.
+    `station_number` is not used to find the row; see
+    _station_label_note.
 
-    The station number plays NO part in finding the row. A station can
-    close and a town move to another one (Steve, 2026-10-06) -- the
-    sheet already shows this: "New Kildonan 041507/ WTP (2020->)" and
-    "Gililgulgul 035029/ TM (2021->)" keep the ORIGINAL station's number
-    in the label after the change. So towns.toml is the one place that
-    says which station is current, the town header is the one thing
-    that identifies the block, and a label number that differs from
-    towns.toml is not an error. See _station_label_note for the
-    advisory line printed in that case.
-
-    Raises NoRainfallBlock if the town has no block on the sheet, and
-    ValueError for anything that needs a human to look.
+    Raises NoRainfallBlock if the town has no block, and ValueError if
+    the heading is duplicated or the block is not laid out as expected.
     """
     used = sheet.used_range
     max_row = used.last_cell.row
@@ -250,15 +186,13 @@ def _find_rainfall_station_row(sheet, town: str, station_number: str) -> int:
 
 
 def _station_label_note(sheet, station_row: int, station_number: str) -> str:
-    """Advisory only -- never blocks a write. If the station label in
-    column A mentions a station number and none of the numbers in it is
-    the one towns.toml gives for this town, return a one-line note
-    saying so; otherwise "".
+    """Return a note if the station label names a different station.
 
-    Expected and harmless after a station change (the label keeps the
-    old number, towns.toml holds the new one). Worth a glance in any
-    other case, since it could also mean towns.toml points at the wrong
-    station -- which is why it is reported rather than ignored.
+    If the label in column A contains a station number and none of the
+    numbers in it matches `station_number`, a one-line note is returned;
+    otherwise "". The note is advisory. A mismatch is expected after a
+    station has been replaced, and can otherwise indicate an incorrect
+    `bom_station` in towns.toml.
     """
     label = sheet.cells(station_row, 1).value
     label = str(label).strip() if label is not None else ""
@@ -275,10 +209,11 @@ def _station_label_note(sheet, station_row: int, station_number: str) -> str:
 
 
 def _year_columns(sheet) -> list[int]:
-    """Column numbers that actually hold a year in the header row. Used
-    wherever a whole row is touched, so nothing is ever written under a
-    column that isn't a year -- used_range can run past the last year
-    (the same trap documented in _find_year_column)."""
+    """Return the columns whose header cell in row 1 holds a year.
+
+    Used when a whole row is written, so that no column beyond the year
+    columns is touched.
+    """
     used = sheet.used_range
     max_col = used.last_cell.column
     header_row = sheet.range((YEAR_HEADER_ROW, FIRST_YEAR_COLUMN), (YEAR_HEADER_ROW, max_col)).value
@@ -309,21 +244,14 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
 
 
 def _carry_forward_historic_average(sheet, row: int, year: int) -> tuple[bool, str]:
-    """Fallback for when a fresh BOM fetch isn't available: per Steve's
-    explicit instruction, "use the previous average" means actually
-    writing the existing value into this year's new column too -- not
-    leaving it blank. Confirmed real bug (2026-09-22): an earlier
-    version did nothing at all when the fresh fetch failed, which left
-    a genuine gap at the newly-created year column even though every
-    other column in the row had real data, because appending a new
-    year column always starts blank and nothing was filling it back in.
+    """Copy the existing Historic Average into `year`'s column.
 
-    Reads the existing value from the row (the row is meant to be a
-    flat constant, so any already-populated cell works) and writes it
-    into year's column specifically, leaving every other column as-is.
-    Returns (written, message); written=False (nothing to carry
-    forward) only when the row has no existing value anywhere, i.e.
-    a town with no history at all yet, like Moranbah currently.
+    Used when no current figure is available from the source. The row
+    is constant, so any populated cell supplies the value. Other columns
+    are not changed.
+
+    Returns (written, message). Nothing is written if the row has no
+    existing value.
     """
     used = sheet.used_range
     max_col = used.last_cell.column
@@ -347,19 +275,11 @@ def _carry_forward_historic_average(sheet, row: int, year: int) -> tuple[bool, s
 
 
 def _write_historic_average_row(sheet, row: int, new_value: float) -> tuple[bool, str]:
-    """Write new_value across EVERY year column in the Historic Average
-    row -- confirmed this row is a flat constant repeated across the
-    whole row in the real workbook (for charting convenience), not a
-    per-year value like total/summer/winter, so it needs a different
-    write pattern: same value everywhere, not one cell at a time.
+    """Write `new_value` to every year column of the Historic Average row.
 
-    Runs one sanity check before overwriting: compares new_value
-    against whatever's CURRENTLY in the row (read from any populated
-    cell, since they're all meant to already be identical) and flags
-    rather than silently overwrites if the two disagree by more than
-    20% -- catches a genuinely wrong new value (bad fetch, wrong
-    station) without needing a full per-cell audit for a row that's
-    supposed to be uniform anyway.
+    The row holds one constant value. If the row already has a value and
+    `new_value` differs from it by more than 20%, nothing is written and
+    the difference is reported for review.
 
     Returns (written, message).
     """
@@ -383,9 +303,7 @@ def _write_historic_average_row(sheet, row: int, new_value: float) -> tuple[bool
                     f"station/bad fetch -- worth a human look before overwriting."
                 )
 
-    # CHANGED 2026-10-06: only columns that hold a year in row 1, not
-    # every column out to used_range's edge (which can run past the last
-    # year -- see _year_columns).
+    # Only columns that hold a year in row 1; see _year_columns.
     for col in _year_columns(sheet):
         cell = sheet.cells(row, col)
         cell.value = new_value
@@ -415,10 +333,11 @@ def _write_rainfall_row(sheet, row: int, year: int, value, source_series: dict |
 
 
 def write_rainfall(sheet, cache_files: list[Path]) -> tuple[list[str], int, int]:
-    """Audit and write every cached town's latest year into `sheet`.
-    Split out from the Excel open/save handling (2026-10-06) so the
-    row-finding and audit logic can be exercised against any sheet-like
-    object (see tests/fake_xlwings_sheet.py). Returns
+    """Audit and write the latest year for every cached town.
+
+    Separate from the Excel session handling so that it can be run
+    against any object with the xlwings Sheet interface (see
+    tests/fake_xlwings_sheet.py). Returns
     (result lines, written count, flagged count).
     """
     results: list[str] = []
@@ -451,7 +370,7 @@ def write_rainfall(sheet, cache_files: list[Path]) -> tuple[list[str], int, int]
             continue
         except ValueError as exc:
             results.append(f"{town} (station {station}): SKIPPED (row-finding) — {exc}")
-            flagged_count += 3  # would have been 3 writes (total/summer/winter)
+            flagged_count += 3  # total, summer and winter
             continue
 
         label_note = _station_label_note(sheet, station_row, station)
@@ -489,10 +408,9 @@ def write_rainfall(sheet, cache_files: list[Path]) -> tuple[list[str], int, int]
                 results.append(f"{town} {label}: SKIPPED (row-finding) — {exc}")
                 flagged_count += 1
 
-        # Historic Average: a different write pattern (whole row,
-        # not one year) and a different source (BOM's official
-        # Climate Averages page, not SILO/manual monthly data) --
-        # handled separately from the total/summer/winter loop above.
+        # Historic Average is written to the whole row from a different
+        # source (the Bureau's published station average), so it is handled
+        # separately from the three annual figures above.
         historic_row = station_row + 3
         official_avg = data.get("bom_official_historic_avg_mm")
         official_note = data.get("bom_official_historic_avg_note", "")

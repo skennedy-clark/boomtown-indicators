@@ -1,61 +1,44 @@
 """
 regional-indicators/fetchers/fetch_population_nrw.py
-------------------------------------------------------
-Fetches non-resident worker (NRW) population data for Surat Basin and
-Bowen Basin resource-region towns, at TWO geography levels:
 
-  - LGA-level "Non-resident workers on-shift" (full 2008-2025 series) --
-    maps to the LGA-section rows in the workbook (Isaac, Maranoa,
+Fetches non-resident worker (NRW) population for towns in the Surat
+Basin and Bowen Basin resource regions, at two geography levels:
+
+  - LGA: "Non-resident workers on-shift", full annual series. Feeds the
+    LGA-section rows of the Population sheet (Isaac, Maranoa, Toowoomba,
     Western Downs).
-  - LGA + selected-UCL "Full-time equivalent (FTE)" estimates (2024-2025
-    only) -- maps to the per-town UCL-section NRW rows.
+  - Selected UCLs: non-resident workers on-shift from the "Full-time
+    equivalent (FTE) population estimates" tables, latest two years
+    only. Feeds the per-town NRW rows.
 
-Source: QGSO Surat Basin / Bowen Basin population reports.
-Confirmed real URLs (Surat Basin, from live site, 2026-09-15):
-  NRW on-shift, LGA, 2008-2025:
-    https://www.qgso.qld.gov.au/issues/6606/surat-basin-population-report-tables-non-resident-workers-on-shift-local-government-area-lga-2008-2025.xlsx
-  FTE population estimates, LGA + selected UCLs, 2024-2025:
-    https://www.qgso.qld.gov.au/issues/6606/surat-basin-population-report-tables-full-time-equivalent-fte-population-estimates-local-government-area-lga-selected-urban-centres-localities-ucls-2024-2025.xlsx
-  (A third file, Worker Accommodation Village bed capacity, exists at
-  the same issue number but isn't consumed here -- not a currently
-  tracked indicator. Worth a TODO note if that becomes relevant later.)
+Source: QGSO Surat Basin and Bowen Basin population report tables.
+    Surat Basin (issue 6606):
+      .../surat-basin-population-report-tables-non-resident-workers-
+          on-shift-local-government-area-lga-2008-<year>.xlsx
+      .../surat-basin-population-report-tables-full-time-equivalent-fte-
+          population-estimates-local-government-area-lga-selected-urban-
+          centres-localities-ucls-<year-1>-<year>.xlsx
+    Bowen Basin (issue 3341):
+      the same two tables; the on-shift series starts in 2006.
+    Each issue also carries a worker accommodation village bed-capacity
+    table, which is not used.
 
-Confirmed real URLs (Bowen Basin, from live site, 2026-09-15):
-  NRW on-shift, LGA, 2006-2025 (note: different start year than Surat's
-  2008 -- year columns are detected dynamically, not hardcoded, so this
-  doesn't need special-casing):
-    https://www.qgso.qld.gov.au/issues/3341/bowen-basin-population-report-tables-non-resident-workers-on-shift-local-government-area-lga-2006-2025.xlsx
-  FTE population estimates, LGA + selected UCLs, 2024-2025:
-    https://www.qgso.qld.gov.au/issues/3341/bowen-basin-population-report-tables-full-time-equivalent-fte-population-estimates-local-government-area-lga-selected-urban-centres-localities-ucls-2024-2025.xlsx
-  (Same third WAV-bed-capacity file exists here too, same "not tracked
-  yet" note applies.)
+Issue numbers are specific to each region and each report and are not
+sequential; the tables' issue numbers also differ from those of the PDF
+reports. A new issue number cannot be derived from an existing one.
 
-Confirms what the module docstring below originally only guessed at:
-issue numbers are per-region AND per-report, not shared or predictable
--- Surat's tables are issue 6606, Bowen's are issue 3341, and neither
-matches either region's own PDF report issue number (3186 for Surat,
-3366 for Bowen). Never assume a new issue number by incrementing a
-known one.
+Year columns are detected from the file, so the different start years
+of the two regions need no special handling.
 
-*** PARSING NOT YET VALIDATED against a real downloaded file -- column
-header search is defensive (searches for header row rather than
-assuming fixed position, same approach used elsewhere in this project),
-but the actual column names/order in these specific files haven't been
-confirmed. First real run against an actual downloaded file is the
-real test. ***
-
-Writes cache/population/{slug}_population_nrw.json:
+Output: cache/population/<slug>_population_nrw.json
   {
     "town": ..., "lga": ...,
     "lga_nrw_on_shift_by_year": {"2008": ..., ..., "2025": ...},
-    "ucl_nrw_latest": {"year": 2025, "value": ...} or null if no
-        UCL-level match for this town in the FTE file
+    "ucl_nrw_latest": {"year": 2025, "value": ...}   (null when the
+        town has no UCL row in the FTE table)
   }
-
-Downstream wiring (writing these into the workbook) is deliberately NOT
-built yet -- see TODO.md. Better to confirm this fetcher's parsing
-against real files first than build the write side against unverified
-column assumptions too.
+Read by transform/xlsx_update/update_population_nrw.py and
+update_population_nrw_lga.py.
 """
 
 from __future__ import annotations
@@ -78,26 +61,19 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-# update each cycle -- every nrw_lga_url / fte_lga_ucl_url below has the
-# release year range baked into its filename (e.g. "...lga-2008-2025.xlsx"),
-# a QGSO "issue" page that gets a new file each year. These 404 once QGSO
-# retires the old one rather than silently serving stale data -- check
-# https://www.qgso.qld.gov.au/issues/6606/ and /3341/ for the current
-# filenames when this breaks. Auto-advance is attempted first (see
-# _discover_current_nrw_urls below); the hardcoded values here are the
-# fallback if that fails.
+# Update each cycle: the nrw_lga_url and fte_lga_ucl_url values below
+# include the release year range in the file name (e.g.
+# "...lga-2008-2025.xlsx") and return 404 once QGSO replaces the file.
+# The region's theme page is searched for the current file first (see
+# _scrape_for_url); these values are the fallback. Current file names
+# are listed at https://www.qgso.qld.gov.au/issues/6606/ and /3341/.
 REGIONS = {
     "surat_basin": {
         "theme_url": (
             "https://www.qgso.qld.gov.au/statistics/theme/population/"
             "non-resident-population-queensland-resource-regions/surat-basin"
         ),
-        "lgas": ["Western Downs", "Maranoa", "Toowoomba"],  # confirmed from
-                                                              # real file: Toowoomba
-                                                              # LGA has its own row
-                                                              # in this Surat Basin
-                                                              # data, not just
-                                                              # Western Downs/Maranoa
+        "lgas": ["Western Downs", "Maranoa", "Toowoomba"],  # the Surat Basin tables include Toowoomba
         "nrw_lga_url": (
             "https://www.qgso.qld.gov.au/issues/6606/"
             "surat-basin-population-report-tables-non-resident-workers-"
@@ -172,12 +148,9 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
     # ── Fetch + parse: LGA-level NRW on-shift, full history ─────────────────
 
     def _fetch_and_parse_nrw_lga(self, region_key: str, region: dict) -> dict:
-        # UPDATED 2026-09-29: scrape the live theme page FIRST now that
-        # _scrape_for_url is confirmed working (see its docstring -- it
-        # previously found nothing due to a relative-vs-absolute URL bug,
-        # now fixed and verified). This is self-updating year over year;
-        # the hardcoded region["nrw_lga_url"] is only the fallback if the
-        # live page's structure changes and scraping stops working.
+        # The theme page is searched first so that a new release is picked
+        # up without a code change; region["nrw_lga_url"] is the fallback
+        # if the page layout changes.
         url = self._scrape_for_url(region_key, region["theme_url"], "non-resident-workers-on-shift")
         if not url:
             url = region["nrw_lga_url"]
@@ -202,7 +175,7 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
     # ── Fetch + parse: LGA + selected UCL FTE, 2024-2025 ─────────────────────
 
     def _fetch_and_parse_fte(self, region_key: str, region: dict) -> dict:
-        # UPDATED 2026-09-29: same reasoning as _fetch_and_parse_nrw_lga above.
+        # Theme page first, configured URL as fallback (as above).
         url = self._scrape_for_url(region_key, region["theme_url"], "full-time-equivalent")
         if not url:
             url = region["fte_lga_ucl_url"]
@@ -225,19 +198,11 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
         return self._parse_latest_year_sheet(path, value_label_hint="fte")
 
     def _scrape_for_url(self, region_key: str, theme_url: str, slug_fragment: str) -> str | None:
-        """Fallback for when a direct URL isn't hardcoded (Bowen Basin
-        currently) or a hardcoded one 404s (issue number rolled over).
+        """Return the URL of a table linked from a region's theme page, or
+        None if no link matches.
 
-        BUG FOUND AND FIXED 2026-09-29: this previously required a FULL
-        "https://www.qgso.qld.gov.au/issues/..." URL in the regex and found
-        nothing, ever -- confirmed live it returned None for both Surat
-        Basin files. The docstring blamed JavaScript-rendered content, but
-        that was wrong: checked the raw HTML directly and the links ARE
-        there, just as RELATIVE paths ("href=\"/issues/6606/...xlsx\""),
-        never as an absolute URL. Fixed the regex to match the relative
-        form and prepend the domain when returning. Verified live after the
-        fix: correctly finds and returns both the real NRW and FTE URLs for
-        Surat Basin, matching the hardcoded values exactly.
+        The page uses relative hrefs ("/issues/<n>/...xlsx"), so the pattern
+        matches the relative form and the host is prepended to the result.
         """
         try:
             resp = requests.get(theme_url, timeout=30)
@@ -260,31 +225,26 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
     # ── Parsers ────────────────────────────────────────────────────────────
 
     def _find_lga_and_year_rows(self, ws, max_search_rows: int = 15):
-        """QGSO NRW/FTE files put the 'LGA' column label and the actual
-        year headers on TWO SEPARATE rows (confirmed from a real file):
-          Row N:   LGA(a) | Non-resident workers on-shift(b) | ...   <- group label row
-          Row N+1: None   | 2008 | 2009 | 2010 | ...                  <- real year row
-        Searching for years in the same row as 'LGA' (what the earlier
-        version of this file did) finds nothing, since the LGA row's
-        other cells are a group title, not individual years.
+        """Locate the LGA label row and the year header row of a sheet.
+
+        The tables put the "LGA" column label and the year headers on
+        separate rows:
+          Row N:   LGA(a) | Non-resident workers on-shift(b) | ...   group labels
+          Row N+1: (blank) | 2008 | 2009 | 2010 | ...                 years
 
         Returns (lga_row_idx, lga_col, year_row_idx, {col: year}), or
-        (None, None, None, {}) if the LGA label can't be found at all.
-        year_row_idx/year_cols can still be empty even if lga_row_idx
-        is found, if no year row turns up within the search window --
-        that's a real "couldn't find years" case, not this bug.
+        (None, None, None, {}) if no LGA label is found. year_row_idx and
+        the year mapping can be empty when the label is found but no year
+        row follows within the search window.
         """
         lga_row_idx = None
         lga_col = None
         for r in range(1, min(max_search_rows, ws.max_row) + 1):
             for c in range(1, ws.max_column + 1):
                 v = ws.cell(r, c).value
-                # Require the cell to START WITH "lga" and be short --
-                # a real header cell is "LGA" or "LGA(a)", not a full
-                # sentence that happens to mention "(LGA)" as an
-                # abbreviation (confirmed: the report's own title row
-                # does exactly that and was wrongly matched before this
-                # fix -- "contains lga anywhere" is too loose).
+                # The cell must start with "lga" and be short: a header cell is
+                # "LGA" or "LGA(a)". The report's title row also contains
+                # "(LGA)" within a sentence and must not match.
                 if isinstance(v, str) and v.strip().lower().startswith("lga") and len(v.strip()) <= 15:
                     lga_row_idx, lga_col = r, c
                     break
@@ -294,9 +254,8 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
         if lga_row_idx is None:
             return None, None, None, {}
 
-        # Year row: search from the LGA row itself forward a few rows --
-        # covers both "years on the same row" and "years on the next
-        # row" layouts without needing to know which in advance.
+        # Year row: search from the LGA row forward a few rows, which
+        # covers years on the same row and years on the next row.
         for r in range(lga_row_idx, min(lga_row_idx + 4, ws.max_row) + 1):
             year_cols = {}
             for c in range(1, ws.max_column + 1):
@@ -307,9 +266,8 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
                 elif isinstance(v, str) and v.strip().isdigit() and 1990 <= int(v.strip()) <= 2100:
                     year = int(v.strip())
                 elif hasattr(v, "year") and isinstance(getattr(v, "year", None), int):
-                    # Excel sometimes stores a year header as an actual
-                    # date (e.g. 1/07/2008) -- openpyxl hands that back
-                    # as a datetime, not a plain number.
+                    # A year header is sometimes stored as a date (e.g.
+                    # 1/07/2008), which openpyxl returns as a datetime.
                     if 1990 <= v.year <= 2100:
                         year = v.year
                 if year:
@@ -321,13 +279,11 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
 
     def _parse_multi_year_lga_sheet(self, path: Path, value_label_hint: str) -> dict:
         """Return {lga_name: {year_str: value}} from a sheet shaped like
-        LGA(a) | Non-resident workers on-shift(b)
-               | 2008 | 2009 | ... | 2025
-        — LGA-label row and year row are found separately, not assumed
-        to be the same row (see _find_lga_and_year_rows). Rows with no
-        numeric value in any year column (e.g. a "— persons —" units
-        label row) are naturally skipped, not string-matched -- more
-        robust than matching a specific em-dash character.
+          LGA(a) | Non-resident workers on-shift(b)
+                 | 2008 | 2009 | ... | 2025
+        The label row and year row are located by _find_lga_and_year_rows.
+        Rows with no numeric value in any year column (such as the
+        "- persons -" units row) are skipped.
         """
         try:
             wb = openpyxl.load_workbook(path, data_only=True)
@@ -362,23 +318,19 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
             return {}
 
     def _parse_latest_year_sheet(self, path: Path, value_label_hint: str) -> dict:
-        """Return {ucl_name: {"lga": ..., "year": ..., "value": ...}}
-        -- the "value" is specifically the Non-resident workers on-shift
-        figure for the latest year, not ERP or the combined FTE figure.
+        """Return {ucl_name: {"lga": ..., "year": ..., "value": ...}}, where
+        "value" is the non-resident workers on-shift figure for the latest
+        year (not ERP and not the combined FTE estimate).
 
-        Confirmed real structure (differs from the simpler LGA-only
-        file): a 2-row header where row N has LGA(a) | Location(b) |
-        UCL(a) | 2024 | (blank) | (blank) | 2025 | (blank) | (blank),
-        and row N+1 sub-labels each year's 3-column group as Estimated
-        resident population | Non-resident workers on-shift | FTE
-        population estimate. Matching on "Location" instead of "UCL"
-        (an earlier version of this code did) finds the wrong column --
-        Location holds broad categories ("In town", "Rural areas"), UCL
-        holds the actual place names ("Injune", "Roma", "Toowoomba").
-        LGA and Location cells use Excel's usual "blank means same as
-        the row above" convention (only the first row of each LGA group
-        has a value) -- LGA is forward-filled here for context; not
-        needed for matching, since matching is by UCL name.
+        Sheet layout: a two-row header. Row N holds
+          LGA(a) | Location(b) | UCL(a) | 2024 | | | 2025 | |
+        and row N+1 labels each year's three columns as Estimated resident
+        population | Non-resident workers on-shift | FTE population
+        estimate. Place names ("Injune", "Roma", "Toowoomba") are in the
+        UCL column; the Location column holds broad categories ("In town",
+        "Rural areas"). LGA and Location cells are filled only on the first
+        row of each group, so the LGA is carried forward; matching is by
+        UCL name.
         """
         try:
             wb = openpyxl.load_workbook(path, data_only=True)

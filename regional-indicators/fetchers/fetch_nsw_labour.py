@@ -1,46 +1,38 @@
 """
-fetchers/fetch_nsw_labour.py
-------------------------------
-Fetches the NSW state-level unemployment rate for the Employment sheet's
-State section, completing the gap left after fetch_qrsis_labour.py (which
-only covers Queensland). Confirmed there's no equivalent QLD-style source
-for NSW -- ABS's Labour Force Survey (not SALM/QRSIS) is the real source,
-confirmed by exact match against the workbook's own history.
+regional-indicators/fetchers/fetch_nsw_labour.py
 
-METHODOLOGY (re-confirmed live 2026-09-30, not assumed from the earlier
-investigation -- ABS's "Labour Force Modernisation program" completed with
-the August 2026 release just 6 days before this was built, exactly the
-kind of change worth re-checking rather than trusting a weeks-old note):
-NSW's annual value = mean of the 12 monthly "Unemployment rate ; Persons ;"
-ORIGINAL series values (not Trend, not Seasonally Adjusted) from ABS Table
-002 "Labour force status by Sex, New South Wales". Re-verified against the
-live file: 2024 = 3.8988 (close to, not identical to, the 3.9039 value
-confirmed exactly weeks ago -- the small drift is ABS's own "Quarterly
-rebenchmarking of labour force statistics" note on the current release
-page, expected, not a bug); 2025 = 4.0950757583, consistent with the
-earlier finding that the exemplar's hand-typed "3.9" for NSW 2025 doesn't
-match any real source vintage.
+Fetches the NSW state-level unemployment rate for the State section of
+the Employment sheet.
 
-URL DISCOVERY: the direct URL ("<release-slug>/62020002.xlsx") is scraped
-from the "latest-release" page rather than guessed from a constructed
-month/year slug -- confirmed the page's own raw HTML link is a RELATIVE
-href ("/statistics/labour/.../aug-2026/62020002.xlsx"), no domain prefix;
-regex must match on that, not an absolute URL (same class of bug found
-and fixed in fetch_population_nrw.py's and fetch_population_ucl.py's
-scrape functions on 2026-09-29 -- this one was written with that lesson
-already applied, not discovered again the hard way). Falls back to a
-hardcoded last-known-good URL if the scrape fails, same pattern as this
-project's other self-updating fetchers.
+Source: ABS Labour Force, Australia, Table 002 "Labour force status by
+Sex, New South Wales" (62020002.xlsx). NSW has no equivalent of SALM or
+QRSIS (fetch_qrsis_labour.py covers Queensland only); the ABS Labour
+Force Survey is the source that reproduces the workbook's history.
 
-Table structure confirmed unchanged since the Modernisation program (same
-"Data1" sheet, same "Series Type" metadata row at row 3, same three
-columns Trend/Seasonally Adjusted/Original) -- checked directly against
-the live August 2026 file, not assumed just because the URL still worked.
+Methodology: annual value = mean of the 12 monthly "Unemployment rate ;
+Persons ;" values of the Original series (not Trend, not Seasonally
+Adjusted), complete years only. Values drift slightly between releases
+because ABS rebenchmarks the series quarterly: 2024 computes to 3.8988
+from the August 2026 release against 3.9039 from an earlier one. 2025
+computes to 4.0950757583; the reference workbook's hand-entered 3.9 for
+NSW 2025 does not correspond to any release.
 
-Output schema matches fetch_qrsis_labour.py's State region files exactly
-(section="State", indicators.unemployment = {label, values}), so
-update_employment.py picks this up with NO code changes -- it is already
-section-driven, not source-driven, confirmed by inspection of that file.
+URL discovery: the download URL ("<release-slug>/62020002.xlsx") is
+scraped from the latest-release page rather than built from a month and
+year. The page links the file with a relative href
+("/statistics/labour/.../aug-2026/62020002.xlsx", no domain), so the
+pattern matches the relative form. If the scrape fails, FALLBACK_URL is
+used.
+
+File layout: sheet "Data1", with a "Series Type" metadata row (row 3)
+that distinguishes the Trend, Seasonally Adjusted and Original columns.
+The layout is unchanged by the ABS Labour Force Modernisation program
+(completed with the August 2026 release).
+
+Output: cache/unemployment/regions/state_nsw.json, in the same schema as
+the State region files of fetch_qrsis_labour.py (section="State",
+indicators.unemployment = {label, values}). update_employment.py is
+driven by section rather than by source and reads it without change.
 """
 
 from __future__ import annotations
@@ -68,9 +60,9 @@ LATEST_RELEASE_PAGE = (
     "https://www.abs.gov.au/statistics/labour/employment-and-unemployment/"
     "labour-force-australia/latest-release"
 )
-# update each cycle if the live scrape below ever fails -- ABS republishes
-# this table under a new release-slug folder (e.g. "aug-2026") every month;
-# this hardcoded URL is only the fallback.
+# Update each cycle if the scrape fails. ABS republishes this table under
+# a new release-slug folder (for example "aug-2026") every month; this
+# URL is only the fallback.
 FALLBACK_URL = (
     "https://www.abs.gov.au/statistics/labour/employment-and-unemployment/"
     "labour-force-australia/aug-2026/62020002.xlsx"
@@ -78,13 +70,13 @@ FALLBACK_URL = (
 
 CACHE_KEY = "abs_nsw_labour_table002"
 REGION_LABEL = "NSW"
-INDICATOR_LABEL = "Smoothed Unemployment rate (%)"  # matches the label already used for every other Employment row
+INDICATOR_LABEL = "Smoothed Unemployment rate (%)"  # the label used for every other Employment row
 
 
 def _discover_current_url(log) -> str:
-    """Scrape the live 'latest-release' page for Table 002's real current
-    download link, rather than guessing a release slug. See module
-    docstring for the relative-URL regex lesson this already incorporates.
+    """Return the current download URL of Table 002, scraped from the
+    latest-release page, or FALLBACK_URL if the scrape fails. The page
+    uses a relative href, which the pattern matches.
     """
     try:
         resp = requests.get(LATEST_RELEASE_PAGE, timeout=30)
@@ -163,10 +155,9 @@ class NSWLabourFetcher(BaseFetcher):
             "source_url": url,
             "note": (
                 "Annual value = plain mean of the 12 monthly Original-series "
-                "unemployment rate readings (complete years only) -- NOT "
-                "Trend or Seasonally Adjusted. Confirmed exact match against "
-                "the workbook's own history for multiple years; NSW has no "
-                "SALM/QRSIS equivalent, ABS Labour Force is the real source."
+                "unemployment rate readings (complete years only), not the "
+                "Trend or Seasonally Adjusted series. NSW has no SALM/QRSIS "
+                "equivalent."
             ),
             "indicators": {"unemployment": {"label": INDICATOR_LABEL, "values": values}},
         }

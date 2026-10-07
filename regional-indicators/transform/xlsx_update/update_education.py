@@ -1,53 +1,42 @@
 """
 regional-indicators/transform/xlsx_update/update_education.py
-----------------------------------------------------------------
-Writes fetch_schools.py's cached output (ACARA School Profile, summed
-by town postcode) into the Exogenous sheet's Education section.
 
-Built 2026-10-07.
+Writes school enrolments and teaching staff into the Exogenous sheet.
 
-SHEET LAYOUT (confirmed against the real 2025 working file)
-    Education       | <years across this row>        <- section header row
-    Chinchilla      |                                <- town row, column A only
-    Full Time Equivalent Enrolments    | FTE Enrolments    | ...
-    Full Time Equivalent Teaching Staff| FTE Teaching Staff| ...
-    Dalby
+Input:  cache/schools/<slug>_schools.json, produced by
+        fetchers/fetch_schools.py (ACARA School Profile).
+Target: the "Education" section of the Exogenous sheet.
+
+Sheet layout:
+    Education                             <years>   section heading and year header
+    <town>                                          heading, column A only
+    Full Time Equivalent Enrolments       <values>
+    Full Time Equivalent Teaching Staff   <values>
+    <town>
     ...
-Like the Fuel section, Education has its OWN year header row (the
-"Education" row itself, 2008 onward), which is not the sheet's row 1.
-The year column is found from that row; if the new year isn't there
-yet it is appended straight after the last year in the row and the
-year written in as its header.
+The Education section has its own year header (the "Education" row),
+separate from row 1 of the sheet. The year column is located in that
+row; a new year is appended directly after the last year in the row
+and written into the header.
 
-A town's block is found by its town header row inside the Education
-section -- the row whose next two rows carry the two indicator labels,
-checked rather than assumed -- so the Rainfall and Fuel blocks that
-share the same town names further up and down the sheet are never
-touched. Towns that are fetched but have no block (Toowoomba's three
-sub-areas, Shepparton, Yarram) are listed once as expected.
+A town's block is located by its heading within the Education section
+only, and the two rows below it are verified against the expected
+labels. Blocks for the same towns in other sections of the sheet are
+never matched. Towns that are fetched but have no block are listed once
+at the end of the run.
 
-Each write goes through audit.py's cell, series and ground-truth
-historical checks. The cache carries every year from 2008, so the
-sheet's existing figures are compared with the source; where earlier
-years differ the result line says how many and the largest gap, but
-only the NEW year is written. (ACARA's back series has been restated
-for some towns since the early columns were filled in.)
+Only the latest year is written. The cache carries the full series
+from 2008, which is passed to the historical audit; earlier years on
+the sheet that differ from the source are summarised in the result line
+and are not modified.
 
-Uses xlwings (real Excel via COM automation), NOT openpyxl -- see
-base.py's docstring for why.
+The section helpers (_column_a, _find_year_column,
+_read_existing_series) mirror those in update_fuel.py.
 
-Tested 2026-10-07 against the real 2025 working file's cell contents
-through tests/fake_xlwings_sheet.py (a stand-in for the Excel sheet
-object): 24 written, all equal to the 2026 reference file. First real
-Excel run still to be confirmed.
-
-NOTE: the section-handling helpers here (_column_a, _find_year_column,
-_read_existing_series) are deliberately the same as update_fuel.py's.
-Worth pulling into one shared module once both are confirmed in real
-Excel -- see TODO.md.
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_education.py <path-to-Indicators_Data-Charts.xlsx> <cache/schools dir> [--visible]
+    python update_education.py <workbook.xlsx> <cache/schools dir> [--visible]
 """
 
 from __future__ import annotations
@@ -66,7 +55,7 @@ SECTION_HEADER  = "Education"
 FIRST_YEAR_COLUMN = 2          # column B
 CACHE_GLOB      = "*_schools.json"
 
-# (cache key, row label, rows below the town header row)
+# (cache key, row label, row offset below the town heading)
 INDICATORS = (
     ("fte_enrolments",     "Full Time Equivalent Enrolments",     1),
     ("fte_teaching_staff", "Full Time Equivalent Teaching Staff", 2),
@@ -76,7 +65,7 @@ NEXT_SECTION_HEADERS = ("Fuel", "Rainfall", "Business", "Crime",
 
 
 class NoEducationBlock(Exception):
-    """This town has no block in the Education section. Not an error."""
+    """Raised when a town has no block in the Education section. Not an error."""
 
 
 def _is_year(value) -> bool:
@@ -102,10 +91,12 @@ def _find_section_header_row(labels: list[str]) -> int:
 
 
 def _find_town_row(labels: list[str], header_row: int, town: str) -> int:
-    """Row of `town`'s header inside the Education section. The two
-    rows below it must carry the two indicator labels."""
+    """Return the row of `town`'s heading within the Education section.
+
+    The two rows below it must carry the two indicator labels.
+    """
     matches = []
-    for index in range(header_row, len(labels)):        # 0-based index == row index+1
+    for index in range(header_row, len(labels)):        # labels[index] is sheet row index + 1
         text = labels[index]
         if text in NEXT_SECTION_HEADERS:
             break
@@ -132,8 +123,9 @@ def _find_town_row(labels: list[str], header_row: int, town: str) -> int:
 
 
 def _find_year_column(sheet, header_row: int, year: int) -> int:
-    """Column for `year` in the Education section's own header row,
-    creating it straight after the last year in that row if needed."""
+    """Return the column for `year` in the Education section's header row,
+    appending one directly after the last year if needed.
+    """
     max_col = sheet.used_range.last_cell.column
     header = sheet.range((header_row, FIRST_YEAR_COLUMN), (header_row, max_col)).value
     if not isinstance(header, list):
@@ -176,10 +168,13 @@ def _read_existing_series(sheet, header_row: int, row: int, exclude_col: int) ->
 
 
 def write_education(sheet, cache_files: list[Path]) -> tuple[list[str], int, int]:
-    """Audit and write each cached town's latest year into its block.
-    Separate from the Excel open/save handling so it can be exercised
-    against any sheet-like object. Returns
-    (result lines, written count, flagged count)."""
+    """Audit and write the latest year for every cached town.
+
+    Separate from the Excel session handling so that it can be run
+    against any object with the xlwings Sheet interface (see
+    tests/fake_xlwings_sheet.py). Returns
+    (result lines, written count, flagged count).
+    """
     results: list[str] = []
     written_count = 0
     flagged_count = 0

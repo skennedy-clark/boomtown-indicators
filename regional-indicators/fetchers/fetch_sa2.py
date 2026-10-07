@@ -1,19 +1,38 @@
 """
-fetch_sa2.py -- Download ABS ASGS Edition 3 (2021) SA2 boundaries and load
-them into the project's DuckDB spatial geodatabase.
+regional-indicators/fetchers/fetch_sa2.py
 
-Fits into the existing boomtown-indicators fetcher pattern: one fetcher per
-data source, downloading raw data into cache/ before any transformation.
+Downloads the ABS ASGS Edition 3 (2021) SA2 boundaries and loads them
+into the project's DuckDB spatial database.
 
-Source: Australian Bureau of Statistics, ASGS Edition 3, July 2021 - June 2026
-        Digital boundary files (ESRI Shapefile, GDA2020)
-        https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-3-july-2021-june-2026/access-and-downloads/digital-boundary-files
+Source:
+    Australian Bureau of Statistics, ASGS Edition 3, July 2021 - June 2026,
+    digital boundary files (ESRI Shapefile, GDA2020).
+    https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-3-july-2021-june-2026/access-and-downloads/digital-boundary-files
+
+Output:
+    cache/sa2/SA2_2021_AUST_GDA2020.zip   raw ABS download, ~48 MB, cached
+    cache/sa2/SA2_2021_AUST_GDA2020.shp   extracted shapefile and sidecars
+    geodata.duckdb                        table sa2_boundaries, filtered
+                                          to the requested states
+
+Notes:
+    - ASGS Edition 3 (2021) is the stable release through June 2026 and
+      is a completed dataset. Edition 4 (2026) boundaries are being
+      published progressively from 2026. This fetcher stays on the 2021
+      edition until Edition 4 is complete across all structures; revisit
+      it then.
+    - ABS state codes: 1=NSW, 2=VIC, 3=QLD, 4=SA, 5=WA, 6=TAS, 7=NT,
+      8=ACT, 9=Other Territories.
+    - This fetcher covers SA2 only. LGA and UCL are separate ABS products
+      (Non ABS Structures, and SUA/UCL/SOS/SOSR respectively) with their
+      own file naming; they belong in separate fetchers (fetch_lga.py,
+      fetch_ucl.py) that follow the same pattern.
 
 Usage:
-    # Fetch SA2 boundaries for QLD + NSW (default) and load into DuckDB
+    # Fetch SA2 boundaries for QLD and NSW (default) and load into DuckDB
     python fetch_sa2.py
 
-    # Fetch for a specific state, several states, or all of Australia
+    # One state, several states, or all of Australia
     python fetch_sa2.py --states QLD
     python fetch_sa2.py --states QLD,NSW,VIC
     python fetch_sa2.py --states ALL
@@ -21,26 +40,8 @@ Usage:
     # Re-download even if a cached copy exists
     python fetch_sa2.py --force
 
-    # Just refresh the cached shapefile without touching the database
+    # Refresh the cached shapefile without touching the database
     python fetch_sa2.py --skip-load
-
-Output:
-    cache/sa2/SA2_2021_AUST_GDA2020.zip   (raw ABS download, ~48 MB, cached)
-    cache/sa2/SA2_2021_AUST_GDA2020.shp   (extracted shapefile + sidecars)
-    geodata.duckdb -> table sa2_boundaries (filtered to requested states)
-
-Notes:
-    - ASGS Edition 3 (2021) is the current stable release through June 2026
-      and is a completed dataset. Edition 4 (2026 vintage) boundaries are
-      being rolled out progressively from 2026 and are not fully published
-      yet -- stay on 2021 for now and revisit fetch_sa2.py when Edition 4
-      is complete across all structures.
-    - ABS state codes: 1=NSW, 2=VIC, 3=QLD, 4=SA, 5=WA, 6=TAS, 7=NT, 8=ACT,
-      9=Other Territories.
-    - This fetcher targets SA2 only. LGA and UCL are separate ABS products
-      (Non ABS Structures, and SUA/UCL/SOS/SOSR respectively) with their
-      own file naming -- add fetch_lga.py / fetch_ucl.py following the same
-      pattern when those are needed, rather than overloading this one.
 """
 
 import argparse
@@ -56,7 +57,7 @@ ABS_SA2_URL = (
     "downloads/digital-boundary-files/SA2_2021_AUST_SHP_GDA2020.zip"
 )
 
-# ABS state/territory codes as used in the STE_CODE21 field
+# ABS state/territory codes as used in the STE_CODE21 field.
 STATE_CODES = {
     "NSW": "1", "VIC": "2", "QLD": "3", "SA": "4", "WA": "5",
     "TAS": "6", "NT": "7", "ACT": "8", "OT": "9",
@@ -67,10 +68,11 @@ DB_PATH = Path("geodata.duckdb")
 
 
 def download_sa2_shapefile(force: bool = False) -> Path:
-    """Download the national SA2 2021 GDA2020 shapefile zip from ABS.
+    """Download the national SA2 2021 GDA2020 shapefile zip from the ABS.
 
-    Cached in cache/sa2/ so re-runs don't re-download the ~48 MB file
-    unless force=True. Returns the path to the extracted .shp file.
+    The zip is cached in cache/sa2/, so the ~48 MB file is downloaded
+    again only when force=True. Returns the path to the extracted .shp
+    file.
 
     Example:
         >>> shp = download_sa2_shapefile()
@@ -102,8 +104,9 @@ def load_into_duckdb(shp_path: Path, states: list) -> None:
     """Load the SA2 shapefile into geodata.duckdb, filtered to the given
     states, replacing the sa2_boundaries table.
 
-    Requires the DuckDB spatial extension (installed automatically on
-    first use -- needs network access the first time only).
+    Requires the DuckDB spatial extension, which is installed
+    automatically on first use (network access is needed the first time
+    only).
 
     Example:
         >>> load_into_duckdb(Path("cache/sa2/SA2_2021_AUST_GDA2020.shp"), ["QLD", "NSW"])

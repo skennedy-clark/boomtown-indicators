@@ -1,52 +1,38 @@
 """
 regional-indicators/fetchers/fetch_population_erp.py
--------------------------------------------------------
-Fetches the main SA2-level "Population (ERP)" figure -- the primary
-indicator row in each town's block on the Population sheet, distinct
-from fetch_population_ucl.py's UCL-level figure and
-fetch_population_nrw.py's non-resident-worker figure.
 
-LIVE-API VERSION (2026-09-16) -- replaces the earlier manual-file-only
-fallback. Confirmed real values, read directly from the QRSIS wizard's
-live HTML by Steve:
-  collgrp_id = "1"     (Population group)
-  coll_id    = "1961"  ("Population (ERP)(a) persons only", 1991-2025,
-                         ASGS 2021 boundaries -- the current version;
-                         there's also an older ASGS 2016 version at
-                         coll_id 1298 and an ASGS 2011 one, deliberately
-                         not used)
+Fetches SA2-level estimated resident population (ERP): the "Population
+(ERP)" row in each town's block of the Population sheet. Town (UCL)
+figures come from fetch_population_ucl.py, non-resident workers from
+fetch_population_nrw.py and LGA figures from fetch_population_erp_lga.py.
 
-Reuses the exact QRSIS wizard mechanism proven working in
-fetch_qgso_housing.py (same _q() POST-encoding, same lxml HTML parsing
-for unclosed <OPTION> tags, same udqctl_id extraction, same 6-step
-wizard flow: select collection -> series -> time period -> region type
--> regions -> submit). Deliberately duplicated here rather than shared
-via a common module for now -- refactoring the proven housing fetcher
-to share code carries real risk of breaking something that already
-works, with no way to test that live from this environment. Worth
-extracting into a shared QRSISFetcherMixin once this fetcher is ALSO
-confirmed working live -- see TODO.md.
+Source: QGSO Queensland Regional Database (QRSIS), queried through its
+web wizard.
+    collgrp_id = "1"     Population group
+    coll_id    = "1961"  "Population (ERP)(a) persons only", 1991 to
+                         the latest year, ASGS 2021 boundaries.
+                         Collections on ASGS 2016 (coll_id 1298) and
+                         ASGS 2011 boundaries also exist and are not
+                         used.
 
-*** NOT YET TESTED against the live QRSIS endpoint. *** collgrp_id and
-coll_id are confirmed real (read directly from the live wizard HTML),
-but: the exact series name(s) this collection returns, and the correct
-from_date/to_date/period/date_fmt values for an ANNUAL (not quarterly)
-series are genuinely unknown -- housing's time-period format strings
-are collection-specific, and ERP is likely annual/financial-year based
-on the source catalog ("Financial Year" frequency), unlike housing's
-quarterly data. Best-effort values below; expect the first live run to
-need adjustment, and read its logged "Available series" output to fix
-the exact series name if it doesn't match on the first try.
+The wizard is driven in the same way as in fetch_qgso_housing.py:
+interleaved p_names/p_values POST encoding (_q), lxml parsing for
+unclosed <OPTION> tags, udqctl_id taken from the redirect, and the same
+six steps (collection, series, time period, region type, regions,
+submit). The shared logic is duplicated in the two fetchers and has not
+been factored into a common module.
 
-If the live query fails for any reason, falls back to the previously-
-working manual-file path: reads a manually-assembled
-cache/qgso_and_bom_{YEAR}.xlsx if present, documented in
+The series is annual (financial year). The latest available year is
+read from the wizard's time-period page.
+
+Fallback: if the live query fails, a manually assembled export at
+cache/qgso_and_bom_<year>.xlsx is read if present. See
 docs/manual_processes.md.
 
-SUPPORTED_STATES = ["QLD"] -- this is QRSIS-sourced, QLD only. NSW/VIC
-towns (Narrabri, Shepparton, Yarram) need a separate ABS-based fetcher
--- see the naming-collision TODO note (this file's name was originally
-planned for that ABS fetcher).
+Queensland only (SUPPORTED_STATES = ["QLD"]). SA2 figures for towns in
+other states require a separate ABS-based fetcher.
+
+Output: cache/population/<slug>_population_erp.json
 """
 
 from __future__ import annotations
@@ -72,15 +58,15 @@ except ImportError:
     raise ImportError("pip install requests openpyxl beautifulsoup4 lxml")
 
 
-# ── QRSIS constants (same system as fetch_qgso_housing.py) ─────────────────
+# ── QRSIS constants (as in fetch_qgso_housing.py) ──────────────────────────
 
 BASE_URL     = "https://statistics.qgso.qld.gov.au/pls/qis_public/"
 PUBLIC_USER  = "edtert"
 ACCESS_LEVEL = "85"
 
-# Confirmed real values, read from the live wizard HTML (2026-09-16):
+# Collection identifiers, as given in the wizard's HTML
 COLLGRP_ID = "1"    # Population group
-COLL_ID    = "1961" # "Population (ERP)(a) persons only", 1991-2025, ASGS 2021
+COLL_ID    = "1961" # "Population (ERP)(a) persons only", from 1991, ASGS 2021
 
 HEADERS = {
     "User-Agent": (
@@ -92,19 +78,14 @@ HEADERS = {
     "Origin":  "https://statistics.qgso.qld.gov.au",
 }
 
-# CORRECTED 2026-09-17 against a real manual walkthrough of the QRSIS
-# wizard (Steve stepped through every page and captured the actual HTML).
-# Both previous guesses were wrong in a way that silently broke every
-# region match, not just Wallumbilla's -- confirmed every SA2 code this
-# project needs (Roma, Roma Surrounds, Chinchilla, Wambo, all of them) is
-# genuinely present in the real region list, so this was always a
-# request-format bug, never a data-availability one.
-#   - date_format: the real hidden field value is "Y2", not "Y1".
-#   - from_date/to_date: the real <select> only offers plain year numbers
-#     ("2025", "2024", ... "1991") -- "Year Ended 30 Jun YYYY" never
-#     matched anything real, and likely broke the session silently for
-#     every step after it, which is exactly the symptom seen (empty
-#     region list, no visible error).
+# Time-period fields, as the wizard submits them:
+#   - date_format: the hidden field value for this collection is "Y2".
+#   - from_date/to_date: the <select> offers plain year numbers
+#     ("2025", "2024", ... "1991"). Any other form (for example
+#     "Year Ended 30 Jun YYYY") invalidates the session without an
+#     error, and the region list then comes back empty.
+# TO_DATE is a default; the newest year offered is read from the page
+# (see _discover_max_to_date).
 FROM_DATE = "2001"
 TO_DATE   = str(datetime.now().year + 1)
 PERIOD    = "Financial Year"
@@ -118,9 +99,10 @@ POP_SHEET_NAME_CANDIDATES = ["Pop", "Population", "Pop sheet"]
 
 
 def _q(*pairs) -> list[tuple]:
-    """Build interleaved p_names/p_values list from alternating (name, value)
-    args -- Oracle PL/SQL WebTK reads these as parallel arrays, not a dict.
-    Identical helper to fetch_qgso_housing.py's."""
+    """Build the interleaved p_names/p_values list from alternating
+    (name, value) arguments. The Oracle PL/SQL Web Toolkit reads these as
+    parallel arrays in submission order, so a dict cannot be used.
+    """
     result = []
     it = iter(pairs)
     for name in it:
@@ -131,9 +113,11 @@ def _q(*pairs) -> list[tuple]:
 
 
 def _parse_options(html: str, select_name: str) -> list[str]:
-    """Parse <option> text values from a named <select>. MUST use lxml --
-    html.parser merges unclosed <OPTION> tags into one string (confirmed
-    real quirk in fetch_qgso_housing.py)."""
+    """Return the <option> text values of a named <select>.
+
+    Uses the lxml parser: QRSIS serves unclosed <OPTION> tags, which
+    html.parser merges into a single string.
+    """
     soup = BeautifulSoup(html, "lxml")
     for sel in soup.find_all("select", {"name": select_name}):
         opts = [o.get_text(strip=True) for o in sel.find_all("option")]
@@ -202,13 +186,9 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         matched_regions, sa2_name_by_code = self._match_regions(sa2_map, avail_regions)
         if not matched_regions:
             raise RuntimeError("No SA2 regions matched in QRSIS region list")
-        # Diagnostic: the previous run showed sa2_name coming back empty
-        # for every town whose real SA2 name differs from town.name
-        # (Dalby, Dysart, Toowoomba's sub-areas, etc.), while towns where
-        # they happen to be identical (Roma, Chinchilla...) looked fine --
-        # which could mean those "worked" by accident via a fallback, not
-        # because the real capture succeeded. Log the actual dict so this
-        # is confirmed either way, not guessed at again.
+        # Log the SA2 names read from the region list. They differ from
+        # town.name for several towns (Dalby, Dysart, the Toowoomba
+        # sub-areas) and determine which workbook block is written.
         self.log.info(f"  sa2_name_by_code captured: {sa2_name_by_code}")
         self._select_regions(session, udqctl_id, matched_regions)
         self.log.info(f"  Regions selected: {len(matched_regions)}")
@@ -255,31 +235,25 @@ class QGSOPopulationERPFetcher(BaseFetcher):
                     "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
-        # This response IS the next page (Time Periods) -- Oracle PL/SQL
-        # WebTK returns each next screen directly from the POST, no
-        # separate fetch needed. Returned so the real available date
-        # range can be read from it rather than guessed.
+        # The response to this POST is the next wizard page (Time Periods);
+        # it is returned so that the available date range can be read
+        # from it.
         return resp.text
 
     def _discover_max_to_date(self, time_periods_html: str) -> str | None:
-        """Parse the real 'To Date' dropdown out of the Time Periods page
-        and return its newest (default-selected) option -- confirmed
-        real structure (2026-09-17 walkthrough): a plain year number
-        <select>, most-recent-first, with the newest marked
-        selected="selected". Reading this directly avoids ever
-        requesting a year QRSIS doesn't actually have (confirmed cause
-        of a full session failure, not a graceful "return what's
-        there") -- more robust than computing a guessed future year,
-        and self-updating every year without a code change.
+        """Return the newest option of the "To Date" dropdown on the Time
+        Periods page.
 
-        From Date and To Date both use the generic <select
-        name="p_values"> -- distinguished only by a preceding hidden
-        <input name="p_names" value="to_date"> marker, not by the
-        select's own name/id. Naively taking "the first select with
-        digit options" grabs From Date instead (confirmed real bug,
-        caught by testing against the real page -- From Date defaults
-        to the OLDEST year, 1991, which this function would otherwise
-        wrongly report as the max).
+        The dropdown is a <select> of plain year numbers, most recent first,
+        with the newest marked selected. Requesting a year that QRSIS does
+        not hold fails the whole session, so the available year is read
+        from the page and not computed.
+
+        From Date and To Date both use <select name="p_values">; they are
+        distinguished only by the preceding hidden
+        <input name="p_names" value="to_date">. From Date comes first and
+        defaults to the oldest year, so the select is identified by that
+        marker and not by position.
         """
         soup = BeautifulSoup(time_periods_html, "lxml")
 
@@ -306,11 +280,11 @@ class QGSOPopulationERPFetcher(BaseFetcher):
     def _set_time_period(self, session, udqctl_id, time_periods_html: str = ""):
         to_date = self._discover_max_to_date(time_periods_html) if time_periods_html else None
         if to_date:
-            self.log.info(f"  Discovered real max To Date from the page: {to_date}")
+            self.log.info(f"  Latest To Date option on the page: {to_date}")
         else:
             to_date = TO_DATE
             self.log.warning(
-                f"  Could not discover the real To Date option from the page -- "
+                f"  Could not read the To Date option from the page -- "
                 f"falling back to computed guess {to_date!r}, which may not "
                 f"be a valid option and could break this step silently."
             )
@@ -340,24 +314,23 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         self._warn_if_qrsis_error(resp2.text, "Region type step")
 
     def _warn_if_qrsis_error(self, text: str, step_name: str):
-        # Confirmed real false positive (2026-09-16): standard HTML frameset
-        # fallback text ("Your browser does not support this functionality...
-        # upgrade your browser") contains generic words like "invalid" in a
-        # completely innocuous context. Look for QRSIS's own actual error
-        # markers instead of generic English words.
+        # The frameset fallback text served to every client ("Your browser
+        # does not support this functionality...") contains words such as
+        # "invalid", so errors are detected by QRSIS's own error markers
+        # and not by generic words.
         if re.search(r'error_msg\s*=\s*[\'"][^\'"]+[\'"]|ORA-\d{5}|no data found|no rows returned', text, re.IGNORECASE):
             snippet = re.sub(r'\s+', ' ', text)[:500]
             self.log.warning(f"  {step_name} response looks like a genuine QRSIS/Oracle error: {snippet}")
 
     def _match_regions(self, sa2_map, available) -> tuple[list[str], dict[str, str]]:
-        """Returns (matched region strings, {sa2_code: display_name}).
-        The display name is parsed out of the full region string (e.g.
+        """Return (matched region strings, {sa2_code: display_name}).
+
+        The display name is parsed from the full region string, e.g.
         "SA2/317011456 - Toowoomba - Central (01/07/2011 - 30/06/2026)"
-        -> "Toowoomba - Central") -- needed downstream so writes target
-        the real SA2 label, not town.name, which differs for several
-        towns (confirmed: Toowoomba's three sub-areas each need their
-        own distinct SA2 name, none of which match towns.toml's name
-        field directly)."""
+        -> "Toowoomba - Central". Writes target the SA2 label, which
+        differs from town.name for several towns (each of the three
+        Toowoomba sub-areas has its own SA2 name).
+        """
         if available:
             self.log.info(f"  First available region: {available[0][:80]}")
         matched = []
@@ -398,10 +371,8 @@ class QGSOPopulationERPFetcher(BaseFetcher):
             BASE_URL + "QIS1110W$UDQCTL1.ProcessActions",
             data=_q("udqctl_id", udqctl_id, "coll_id", COLL_ID, "error_msg", "",
                     "ser_sort_col", "Sort Number", "reg_sort_col", "Region Code",
-                    # Confirmed real default (2026-09-17 walkthrough) --
-                    # requesting the OTHER style was never actually
-                    # confirmed to work; this one produced real, correct
-                    # output.
+                    # The wizard's default display style, which the
+                    # output parser expects.
                     "display_style", "For each Series display Time Period by Region",
                     "op_mode", "QRSIS Query"),
             timeout=120,
@@ -428,14 +399,12 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         return None
 
     def _parse_output_html(self, html: str) -> dict:
-        """Returns {region_code: {year: value}}. Confirmed real structure
-        (2026-09-17 manual walkthrough): one table headed 'Period' in its
-        first column, with region labels (e.g. 'SA2/307011176 - Roma',
-        'LGA/33610 - Goondiwindi (R)') as the remaining column headers,
-        and one row per year. This REPLACES an earlier version of this
-        parser that assumed a completely different, region-grouped
-        structure -- that assumption was never actually confirmed against
-        real output; this one is.
+        """Return {region_code: {year: value}}.
+
+        Output layout: one table headed "Period" in its first column, with
+        region labels (e.g. "SA2/307011176 - Roma",
+        "LGA/33610 - Goondiwindi (R)") as the remaining column headers and
+        one row per year.
         """
         result: dict[str, dict] = {}
         soup = BeautifulSoup(html, "lxml")
@@ -477,16 +446,14 @@ class QGSOPopulationERPFetcher(BaseFetcher):
         return result
 
     def _aggregate(self, series_name: str, raw: dict, sa2_map: dict, sa2_name_by_code: dict) -> dict:
-        """Returns {town.slug: {"year_vals": {...}, "sa2_name": "..."}} --
-        sa2_name travels alongside the values so the eventual workbook
-        write can target the real SA2 label (see _match_regions).
+        """Return {town.slug: {"year_vals": {...}, "sa2_name": "..."}}.
 
-        raw is now {region_code: {year_int: value}} directly -- the
-        parser already resolves year and value per region, no more
-        per-series lookup needed here (this collection only ever
-        selects one series, confirmed: 'Persons (Persons)'). series_name
-        is kept as a parameter for interface stability/logging even
-        though it's no longer used to look anything up.
+        sa2_name is carried with the values so that the workbook writer can
+        target the SA2 label (see _match_regions).
+
+        raw is {region_code: {year_int: value}}; the collection has a
+        single series ("Persons (Persons)"). series_name is retained in the
+        signature for logging and is not used for lookup.
         """
         result: dict[str, dict] = {}
         for code, towns in sa2_map.items():
@@ -516,13 +483,9 @@ class QGSOPopulationERPFetcher(BaseFetcher):
                 continue
 
             year_vals = entry["year_vals"]
-            # town.sa2_name (from towns.toml) is now authoritative when
-            # present -- more reliable than parsing it out of live HTML,
-            # which just proved fragile in practice. The live-parsed
-            # value (entry["sa2_name"]) is only a fallback for a town
-            # not yet mapped in the toml -- a new town can still be
-            # added by extending the toml alone, this just makes an
-            # explicit mapping win once one exists.
+            # town.sa2_name from towns.toml takes precedence when present.
+            # The name parsed from the region list (entry["sa2_name"]) is
+            # the fallback for a town with no sa2_name configured.
             sa2_name = town.sa2_name or entry.get("sa2_name") or town.name
             if not town.sa2_name and entry.get("sa2_name") and entry["sa2_name"] != town.name:
                 self.log.info(
@@ -547,7 +510,7 @@ class QGSOPopulationERPFetcher(BaseFetcher):
             self.log.info(f"  {town.name}: {latest_year} = {year_vals[latest_year]:,}")
             self.result.towns_ok.append(town.name)
 
-    # ── Manual-file fallback (previously-working path, kept as-is) ─────────
+    # ── Manual-file fallback ───────────────────────────────────────────────
 
     def _fetch_manual_fallback(self, towns):
         path = self._find_assembled_file()

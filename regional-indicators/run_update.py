@@ -1,20 +1,20 @@
 """
 regional-indicators/run_update.py
-----------------------------------
-Master orchestrator for the regional-indicators data pipeline.
 
-Usage:
-    python run_update.py                    # run all fetchers
-    python run_update.py --only income      # run one fetcher by name
-    python run_update.py --skip crime       # skip one fetcher
-    python run_update.py --towns Roma Dalby # only process specific towns
-    python run_update.py --force            # ignore cache, re-download everything
-    python run_update.py --validate         # validate towns.toml only, no fetching
-    python run_update.py --list-cache       # show what's in the cache index
+Runs the data fetchers.
 
-Run from the regional-indicators/ directory:
-    cd regional-indicators
-    python run_update.py
+Each fetcher downloads one source and writes per-town JSON files to
+cache/. The workbook writers in transform/xlsx_update/ read those files.
+
+Usage (from the repository root):
+    python regional-indicators/run_update.py                    # all fetchers
+    python regional-indicators/run_update.py --only income      # selected fetchers
+    python regional-indicators/run_update.py --skip crime_qps   # all but these
+    python regional-indicators/run_update.py --towns Roma Dalby # selected towns
+    python regional-indicators/run_update.py --force            # ignore the cache
+    python regional-indicators/run_update.py --validate         # check towns.toml and exit
+    python regional-indicators/run_update.py --list-cache       # list cached files and exit
+    python regional-indicators/run_update.py --dry-run          # list what would run
 """
 
 from __future__ import annotations
@@ -30,9 +30,8 @@ from config import get_config, get_cache, Config
 from logger import get_logger
 from fetchers.base import FetchResult
 
-# ── Register all fetchers here ─────────────────────────────────────────────────
-# Add new fetchers to this dict as they are built.
-# key = short name used with --only / --skip flags
+# ── Fetcher registry ───────────────────────────────────────────────────────────
+# Key: the name used with --only and --skip.
 
 from fetchers.fetch_income import ATOIncomeFetcher
 from fetchers.fetch_income_table6 import ATOTable6Fetcher
@@ -57,33 +56,21 @@ FETCHER_REGISTRY: dict[str, type] = {
     "income":         ATOIncomeFetcher,
     "income_table6":  ATOTable6Fetcher,
     "population_ucl": QGSOPopulationUCLFetcher,
-    "population_nrw": QGSOPopulationNRWFetcher,  # Surat/Bowen Basin non-resident
-                                                   # workers -- live-tested 2026-09-29
-    "population_erp": QGSOPopulationERPFetcher,  # main SA2/LGA ERP row -- live QRSIS
-                                                   # API since 2026-09-16, no manual file
-                                                   # needed (this comment was stale --
-                                                   # corrected 2026-09-29 after re-testing)
-    "population_erp_lga": ABSPopulationERPLGAFetcher,  # LGA-section "Population (ERP)" row, all 7 LGAs
-                                                         # incl. Brisbane + Narrabri -- ABS Data API, built 2026-10-06
+    "population_nrw": QGSOPopulationNRWFetcher,  # non-resident workers, Surat and Bowen Basins (QGSO)
+    "population_erp": QGSOPopulationERPFetcher,  # SA2 estimated resident population (QGSO QRSIS)
+    "population_erp_lga": ABSPopulationERPLGAFetcher,  # LGA estimated resident population (ABS Data API)
     "crime_qps":      QPSCrimeFetcher,
-    "crime_bocsar":   BOCSARCrimeFetcher,   # NSW; template for future crime_vic/tas/nt/wa
+    "crime_bocsar":   BOCSARCrimeFetcher,   # New South Wales (BOCSAR)
     "salm_unemployment": SALMUnemploymentFetcher,
-    "qrsis_labour":      QRSISLabourFetcher,   # QLD LGA + Queensland benchmark, companion to salm_unemployment
-    "nsw_labour":        NSWLabourFetcher,     # NSW State row, completing Employment's State section -- built 2026-09-30
-    "narrabri_approvals": NarrabriApprovalsFetcher,  # Narrabri (LGA) building approvals, Housing sheet -- built 2026-10-01
-    "narrabri_sales_rent": NarrabriSalesRentFetcher,  # Narrabri (LGA) sales/rent, Housing sheet -- built 2026-10-01
+    "qrsis_labour":      QRSISLabourFetcher,   # Queensland LGAs and state (QGSO QRSIS)
+    "nsw_labour":        NSWLabourFetcher,     # New South Wales state (ABS Labour Force)
+    "narrabri_approvals": NarrabriApprovalsFetcher,  # Narrabri LGA building approvals (ABS Data API)
+    "narrabri_sales_rent": NarrabriSalesRentFetcher,  # Narrabri LGA sales and rent (NSW DCJ)
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,
     "business":          ABSBusinessFetcher,
-    "fuel":              RACQFuelFetcher,      # Exogenous sheet Fuel section -- RACQ Annual Fuel Price Report PDF, built 2026-10-06
-    "schools":           ACARASchoolsFetcher,  # Exogenous sheet Education section -- ACARA School Profile, built 2026-10-07
-    # "population":   ABSPopulationFetcher,       # TODO
-    # "unemployment": ABSLabourFetcher,           # TODO
-    # "housing":      QGSOHousingFetcher,         # TODO (QLD only, semi-manual)
-    # "crime":        QPSCrimeFetcher,            # TODO (QLD only)
-    # "crime_vic":    VicPolCrimeFetcher,         # TODO (VIC only)
-    # "rainfall":     BOMRainfallFetcher,         # TODO
-    # "fuel":         FuelPriceFetcher,           # TODO
+    "fuel":              RACQFuelFetcher,      # petrol prices (RACQ Annual Fuel Price Report)
+    "schools":           ACARASchoolsFetcher,  # school enrolments and staff (ACARA School Profile)
 }
 
 
@@ -277,8 +264,7 @@ def main():
 
             # Apply --towns filter if specified
             if args.towns:
-                # Patch config to only include specified towns
-                # (simple approach: filter in applicable_towns)
+                # Restrict the run to the named towns.
                 original_study = fetcher.config.study_towns
                 specified = args.towns
                 fetcher.config.study_towns = lambda: [
@@ -302,7 +288,7 @@ def main():
     summary = build_run_summary(results, elapsed)
     log.info(summary)
 
-    # Write summary to a separate file for easy access
+    # Also write the summary to its own file.
     summary_path = Path(__file__).parent / "logs" / f"{ts}_summary.txt"
     summary_path.write_text(summary, encoding="utf-8")
     log.info(f"Summary written to: {summary_path}")

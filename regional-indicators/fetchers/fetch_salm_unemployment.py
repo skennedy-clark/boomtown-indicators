@@ -1,67 +1,69 @@
 """
-fetchers/fetch_salm_unemployment.py
--------------------------------------
-Fetches Small Area Labour Markets (SALM) unemployment rates from the
-Department of Employment and Workplace Relations (DEWR).
+regional-indicators/fetchers/fetch_salm_unemployment.py
 
-Sources (both are quarterly, published ~3 months after the reference quarter):
-  SA2: "SALM Smoothed SA2 Datafiles (ASGS 2021)"  -- cache/salm_smoothed_sa2.csv
-  LGA: "SALM Smoothed LGA Datafiles (ASGS 2025)"  -- cache/salm_smoothed_lga.csv
+Fetches Small Area Labour Markets (SALM) smoothed unemployment rates from
+the Department of Employment and Workplace Relations (DEWR) and writes
+annual rates per town and per Employment-sheet region.
+
+Sources (both quarterly, published about three months after the
+reference quarter):
+  SA2: "SALM Smoothed SA2 Datafiles (ASGS 2021)" - cache/salm_smoothed_sa2.csv
+  LGA: "SALM Smoothed LGA Datafiles (ASGS 2025)" - cache/salm_smoothed_lga.csv
   Page: https://www.dewr.gov.au/employment-research/small-area-labour-markets
 
-Both CSVs share a layout: a 3-row block per region (unemployment level,
-labour force, unemployment RATE), quarterly columns "Dec-10", "Mar-11" ...
+File layout: both CSVs have a three-row block per region (unemployment
+level, labour force, unemployment rate) and quarterly columns "Dec-10",
+"Mar-11", ...
 
-ANNUAL VALUE = plain arithmetic mean of the 4 quarterly smoothed rates in the
-calendar year (Mar, Jun, Sep, Dec), UNROUNDED. VERIFIED 2026-09-28 against the
-real workbook, not assumed: e.g. Chinchilla 2012's quarters are 1.8/1.7/1.7/1.5
-= 1.675 and the workbook holds exactly 1.675; Tara 2025 = 11.2 matches to the
-digit. Tested alternatives -- December-quarter only matched 12% of history,
-mean-of-4 matched 68-69%. The residual mismatches are VINTAGE, not method:
-worst in 2019-2023 (~0.15pp average) where SALM re-estimated its history at the
-2016->2021 ASGS changeover, back to 13-14 of 15 matching in 2024-25. (The
-"double-smoothing" worry -- averaging already-4-quarter-averaged values -- is
-real in principle but is simply the workbook's own long-standing convention.)
+Annual value: the arithmetic mean of the four quarterly smoothed rates
+in the calendar year (Mar, Jun, Sep, Dec). This reproduces the reference
+workbook: Chinchilla 2012 has quarters 1.8/1.7/1.7/1.5 = 1.675 and the
+workbook holds 1.675; Tara 2025 = 11.2 matches. The mean of four
+quarters matches 68-69% of the workbook's history, against 12% for the
+December quarter alone. The remaining differences are due to data
+vintage, not method: they are largest in 2019-2023 (about 0.15
+percentage points on average), where SALM re-estimated its history at
+the ASGS 2016 to 2021 changeover, and 13-14 of 15 regions match in
+2024-25. Averaging values that are already four-quarter smoothed is the
+workbook's long-standing convention.
 
-COMPLETE YEARS ONLY (added 2026-09-28): a year needs ALL FOUR quarters. Before
-this the fetcher averaged however many quarters existed, so a partial current
-year (e.g. 2026 with only Mar-26) or the first year of the series (Dec-10
-alone) would silently become a one-quarter "annual" figure -- same class of bug
-as the partial-year problem in Crime.
+Complete years only: a year is produced only when all four quarters are
+present. A partial current year, or the first year of the series (Dec-10
+alone), would otherwise yield an annual figure from fewer quarters.
 
-TWO OUTPUTS:
-  1. Per-TOWN files  cache/unemployment/{town.slug}_salm.json  (SA2 level).
-     FORMAT AND NAMES UNCHANGED -- transform/to_csv.py and
-     transform/booklet/pages/data_page.py read these directly
-     (indicators.unemployment = flat {year: value}). Do not change them
-     without changing those consumers.
-  2. Per-REGION files cache/unemployment/regions/{sa2|lga}_{slug}.json, one
-     for every row of the workbook's Employment sheet that SALM can supply
-     (15 SA2 rows incl. Toowoomba - East and Narrabri Surrounds, which are
-     not "towns", and 5 LGA rows). Read by update_employment.py.
+Output:
+  1. Per-town files cache/unemployment/{town.slug}_salm.json (SA2
+     level), with indicators.unemployment as a flat {year: value}
+     mapping. transform/to_csv.py and
+     transform/booklet/pages/data_page.py read these directly, so the
+     format and names must not change without changing those consumers.
+  2. Per-region files cache/unemployment/regions/{sa2|lga}_{slug}.json,
+     one for every row of the workbook's Employment sheet that SALM can
+     supply: 15 SA2 rows (including Toowoomba - East and Narrabri
+     Surrounds, which are not towns) and 5 LGA rows. Read by
+     update_employment.py.
 
-REGIONS ARE MATCHED BY CODE, THEN NAME-CHECKED. If SALM's own name for a code
-does not match the workbook row's label, that region is REFUSED rather than
-written -- a drifted/reassigned code must fail loudly, not put the wrong
-region's numbers in a row (cf. the Wallumbilla QPS division lesson).
+Region matching: regions are matched by code and then checked by name.
+If the SALM name for a code does not match the workbook row label, the
+region is refused rather than written, so that a code reassigned between
+ASGS editions fails visibly instead of placing another region's figures
+in the row.
 
-NOT COVERED HERE: the NSW and "Queensland (benchmark)" state rows. SALM does not
-publish states. Their values (NSW: long decimals like 5.2707 = a monthly
-average; Queensland from 2010: multiples of 0.025 = a mean of four 1-decimal
-quarters) look like ABS Labour Force Survey figures -- source still to be
-confirmed with Steve.
+Not covered: the NSW and "Queensland (benchmark)" state rows. SALM does
+not publish state figures. Those rows are supplied by
+fetch_nsw_labour.py and fetch_qrsis_labour.py.
 
-CACHE-ONLY LGA FILE: the DEWR site returned 503 to automated requests during
-development, so the LGA CSV is expected to be placed manually at
-cache/salm_smoothed_lga.csv (download from the SALM page, "Smoothed LGA
-Datafiles"). The fetcher logs which quarter each file ends at so a stale cache
-is visible. The SA2 file keeps its original scrape-then-fallback download.
+LGA file is cache-only: the DEWR site returns 503 to automated requests
+for this file, so the LGA CSV must be placed manually at
+cache/salm_smoothed_lga.csv (download "Smoothed LGA Datafiles" from the
+SALM page). The fetcher logs the last quarter in each file so that a
+stale cache is visible. The SA2 file is downloaded automatically, from a
+scraped link with a fallback URL.
 
-SA2 matching for towns uses towns.toml sa2_code (ASGS 2021 Edition 3).
-Known towns.toml problems found 2026-09-28: Shepparton's sa2_code is not a
-valid ASGS 2021 code (the town spans "Shepparton - North" 216031416 and
-"Shepparton - South East" 216031594 -- needs a decision), and Yarram's was
-wrong (correct: 205051104). These are why the VIC towns "fail" below.
+Notes: towns are matched on the sa2_code field in towns.toml (ASGS 2021
+Edition 3). Shepparton's sa2_code is not a valid ASGS 2021 code; the
+town spans "Shepparton - North" (216031416) and "Shepparton - South
+East" (216031594) and has no single SA2, so it is reported as failed.
 """
 
 from __future__ import annotations
@@ -87,16 +89,16 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-# Stable resource page — scrape this to find current CSV URL
-# Main SALM page (accessible) and resource page (may be blocked)
+# RESOURCE_PAGE is scraped for the current CSV link; it may refuse
+# automated requests. SALM_MAIN_PAGE is the main SALM page.
 SALM_MAIN_PAGE = "https://www.dewr.gov.au/employment-research/small-area-labour-markets"
 RESOURCE_PAGE  = (
     "https://www.dewr.gov.au/employment-research/resources/"
     "salm-smoothed-sa2-datafiles-asgs-2021"
 )
 
-# update each cycle -- fallback only (live scraping is tried first; this is
-# used when that fails). Known-good URL from the December quarter 2025 release.
+# Update each cycle. Fallback only, used when scraping the resource page
+# fails. This is the December quarter 2025 release.
 FALLBACK_CSV_URL = (
     "https://www.dewr.gov.au/download/17068/"
     "salm-smoothed-sa2-datafiles-asgs-2021-december-quarter-2025/"
@@ -108,7 +110,7 @@ LGA_CACHE_KEY = "salm_smoothed_lga"
 LGA_PAGE = SALM_MAIN_PAGE
 
 # Workbook Employment-sheet row label (column A) -> ASGS 2021 SA2 code.
-# Same 15 regions verified for the Business sheet (2026-09-23).
+# The same 15 regions are used for the Business sheet.
 SA2_REGIONS = {
     "Broadsound-Nebo":             "312011338",
     "Chinchilla":                  "307011172",
@@ -127,7 +129,7 @@ SA2_REGIONS = {
     "Wambo":                       "307021183",
 }
 
-# Workbook label -> ASGS 2025 LGA code (verified in the March-2026 LGA file).
+# Workbook label -> ASGS 2025 LGA code, as used in the SALM LGA file.
 LGA_REGIONS = {
     "Goondiwindi":   "33610",
     "Isaac":         "33980",
@@ -139,8 +141,8 @@ LGA_REGIONS = {
 QUARTERS = ("Mar", "Jun", "Sep", "Dec")
 INDICATOR_LABEL = "Smoothed Unemployment rate (%)"
 
-# CSV column format: "Data Item", "SA2 name", "SA2 Code (2021 ASGS)", "Mar-10", "Jun-10", ...
-# Rows alternate between unemployment level and unemployment rate
+# CSV columns: "Data Item", "SA2 name", "SA2 Code (2021 ASGS)", "Mar-10",
+# "Jun-10", ... Only rows whose "Data Item" contains this label are read.
 RATE_ROW_LABEL = "Smoothed unemployment rate"
 
 
@@ -152,7 +154,7 @@ class SALMUnemploymentFetcher(BaseFetcher):
     def fetch_all(self):
         self._file_quarters = {}
 
-        # ── SA2 file (scrape-then-fallback, unchanged) ────────────────────────
+        # ── SA2 file (scraped link, then fallback URL) ────────────────────────
         url  = self._find_csv_url()
         path = self._download_with_browser_ua(url, CACHE_KEY)
 
@@ -167,8 +169,7 @@ class SALMUnemploymentFetcher(BaseFetcher):
             self.result.add_error("ALL", "SALM CSV parse returned no data")
             return
 
-        # Per-town files: format/names unchanged (consumed by to_csv.py and
-        # the booklet's data_page.py).
+        # Per-town files, read by to_csv.py and the booklet's data_page.py.
         for town in self.applicable_towns():
             self._extract_town(town, sa2_data)
 
@@ -176,7 +177,7 @@ class SALMUnemploymentFetcher(BaseFetcher):
         for label, code in SA2_REGIONS.items():
             self._write_region("SA2", label, code, sa2_data, path.name)
 
-        # ... and LGA rows (cache-only file, see module docstring).
+        # ... and LGA rows (cache-only file; see the module docstring).
         lga_path = CACHE_DIR / f"{LGA_CACHE_KEY}.csv"
         if not lga_path.exists():
             msg = (
@@ -201,7 +202,10 @@ class SALMUnemploymentFetcher(BaseFetcher):
         )
 
     def _download_with_browser_ua(self, url: str, cache_key: str) -> Path | None:
-        """Download with browser User-Agent to bypass bot detection."""
+        """Download the CSV with a browser User-Agent; the DEWR site rejects
+        requests it identifies as automated. Uses the cached file unless
+        force is set.
+        """
         from config import CACHE_DIR
         out_path = CACHE_DIR / f"{cache_key}.csv"
         if out_path.exists() and not self.force:
@@ -235,16 +239,16 @@ class SALMUnemploymentFetcher(BaseFetcher):
             return None
 
     def _find_csv_url(self) -> str:
-        """
-        Scrape resource page to find current CSV download URL.
-        Falls back to the known-good URL if the page can't be reached.
+        """Return the current SA2 CSV download URL, scraped from the resource
+        page. Falls back to FALLBACK_CSV_URL if the page cannot be read or
+        has no matching link.
         """
         try:
             headers = {"User-Agent": "Mozilla/5.0 (research pipeline; contact uq.edu.au)"}
             resp = requests.get(RESOURCE_PAGE, headers=headers, timeout=20)
             resp.raise_for_status()
 
-            # Find CSV download link — pattern: /download/{id}/salm-smoothed-sa2...
+            # Download link pattern: /download/{id}/salm-smoothed-sa2.../csv
             pattern = r'(https://www\.dewr\.gov\.au/download/\d+/salm-smoothed-sa2[^"\'>\s]+/csv)'
             matches = re.findall(pattern, resp.text)
             if matches:
@@ -259,15 +263,14 @@ class SALMUnemploymentFetcher(BaseFetcher):
         return FALLBACK_CSV_URL
 
     def _parse_csv(self, path: Path, kind: str = "SA2") -> dict:
-        """
-        Parse a SALM smoothed-rate CSV (SA2 or LGA layout) into:
+        """Parse a SALM smoothed-rate CSV (SA2 or LGA layout) into:
           { code: (salm_name, { year: annual_rate }) }
 
-        Annual rate = plain mean of the 4 quarterly smoothed rates (Mar, Jun,
-        Sep, Dec) in the calendar year -- VERIFIED against the workbook, see
-        module docstring. A year is only produced if ALL FOUR quarters are
-        present (no partial years). Records the file's last quarter in
-        self._file_quarters[kind] so a stale cache is visible in the log.
+        The annual rate is the mean of the four quarterly smoothed rates
+        (Mar, Jun, Sep, Dec) in the calendar year; see the module docstring.
+        A year is produced only if all four quarters are present. The last
+        quarter in the file is recorded in self._file_quarters[kind] so
+        that a stale cache is visible in the log.
         """
         try:
             with open(path, encoding="utf-8-sig", errors="replace") as f:
@@ -339,8 +342,10 @@ class SALMUnemploymentFetcher(BaseFetcher):
 
     @staticmethod
     def _norm_name(name: str) -> str:
-        """Compare spellings loosely: 'Broadsound - Nebo' == 'Broadsound-Nebo',
-        'Toowoomba' == 'Toowoomba LGA'."""
+        """Normalise a region name for loose comparison, so that
+        'Broadsound - Nebo' equals 'Broadsound-Nebo' and 'Toowoomba' equals
+        'Toowoomba LGA'.
+        """
         n = name.lower()
         n = re.sub(r"\blga\b", "", n)
         return re.sub(r"[^a-z0-9]", "", n)
@@ -354,7 +359,7 @@ class SALMUnemploymentFetcher(BaseFetcher):
             return
         salm_name, annual = rec
 
-        # Refuse a region whose code now belongs to something else.
+        # Refuse a region whose code now belongs to a different region.
         if self._norm_name(salm_name) != self._norm_name(label):
             self.log.error(
                 f"  [{tag}] NAME MISMATCH: code {code} is '{salm_name}' in SALM but the "
@@ -397,7 +402,7 @@ class SALMUnemploymentFetcher(BaseFetcher):
         self.result.towns_ok.append(tag)
 
     def _extract_town(self, town, data: dict):
-        """Match town SA2 code and write cache JSON."""
+        """Write the cache JSON for a town, matched on its SA2 code."""
         sa2 = town.sa2_code
         if not sa2:
             self.log.warning(f"  [{town.name}] no sa2_code in towns.toml")

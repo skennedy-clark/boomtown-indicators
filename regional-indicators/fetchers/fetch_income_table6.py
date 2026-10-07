@@ -1,71 +1,49 @@
 """
-fetchers/fetch_income_table6.py
---------------------------------
-Fetches ATO individual income data (Table 6) from data.gov.au.
+regional-indicators/fetchers/fetch_income_table6.py
 
-Table 6 is published annually with two sheets:
-  Table 6A — rows split by taxable status (Non Taxable / Taxable)
-  Table 6B — combined totals (both statuses merged, no status column)
+Fetches postcode-level income, wage and business income figures from
+ATO Taxation Statistics, Individuals Table 6 (data.gov.au).
 
-We use:
-  Table 6A (Taxable rows only) -> avg_income_taxable
-    = taxable_income_$ / taxable_income_no.
-  Table 6B (combined) -> avg_income_all, earners_no, wages_total,
-    abn_npp_income_$/no., abn_pp_income_$/no., abn_total_income_$/no.
+Table 6 is published once a year for a single income year, as two
+sheets:
+  Table 6A   rows split by taxable status (Taxable / Non Taxable)
+  Table 6B   all individuals combined
 
-Confirmed column indices (2023-24 file, verified 2026-09-23 against
-the real downloaded xlsx, not assumed from the 2022-23 file's indices
-which may not carry forward year to year):
-  6A: 0=status  3=postcode  5=taxable_income_no  6=taxable_income_$
-      19=wages_no  20=wages_$
-  6B: 2=postcode  4=taxable_income_no  5=taxable_income_$
-      18=wages_no  19=wages_$
-      132=abn_pp_income_no    133=abn_pp_income_$
-      134=abn_npp_income_no   135=abn_npp_income_$
-      136=abn_total_income_no 137=abn_total_income_$
+Derived indicators, for the release's income year:
+  avg_income_taxable    Table 6A, Taxable rows:
+                        taxable income or loss ($) / number
+  avg_income_all        Table 6B:
+                        taxable income or loss ($) / number
+  earners_no,           Table 6B: salary or wages, number and $
+  wages_total
+  abn_npp_income_*      Table 6B: total business income,
+                        non-primary production, number and $
+  abn_pp_income_*       Table 6B: total business income,
+                        primary production, number and $
+  abn_total_income_*    Table 6B: total business income, number and $
 
-avg_income_all METHODOLOGY CORRECTED 2026-09-23, per Notes_DD.docx
-(Steve's documented process for how the 2026 reference workbook was
-actually built): "Average Taxable Income or Loss (all individuals)"
-is Table 6B's Taxable income or loss $ / Taxable income or loss no. --
-NOT fetch_income.py's Table 8 "Average taxable income" column, which
-is a confirmed DIFFERENT ATO product with a real, non-trivial
-discrepancy (Chinchilla 2023-24: Table 8 gives $72,289, but the
-documented Table 6B method gives $73,581, matching the reference
-workbook exactly -- verified directly against the real downloaded
-file, not just trusting the notes). Table 8 remains useful for
-backfilling older years Table 6 doesn't cover in a single release
-(Table 6 is a single-year snapshot each cycle, Table 8 spans multiple
-non-contiguous years) -- update_income.py decides which source to use
-per year, not this fetcher.
+avg_income_all is computed from Table 6B and not taken from Table 8's
+published average, which is a different measure and gives a different
+figure. Table 8 (fetch_income.py) supplies earlier income years;
+update_income.py selects the source for each year.
 
-ABN / business income fields, per Notes_DD.docx's mapping table --
-the ATO file doesn't use the literal words "Individual ABN":
-  Individual ABN NPP Total Income $/no.  -> Total business income,
-    non-primary production $/no.
-  Individual ABN PP Total Income $/no.   -> Total business income,
-    primary production $/no.
-  Individual ABN Total Income $/no.      -> Total business income $/no.
-  (NPP = non-primary production, PP = primary production)
-The notes don't explicitly say 6A vs 6B for these three field pairs --
-using 6B (unfiltered, all individuals), consistent with how wages
-already comes from 6B and none of the six ABN row labels carry a
-"(taxable individuals)" qualifier the way the two average-income rows
-do. Worth Steve confirming this is the intended reading.
+Column positions (2023-24 release; verify against each new release, as
+the ATO adds and reorders columns):
+  6A: 0 status, 3 postcode, 5 taxable income no., 6 taxable income $,
+      19 wages no., 20 wages $
+  6B: 2 postcode, 4 taxable income no., 5 taxable income $,
+      18 wages no., 19 wages $,
+      132/133 business income PP no./$,
+      134/135 business income NPP no./$,
+      136/137 total business income no./$
 
-Confirmed real values, Chinchilla (4413) 2023-24 (verified directly
-against the real downloaded file, 2026-09-23):
-  avg_income_all     = $73,581   (exact match vs the 2026 reference workbook)
-  avg_income_taxable = $91,431   (exact match, was already correct before this change)
+A town's figures are those of its primary postcode. State benchmarks
+(Queensland, New South Wales) are computed from state totals; see
+_compute_state_benchmarks.
 
-Website CSVs produced:
-  Income - for taxable individuals.csv
-  Income - all individuals.csv
-  Number of earners.csv
-  Wage & salary earnings (town total).csv
-  Individual ABN NPP Total Income.csv
-  Individual ABN PP Total Income.csv
-  Individual ABN Total Income.csv
+Output: cache/ato/<slug>_income_t6.json per town and
+cache/ato/benchmark_income_t6.json. Read by
+transform/xlsx_update/update_income.py.
 """
 
 from __future__ import annotations
@@ -159,15 +137,12 @@ class ATOTable6Fetcher(BaseFetcher):
         self._compute_state_benchmarks(t6_path, year)
 
     def _compute_state_benchmarks(self, path: Path, year: str):
-        """QLD and NSW state-level benchmark figures, per Notes_DD.docx's
-        documented process: NOT an average of postcode averages -- sum
-        the raw dollar and count fields across every row belonging to
-        that state, then divide. Confirmed real state codes in the file
-        (2026-09-23): QLD, NSW, VIC, WA, SA, TAS, ACT, NT, Overseas.
-        Verified directly against the real downloaded file before
-        building this: computed QLD/NSW all/taxable all four exactly
-        match the 2026 reference workbook's existing benchmark figures
-        (75,890 / 90,846 / 83,306 / 100,533).
+        """Compute state benchmark averages for Queensland and New South
+        Wales.
+
+        Dollar and count fields are summed over every row for the state
+        and then divided; the result is not an average of postcode
+        averages.
         """
         try:
             wb = openpyxl.load_workbook(path, read_only=True)
@@ -225,7 +200,10 @@ class ATOTable6Fetcher(BaseFetcher):
             self.log.error(f"State benchmark computation error: {exc}", exc_info=True)
 
     def _parse_6a_taxable(self, path: Path) -> dict:
-        """Table 6A -- Taxable rows only. Returns {pc: {taxable_no, taxable_income}}"""
+        """Parse Table 6A, Taxable rows only.
+
+        Returns {postcode: {taxable_no, taxable_income}}.
+        """
         try:
             ws   = openpyxl.load_workbook(path, read_only=True)["Table 6A"]
             rows = list(ws.iter_rows(values_only=True))
@@ -252,11 +230,12 @@ class ATOTable6Fetcher(BaseFetcher):
             return {}
 
     def _parse_6b_combined(self, path: Path) -> dict:
-        """Table 6B -- combined (all-individuals) totals. Returns
-        {pc: {taxable_no, taxable_income, wages_no, wages_total,
-              abn_pp_no, abn_pp_income, abn_npp_no, abn_npp_income,
-              abn_total_no, abn_total_income}}
-        Confirmed real column indices (2026-09-23, see module docstring).
+        """Parse Table 6B (all individuals).
+
+        Returns {postcode: {taxable_no, taxable_income, wages_no,
+        wages_total, abn_pp_no, abn_pp_income, abn_npp_no,
+        abn_npp_income, abn_total_no, abn_total_income}}. Column
+        positions are listed in the module docstring.
         """
         try:
             ws   = openpyxl.load_workbook(path, read_only=True)["Table 6B"]
@@ -306,21 +285,9 @@ class ATOTable6Fetcher(BaseFetcher):
         }
         found = False
 
-        # BUG FOUND AND FIXED 2026-10-01, reported directly by Steve: this
-        # used to sum across EVERY postcode in town.postcodes (plural).
-        # Harmless for every other town (each has exactly one postcode in
-        # the list, so summing a one-element list is a no-op) -- but
-        # Toowoomba is configured with postcodes = ["4350", "4352"] (see
-        # towns.toml, for a wider "Greater Toowoomba" area used elsewhere
-        # in this project), so this was silently combining BOTH postcodes'
-        # ATO figures into Toowoomba's income row. Confirmed directly
-        # against the real ATO Table 6 file: postcode 4350 alone sums
-        # (Taxable + Non Taxable rows) to exactly the values Steve expected
-        # and that "Toowoomba (Central)" (postcodes = ["4350"] only)
-        # already produced correctly -- e.g. 58,143 earners / $4,065,212,899
-        # wages for 2023-24. Fixed to use town.postcode (singular, the
-        # primary postcode) -- this sheet's "Toowoomba" row has always
-        # meant just the one postcode, not the combined wider area.
+        # A town's figures are those of its primary postcode (town.postcode)
+        # only. Toowoomba lists a second postcode for other purposes, and
+        # combining them would not reproduce the published series.
         for pc in [town.postcode]:
             key = pc.zfill(4)
             if key in taxable_data:

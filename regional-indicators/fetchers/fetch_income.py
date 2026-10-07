@@ -1,27 +1,23 @@
 """
-fetchers/fetch_income.py
-------------------------
-Fetches ATO individual income data (Table 8) from data.gov.au.
+regional-indicators/fetchers/fetch_income.py
 
-Strategy:
-  1. Call data.gov.au CKAN API to list all resources in the dataset
-  2. Find Table 8 by matching resource name
-  3. Download the xlsx — one national file serves all towns
-  4. Extract values for each town by postcode
+Fetches average taxable income by postcode from ATO Taxation Statistics,
+Individuals Table 8 (data.gov.au).
 
-This means when a new year is published (e.g. 2023-24), you only need to
-update LATEST_YEAR and DATASET_SLUG — the URL resolves automatically.
+Table 8 gives median and average taxable income by state and postcode
+for a set of income years in one national workbook, which makes it the
+source for the historical series.
 
-Table 8 content:
-  Median and average taxable income by state/territory and postcode,
-  2003-04 and 2013-14 to 2022-23 income years.
-  This is the multi-year historical series the researchers use.
+Steps:
+  1. Find the latest release (ato_release.discover_latest_ato_release).
+  2. Locate the Table 8 resource in that package by name.
+  3. Download the workbook (cached).
+  4. Read the "Average taxable income" column for each income year.
+  5. Extract each town's series by its primary postcode.
 
-Confirmed working:
-  Dataset : taxation-statistics-2022-23
-  Resource: e4b8c6b4-1185-4be6-9bd7-cf4385934d00
-  File    : ts23individual08medianaveragetaxableincomestatepostcode.xlsx
-  Size    : ~2MB
+Output: cache/ato/<slug>_income.json, with the series under
+"avg_taxable_income_by_year", keyed by income year ("2022-23").
+Read by transform/xlsx_update/update_income.py.
 """
 
 from __future__ import annotations
@@ -45,18 +41,17 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-# CKAN API endpoint — note: data.gov.au uses /data/api/ not /api/
+# CKAN API endpoint. data.gov.au serves it under /data/api/.
 CKAN_API = "https://data.gov.au/data/api/3/action/package_show?id={slug}"
 
-# How to identify Table 8 among the dataset's resources
-# We match on resource name (case-insensitive)
+# Table 8 is identified by its resource name (case-insensitive).
 TABLE8_NAME_FRAGMENTS = ["table 8", "individual", "postcode", "median"]
 
 
 class ATOIncomeFetcher(BaseFetcher):
 
     SOURCE_NAME      = "ato_income"
-    SUPPORTED_STATES = []   # ATO covers all states
+    SUPPORTED_STATES = []   # national source: all states
 
     def fetch_all(self):
         try:
@@ -73,19 +68,19 @@ class ATOIncomeFetcher(BaseFetcher):
             f"(package modified {release.modified or 'unknown'})"
         )
 
-        # ── Step 1: Resolve Table 8 URL via CKAN API ──────────────────────────
+        # ── Step 1: locate the Table 8 resource ───────────────────────────────
         t8_url = self._find_table8_url(slug, year)
         if not t8_url:
-            return  # errors already logged
+            return  # already logged
 
-        # ── Step 2: Download (cached after first run) ─────────────────────────
+        # ── Step 2: download (cached) ─────────────────────────────────────────
         cache_key = f"ato_table8_{year}"
         t8_path   = self.download(t8_url, cache_key, suffix=".xlsx")
         if t8_path is None:
             self.result.add_error("ALL", f"Download failed for Table 8 ({year})")
             return
 
-        # ── Step 3: Verify file is a real xlsx ────────────────────────────────
+        # ── Step 3: check the file is an xlsx workbook ────────────────────────
         if not self._verify_xlsx(t8_path):
             self.log.error(
                 f"Downloaded file is not a valid xlsx "
@@ -96,23 +91,24 @@ class ATOIncomeFetcher(BaseFetcher):
             self.result.add_error("ALL", "Table 8 download invalid — will retry next run")
             return
 
-        # ── Step 4: Parse into postcode lookup ────────────────────────────────
+        # ── Step 4: parse into a postcode lookup ──────────────────────────────
         self.log.info(f"Parsing {t8_path.name} ({t8_path.stat().st_size / 1024:.0f} KB)")
         postcode_data = self._parse_table8(t8_path)
         if not postcode_data:
             self.result.add_error("ALL", "Table 8 parsed empty — check file structure")
             return
 
-        # ── Step 5: Extract per-town ──────────────────────────────────────────
+        # ── Step 5: extract each town ─────────────────────────────────────────
         for town in self.applicable_towns():
             self._extract_town(town, postcode_data, year)
 
-    # ── CKAN URL resolution ────────────────────────────────────────────────────
+    # ── Resource lookup ────────────────────────────────────────────────────────
 
     def _find_table8_url(self, slug: str, year: str) -> str | None:
-        """
-        Query the CKAN API for the dataset, then find the Table 8 resource
-        by matching name fragments. Returns the download URL or None.
+        """Return the download URL of the Table 8 resource, or None.
+
+        Resources in the package are scored by how many name fragments
+        they match; the file name in the URL is the fallback.
         """
         api_url = CKAN_API.format(slug=slug)
         self.log.info(f"Querying CKAN API: {api_url}")
@@ -130,7 +126,7 @@ class ATOIncomeFetcher(BaseFetcher):
             resources = data["result"]["resources"]
             self.log.info(f"  Dataset has {len(resources)} resources")
 
-            # Find Table 8 — score each resource by how many fragments match
+            # Score each resource by the number of matching name fragments.
             best_url   = None
             best_score = 0
 
@@ -147,7 +143,7 @@ class ATOIncomeFetcher(BaseFetcher):
                 self.log.info(f"  Table 8 URL (score {best_score}): {best_url}")
                 return best_url
 
-            # Fallback: search by filename fragment in URL
+            # Fallback: match on the file name in the URL.
             for r in resources:
                 url = r.get("url", "")
                 if "individual08" in url.lower() and "postcode" in url.lower():
@@ -170,11 +166,13 @@ class ATOIncomeFetcher(BaseFetcher):
     # ── Validation ─────────────────────────────────────────────────────────────
 
     def _verify_xlsx(self, path: Path) -> bool:
-        """Check file is a real xlsx — must be >100KB and start with PK magic bytes."""
+        """True if the file is an xlsx workbook: larger than 100 KB and
+        starting with the zip signature.
+        """
         if path.stat().st_size < 100_000:
             self.log.warning(f"File too small: {path.stat().st_size} bytes (expected >100KB)")
             return False
-        # xlsx files are zip archives — start with PK\x03\x04
+        # xlsx files are zip archives and start with PK\x03\x04.
         magic = path.read_bytes()[:4]
         if magic != b"PK\x03\x04":
             self.log.warning(f"File does not have xlsx/zip magic bytes: {magic!r}")
@@ -184,25 +182,21 @@ class ATOIncomeFetcher(BaseFetcher):
     # ── Parser ─────────────────────────────────────────────────────────────────
 
     def _parse_table8(self, path: Path) -> dict:
-        """
-        Table 8 actual structure (confirmed from file inspection):
-          Row 1 : Title text (skip)
-          Row 2 : Column headers — embed year in name, e.g.:
-                  "Average3 taxable income 2022-23 \n$"
-          Row 3+: Data — State, Postcode (int), then numeric values
+        """Parse Table 8 into {postcode: {income year: average taxable income}}.
 
-        We extract only the "Average taxable income" columns since that
-        is what the booklets report. Keys are normalised to "YYYY-YY".
-
-        Returns:
-          { '4455': { '2003-04': 38500.0, '2022-23': 68400.0, ... } }
+        Workbook layout:
+          row 1   title
+          row 2   column headings; each includes its income year, for
+                  example "Average3 taxable income 2022-23 \n$"
+          row 3+  state, postcode, then values
+        Income years are normalised to "YYYY-YY".
         """
         try:
             import openpyxl as _openpyxl
             wb = _openpyxl.load_workbook(path, read_only=True)
             self.log.info(f"  Sheets: {wb.sheetnames}")
 
-            # Find the right sheet
+            # Locate the data sheet.
             ws = None
             for name in wb.sheetnames:
                 if "table 8" in name.lower():
@@ -222,10 +216,10 @@ class ATOIncomeFetcher(BaseFetcher):
                 return {}
 
             rows = list(ws.iter_rows(values_only=True))
-            # Row 0 = title, Row 1 = headers, Row 2+ = data
+            # Row 0 is the title, row 1 the headings, data from row 2.
             header_row = rows[1]
 
-            # Find postcode column index
+            # Locate the postcode column.
             pc_idx = next(
                 (i for i, h in enumerate(header_row)
                  if h and "postcode" in str(h).lower()),
@@ -235,10 +229,10 @@ class ATOIncomeFetcher(BaseFetcher):
                 self.log.error(f"No postcode column. Headers: {header_row[:6]}")
                 return {}
 
-            # Find "Average taxable income" columns; extract year from header text
-            # e.g. "Average3 taxable income 2022-23 \n$"
+            # Locate the "Average taxable income" columns and read the income
+            # year from each heading.
             year_pat = re.compile(r"(\d{4}[\u2013\u002d]\d{2})")
-            avg_cols = {}  # { col_index: "2022-23" }
+            avg_cols = {}  # {column index: "2022-23"}
             for i, h in enumerate(header_row):
                 if h and "average" in str(h).lower() and "taxable" in str(h).lower():
                     m = year_pat.search(str(h))
@@ -304,23 +298,9 @@ class ATOIncomeFetcher(BaseFetcher):
         combined_years: dict[str, list[float]] = {}
         found_any = False
 
-        # BUG FOUND AND FIXED 2026-10-01: same root cause as the identical
-        # bug fixed in fetch_income_table6.py the same session -- this used
-        # to iterate town.postcodes (plural), silently averaging in every
-        # postcode a town has, not just its primary one. Harmless for every
-        # other town (one postcode each, so averaging a single-element list
-        # is a no-op) -- but Toowoomba has postcodes = ["4350", "4352"]
-        # (see towns.toml, for a wider "Greater Toowoomba" area used
-        # elsewhere in this project), so this was blending 4352 into
-        # Toowoomba's income figure. Confirmed directly against the real
-        # ATO Table 8 file: postcode 4350 alone gives $71,246 for 2023-24,
-        # exactly matching "Toowoomba (Central)" (postcodes = ["4350"]
-        # only); the old buggy average of 4350 ($71,246) and 4352
-        # ($73,934) gives exactly $72,590 -- the precise wrong value this
-        # fetcher used to produce. Fixed to use town.postcode (singular,
-        # the primary postcode) -- this sheet's "Toowoomba" row has always
-        # meant just the one postcode, not the combined wider area, same
-        # conclusion as the Table 6 fix.
+        # A town's figure is that of its primary postcode (town.postcode)
+        # only. Toowoomba lists a second postcode for other purposes, and
+        # combining them would not reproduce the published series.
         for pc in [town.postcode]:
             pc_str = str(pc).zfill(4)
             if pc_str in postcode_data:
@@ -341,11 +321,8 @@ class ATOIncomeFetcher(BaseFetcher):
             self.result.towns_failed.append(town.name)
             return
 
-        # "Average across postcodes" no longer applies now there's only
-        # ever one postcode per town here, but kept as a plain pass-through
-        # (sum of a one-element list / 1) rather than restructuring the
-        # output shape -- avg_by_year's downstream consumers expect this
-        # dict-of-floats form.
+        # With a single postcode per town this is a pass-through; the
+        # averaging form is kept so the output structure is unchanged.
         avg_by_year = {
             yr: sum(vals) / len(vals)
             for yr, vals in sorted(combined_years.items())

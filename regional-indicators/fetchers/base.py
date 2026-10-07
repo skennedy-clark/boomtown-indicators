@@ -1,9 +1,11 @@
 """
-fetchers/base.py
-----------------
-Abstract base class for all data fetchers.
-Handles caching, logging, error reporting and the standard return contract
-so the orchestrator can treat all fetchers uniformly.
+regional-indicators/fetchers/base.py
+
+Abstract base class for the data fetchers.
+
+Provides configuration, caching, logging, downloading with retry and a
+uniform result object, so that run_update.py can run and report on every
+fetcher in the same way.
 """
 
 from __future__ import annotations
@@ -21,18 +23,17 @@ from config import Config, CacheIndex, Town, get_config, get_cache, CACHE_DIR
 from logger import get_child_logger
 
 
-# ── Result contract ────────────────────────────────────────────────────────────
+# ── Result ─────────────────────────────────────────────────────────────────────
 
 @dataclass
 class FetchResult:
-    """
-    Returned by every fetcher's .run() method.
-    The orchestrator reads this to build the summary report.
+    """Result of a fetcher run, returned by BaseFetcher.run() and used by
+    run_update.py to build its summary.
     """
     source:        str
     success:       bool
     towns_ok:      list[str]  = field(default_factory=list)
-    towns_skipped: list[str]  = field(default_factory=list)   # cache hit
+    towns_skipped: list[str]  = field(default_factory=list)   # served from the cache
     towns_failed:  list[str]  = field(default_factory=list)
     cached_files:  list[Path] = field(default_factory=list)
     new_files:     list[Path] = field(default_factory=list)
@@ -68,21 +69,21 @@ class FetchResult:
 # ── Base fetcher ───────────────────────────────────────────────────────────────
 
 class BaseFetcher(ABC):
-    """
-    All fetch scripts subclass this.
+    """Base class for fetchers.
 
-    Subclass responsibilities:
-        - Set  SOURCE_NAME  (e.g. "ato_income")
-        - Set  SUPPORTED_STATES  (e.g. ["QLD", "NSW", "VIC"])
-        - Implement  fetch_all()  which populates self.result
+    A subclass sets:
+        SOURCE_NAME        short identifier, used in logs and summaries
+        SUPPORTED_STATES   states the source covers; empty means all
+    and implements fetch_all(), which records its outcome in
+    self.result.
 
-    Provided helpers:
-        - self.log          child logger
-        - self.config       loaded Config object
-        - self.cache        CacheIndex
-        - self.cache_path() path for a cache file
-        - self.is_cached()  whether a key is already cached
-        - self.download()   download a URL to cache with retry
+    Available to subclasses:
+        self.log            logger for this fetcher
+        self.config         the loaded Config
+        self.cache          the CacheIndex
+        self.cache_path()   path for a cache file
+        self.is_cached()    whether a key is in the cache
+        self.download()     download a URL into the cache, with retry
     """
 
     SOURCE_NAME:      str       = "base"
@@ -117,22 +118,23 @@ class BaseFetcher(ABC):
 
     @abstractmethod
     def fetch_all(self):
-        """
-        Implement the actual data fetching here.
-        Populate self.result.towns_ok / towns_failed / towns_skipped.
+        """Fetch the source and write the cache files.
+
+        Implementations add each town or region to self.result.towns_ok,
+        towns_failed or towns_skipped.
         """
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def applicable_towns(self) -> list[Town]:
-        """Towns this fetcher should process, filtered by SUPPORTED_STATES."""
+        """Return the study towns in SUPPORTED_STATES."""
         towns = self.config.study_towns()
         if self.SUPPORTED_STATES:
             towns = [t for t in towns if t.state in self.SUPPORTED_STATES]
         return towns
 
     def cache_path(self, key: str, suffix: str = "") -> Path:
-        """Returns path for a cache file, creating cache dir if needed."""
+        """Return the path for a cache file, creating the cache directory if needed."""
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         fname = key if not suffix else f"{key}{suffix}"
         return CACHE_DIR / fname
@@ -151,9 +153,8 @@ class BaseFetcher(ABC):
         headers:    dict     = None,
         params:     dict     = None,
     ) -> Optional[Path]:
-        """
-        Download url to cache.  Returns local Path or None on failure.
-        Skips download if already cached (unless force=True).
+        """Download `url` into the cache and return the local path, or None on
+        failure. An existing cached copy is reused unless force is set.
         """
         import requests
 

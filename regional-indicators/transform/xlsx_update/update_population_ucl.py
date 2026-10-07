@@ -1,47 +1,28 @@
 """
-regional-indicators/transform/xlsx_update/update_population_ucl.py -- reads
-fetch_population_ucl.py's cached output
-(cache/population/{slug}_population_ucl.json) and writes each town's
-LATEST year into Indicators_Data-Charts.xlsx's "UCL" section on the
-Population sheet.
+regional-indicators/transform/xlsx_update/update_population_ucl.py
 
-Uses xlwings (real Excel via COM automation), NOT openpyxl -- openpyxl
-was confirmed to corrupt this specific workbook badly enough that even
-Excel's own repair couldn't recover the result. See base.py's docstring
-for the full explanation.
+Writes urban-centre (UCL) resident population into the Population sheet.
 
-Runs the pre-write audits from audit.py on every town before writing --
-this workbook has been hand-edited for years and is known to contain
-crud (stray values, leftover formulas from ad-hoc analysis) in cells
-this script writes into, and its existing historical data has not been
-independently verified. A clean-looking write can still be wrong if it
-lands in the wrong row, or right if a "flagged" cell turns out to be a
-real, correctly-revised figure -- the audits surface exactly that
-ambiguity for a human to resolve, they don't resolve it themselves.
+Input:  cache/population/<slug>_population_ucl.json, produced by
+        fetchers/fetch_population_ucl.py.
+Target: the "UCL" section of the Population sheet, row "Estimated
+        resident population (a) by urban centre and locality" in each
+        town's block. Only the latest year in each cache file is written.
 
-*** NOT YET TESTED against a live Excel instance *** -- same caveat as
-base.py. Test against a throwaway copy first.
+Rows are matched on the indicator name alone. The column B sub-label is
+not used because its wording varies between towns.
 
-Opens ONE Excel session for the whole run (not one per town).
+Each write is preceded by the cell and series audits in audit.py. A
+flagged value is reported and not written; an exact entry in
+verified_overrides.toml is not consulted by this writer.
 
-Deliberately targets the "UCL" block (indicator name "Estimated resident
-population (a) by urban centre and locality") and NOT each town's main
-"Population (ERP)" row -- those are a different geography level (SA2 or
-LGA depending on town) fed by a different, not-yet-built fetcher.
-
-Deliberately matches on indicator name only, no sub_label -- Toowoomba's
-sub-label reads "Toowoomba Residents (UCL)" rather than the "Residents
-(UCL)" every other town uses.
+All towns are processed in a single Excel session. The workbook is
+edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_population_ucl.py <path-to-Indicators_Data-Charts.xlsx> <cache/population dir> [--visible]
+    python update_population_ucl.py <workbook.xlsx> <cache/population dir> [--visible]
 
---visible runs Excel on-screen rather than in the background -- worth
-using for your first real run, so you can watch it happen.
-
-Writes the file in place for every town that passes both audits clean.
-Flagged towns are NOT written -- rerun after resolving what the report
-says, rather than this script guessing on your behalf.
+--visible shows the Excel window while the script runs.
 """
 
 from __future__ import annotations
@@ -60,11 +41,10 @@ SHEET_NAME = "Population"
 
 
 def update_population_ucl(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
-    """Update every town found in cache_dir's *_population_ucl.json files
-    with its latest available year, auditing each one before writing.
-    Returns a list of human-readable result lines -- written towns show
-    the cell they landed in, flagged towns show why they were skipped
-    and nothing about them was changed.
+    """Write the latest UCL population for every cached town.
+
+    Returns one result line per town (written, with its cell address, or
+    flagged, with the reason) followed by a summary line.
     """
     cache_files = sorted(cache_dir.glob("*_population_ucl.json"))
     if not cache_files:

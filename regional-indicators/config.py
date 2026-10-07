@@ -1,18 +1,19 @@
 """
 regional-indicators/config.py
------------------------------
-Loads and validates towns.toml, exposes typed Town objects and source settings.
-Also manages the cache index so fetchers can check whether a file is already
-downloaded before hitting a remote source.
+
+Project configuration.
+
+Loads and validates towns.toml, exposing towns as typed Town objects, and
+maintains the index of downloaded files (cache/index.json) that lets
+fetchers reuse an earlier download.
 """
 
 from __future__ import annotations
 
-# Year range for output CSVs
+# Range of calendar years handled by the pipeline.
 YEAR_START = 2000
-YEAR_END   = 2025   # update each cycle -- ALSO update the other copy of this constant
-                     # (config.py and transform/to_csv.py both define it separately;
-                     # they can silently drift out of sync -- see TODO.md 2027 date audit)
+YEAR_END   = 2025   # last data year; update at the start of each annual cycle.
+                     # transform/to_csv.py defines the same constant and must be kept in step.
 
 import hashlib
 import json
@@ -59,20 +60,20 @@ class Town:
     sa3_code:         str
     lga:              str
     qps_division:     str        = ""
-    qgso_sa2:         str        = ""   # ASGS Ed 2 SA2 code used by QGSO files
-    qgso_lga:         str        = ""   # QGSO LGA identifier e.g. "LGA/34860"
-    lga_code:         str        = ""   # ABS LGA code, digits only, e.g. "15750".
-                                        # Only needed where qgso_lga is absent
-                                        # (non-QLD towns) -- see abs_lga_code.
-    bom_station:      str        = ""   # BOM rainfall station number
+    qgso_sa2:         str        = ""   # SA2 code used in QGSO queries
+    qgso_lga:         str        = ""   # QGSO LGA identifier, e.g. "LGA/34860"
+    lga_code:         str        = ""   # ABS LGA code, digits only, e.g. "15750";
+                                        # needed only where qgso_lga is absent
+                                        # (towns outside Queensland). See abs_lga_code.
+    bom_station:      str        = ""   # Bureau of Meteorology station number
     csg_notice_year:  int        = 0
     benchmark:        bool       = False
     notes:            str        = ""
 
-    # Derived
+    # Derived values
     @property
     def slug(self) -> str:
-        """URL/filesystem safe name, e.g. 'Toowoomba (West)' → 'toowoomba_west'"""
+        """File-system-safe form of the name: 'Toowoomba (West)' -> 'toowoomba_west'."""
         return (
             self.name.lower()
             .replace(" ", "_")
@@ -83,10 +84,10 @@ class Town:
 
     @property
     def abs_lga_code(self) -> str:
-        """ABS LGA code (digits only) for this town's LGA, or "" if none
-        is configured. Uses lga_code when given; otherwise takes the
-        digits from qgso_lga ("LGA/37310" -> "37310") -- QGSO uses the
-        ABS code, so Queensland towns need nothing extra in towns.toml.
+        """ABS LGA code (digits only) of this town's LGA, or "".
+
+        Taken from lga_code if set, otherwise from the digits of qgso_lga
+        ("LGA/37310" -> "37310"); QGSO uses ABS LGA codes.
         """
         if self.lga_code:
             return self.lga_code
@@ -211,14 +212,14 @@ class Config:
         errors = []
         names  = [t.name for t in self.towns]
 
-        # Duplicate names
+        # Town names must be unique.
         seen = set()
         for n in names:
             if n in seen:
                 errors.append(f"Duplicate town name: '{n}'")
             seen.add(n)
 
-        # Missing critical fields for non-benchmark towns
+        # Required fields for study towns.
         for t in self.towns:
             if t.benchmark:
                 continue
@@ -229,7 +230,7 @@ class Config:
             if t.state not in ("QLD", "NSW", "VIC", "WA", "SA", "TAS", "NT", "ACT"):
                 errors.append(f"[{t.name}] unknown state '{t.state}'")
 
-        # LGA codes: digits only, and one LGA code never under two names
+        # LGA codes must be numeric, and a code must not appear under two names.
         lga_name_by_code: dict[str, str] = {}
         for t in self.towns:
             code = t.abs_lga_code
@@ -250,10 +251,10 @@ class Config:
         if errors:
             raise ValueError("towns.toml validation errors:\n  " + "\n  ".join(errors))
 
-    # ── Convenience queries ────────────────────────────────────────────────────
+    # ── Queries ────────────────────────────────────────────────────────────────
 
     def study_towns(self) -> list[Town]:
-        """All non-benchmark towns."""
+        """Return all towns that are not benchmarks."""
         return [t for t in self.towns if not t.benchmark]
 
     def towns_by_state(self, state: str) -> list[Town]:
@@ -266,10 +267,11 @@ class Config:
         return None
 
     def lgas(self) -> list[tuple[str, str, str]]:
-        """Distinct LGAs across ALL towns, benchmarks included, as
-        (lga name, ABS LGA code, state), in towns.toml order. Several
-        towns share an LGA (six under Western Downs) -- each LGA is
-        returned once. Towns with no LGA code configured are skipped.
+        """Return the distinct LGAs of all towns, benchmarks included.
+
+        Each is (LGA name, ABS LGA code, state), in towns.toml order. An
+        LGA shared by several towns is returned once. Towns without an
+        LGA code are skipped.
         """
         seen: set[str] = set()
         result: list[tuple[str, str, str]] = []
@@ -295,19 +297,17 @@ class Config:
 # ── Cache management ───────────────────────────────────────────────────────────
 
 class CacheIndex:
-    """
-    Tracks which raw files have been downloaded and when.
-    Stored as a simple JSON file: cache/index.json
+    """Index of downloaded source files, stored in cache/index.json.
 
-    Structure:
+    Each entry records the local path, download time, source URL and an
+    MD5 checksum:
         {
-            "ato_table8_2022-23": {
-                "path": "cache/ato_table8_2022-23.xlsx",
+            "<key>": {
+                "path": "cache/<file>",
                 "downloaded_at": "2026-03-26T14:30:00",
                 "url": "https://...",
-                "checksum": "abc123"
-            },
-            ...
+                "checksum": "..."
+            }
         }
     """
 
@@ -326,7 +326,7 @@ class CacheIndex:
             json.dump(self._data, f, indent=2, default=str)
 
     def has(self, key: str) -> bool:
-        """Check if a cached file exists and is still on disk."""
+        """True if `key` is indexed and its file still exists."""
         if key not in self._data:
             return False
         cached_path = Path(self._data[key]["path"])
@@ -338,7 +338,7 @@ class CacheIndex:
         return Path(self._data[key]["path"])
 
     def register(self, key: str, path: Path, url: str = "", meta: dict = None):
-        """Record a newly downloaded file in the index."""
+        """Add a downloaded file to the index."""
         from datetime import datetime
         checksum = ""
         if path.exists():
@@ -354,7 +354,7 @@ class CacheIndex:
         self._save()
 
     def invalidate(self, key: str):
-        """Force re-download on next run."""
+        """Remove `key` from the index so that it is downloaded again."""
         if key in self._data:
             del self._data[key]
             self._save()
@@ -363,7 +363,7 @@ class CacheIndex:
         return dict(self._data)
 
 
-# ── Module-level singletons (imported by fetchers) ────────────────────────────
+# ── Shared instances ───────────────────────────────────────────────────────────
 
 _config_instance: Optional[Config]     = None
 _cache_instance:  Optional[CacheIndex] = None

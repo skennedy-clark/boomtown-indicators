@@ -1,14 +1,13 @@
 """
-fetchers/ato_release.py
------------------------
-Discovers the newest ATO Taxation Statistics release on data.gov.au that
+regional-indicators/fetchers/ato_release.py
+
+Finds the latest ATO Taxation Statistics release on data.gov.au that
 contains both Individuals Table 6 and Individuals Table 8.
 
-The data.gov.au catalogue search index can lag behind newly published datasets,
-so this module probes likely package slugs directly using CKAN package_show.
-
-Example package slug:
-    taxation-statistics-2023-24
+The data.gov.au catalogue search can lag behind newly published
+datasets, so candidate package names (for example
+"taxation-statistics-2023-24") are requested directly with the CKAN
+package_show action, newest first.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ import requests
 
 PACKAGE_SHOW_URL = "https://data.gov.au/data/api/3/action/package_show"
 
-# Oldest release worth probing. This can be moved further back if required.
+# Earliest release to try.
 EARLIEST_START_YEAR = 2015
 
 REQUEST_TIMEOUT_S = 30
@@ -42,20 +41,14 @@ class ATORelease:
 
 
 def _financial_year(start_year: int) -> str:
-    """
-    Convert 2023 to '2023-24'.
-    """
+    """Convert a start year to a financial-year string: 2023 -> '2023-24'."""
     return f"{start_year}-{(start_year + 1) % 100:02d}"
 
 
 def _latest_possible_start_year() -> int:
-    """
-    Return the start year of the latest completed Australian financial year.
-
-    Before 1 July 2026, the latest completed financial year is 2024-25.
-    From 1 July 2026, it becomes 2025-26.
-
-    The latest published ATO release will normally lag behind this.
+    """Return the start year of the latest completed Australian financial
+    year (1 July to 30 June). The latest published release normally lags
+    this by one or two years.
     """
     today = date.today()
 
@@ -79,9 +72,7 @@ def _candidate_financial_years() -> list[str]:
 
 
 def _resource_text(resource: dict) -> str:
-    """
-    Combine resource metadata into searchable lowercase text.
-    """
+    """Return a resource's name, description and URL as one lowercase string."""
     fields = [
         resource.get("name", ""),
         resource.get("description", ""),
@@ -93,14 +84,11 @@ def _resource_text(resource: dict) -> str:
 
 
 def _resource_is_table(resource: dict, table_number: int) -> bool:
-    """
-    Detect an ATO Individuals table using both resource name and filename.
+    """True if a resource is the given Individuals table.
 
-    Examples:
-        Individuals Table 6
-        Table 6A
-        ts24individual06taxablestatusstatesa4postcode.xlsx
-        ts24individual08medianaveragetaxableincomestatepostcode.xlsx
+    Matches on the resource name and on the file name, for example
+    "Individuals Table 6", "Table 6A" or
+    "ts24individual06taxablestatusstatesa4postcode.xlsx".
     """
     text = _resource_text(resource)
     padded = f"{table_number:02d}"
@@ -115,7 +103,7 @@ def _resource_is_table(resource: dict, table_number: int) -> bool:
     if not any(re.search(pattern, text) for pattern in explicit_patterns):
         return False
 
-    # The project specifically requires postcode-level Individuals tables.
+    # Only the postcode-level Individuals tables are wanted.
     return "postcode" in text and "individual" in text
 
 
@@ -152,7 +140,7 @@ def _fetch_package(financial_year: str) -> ATORelease | None:
     try:
         payload = response.json()
     except requests.JSONDecodeError:
-        # data.gov.au can return HTML or an empty response for a missing slug.
+        # data.gov.au may return HTML or an empty body for an unknown package.
         log.debug(
             "ATO package %s not found or returned non-JSON content",
             slug,
@@ -190,11 +178,11 @@ def _fetch_package(financial_year: str) -> ATORelease | None:
 
 @lru_cache(maxsize=1)
 def discover_latest_ato_release() -> ATORelease:
-    """
-    Return the newest Taxation Statistics package containing Tables 6 and 8.
+    """Return the newest Taxation Statistics package containing Tables 6
+    and 8.
 
-    The result is cached in memory so both ATO fetchers use the same release
-    without repeating the full sequence of package probes.
+    The result is cached for the process, so both ATO fetchers use the
+    same release without repeating the lookups.
     """
     candidates = _candidate_financial_years()
 

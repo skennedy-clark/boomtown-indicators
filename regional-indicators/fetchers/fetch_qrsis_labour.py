@@ -1,62 +1,58 @@
 """
-fetchers/fetch_qrsis_labour.py
---------------------------------
-Fetches LGA-level and Queensland state-level smoothed unemployment rates from
-the QGSO Regional Database (QRSIS) -- the "Labour Force - Small Area"
-collection. Fills the two gaps fetch_salm_unemployment.py cannot: the 5 LGA
-rows and the "Queensland (benchmark)" row on the Employment sheet.
-(SA2 rows are NOT duplicated here -- fetch_salm_unemployment.py's DEWR SALM
-source already reproduces those exactly; see its docstring.)
+regional-indicators/fetchers/fetch_qrsis_labour.py
 
-COLLECTION IDENTIFIED 2026-09-29 from a real walkthrough of the QRSIS wizard
-that Steve stepped through and captured in full (collgrp_id=12 "Labour",
-coll_id=1953 "Labour Force - Small Area (Qtr Ended 31 Dec 2010 to Qtr Ended
-31 Mar 2026)"). This is the SAME live HTML technique that found ERP's
-collgrp_id=1/coll_id=1961 (see fetch_population_erp.py) and that is proven
-working end-to-end in fetch_qgso_housing.py (sales/rent, live-confirmed).
-Reuses that exact mechanism (same _q() POST encoding, same lxml unclosed-
-<OPTION> parsing, same udqctl_id extraction, same 6-step wizard flow) --
-deliberately duplicated rather than shared, per this project's established
-practice of not refactoring a proven fetcher to share code with an unproven
-one (see fetch_population_erp.py's docstring for the reasoning).
+Fetches LGA-level and Queensland state-level smoothed unemployment rates
+from the QGSO Regional Database (QRSIS), "Labour Force - Small Area"
+collection, for the five LGA rows and the "Queensland (benchmark)" row
+of the Employment sheet.
 
-CONFIRMED REAL FROM THE WALKTHROUGH (not guessed):
-  - Series names: "Smoothed - Unemployed Persons (Number)",
-    "Smoothed - Unemployment Rate (Per cent)", "Smoothed - Labour Force
-    (Number)". Only the rate series is fetched here.
-  - Region types available: GCCSA, LGA, RESREG, S (State), SA2, SA3, SA4,
-    SED-2017. Queensland is region "S/3 - Queensland".
-  - Time period: period="Quarterly", date_format="Q1" (the hidden field's
-    real value -- confirmed by the walkthrough, not "Y1"/"Y2" as other
-    collections in this project use). from_date/to_date are literal
-    "Qtr Ended 31 Mar 2026" / "Qtr Ended 31 Dec 2010" strings -- the
-    dropdown's own earliest and latest options.
-  - The region-type step accepts multiple types selected together (its
-    <select> has MULTIPLE) -- this fetcher selects LGA and S in the one
-    session, matching how last year's manually-built QGSO extract
-    ("QGSO and BoM 2024.xlsx", sheet Labour) had LGA + State + SA2 columns
-    side by side in a single query.
+SA2 rows are not fetched here; fetch_salm_unemployment.py reproduces
+those from DEWR SALM.
 
-METHODOLOGY, already verified against the workbook (see TODO.md "Exemplar
-archaeology"): annual value = plain mean of the 4 quarterly smoothed rates
-in the calendar year (complete years only). VERIFIED EXACTLY against last
-year's manually-assembled 2024 extract for all 5 LGAs and Queensland
-(Queensland's 4/4.1/4.1/4 -> 4.05, matching the workbook's 2024 exactly).
+Source:
+  QRSIS wizard at https://statistics.qgso.qld.gov.au/pls/qis_public/
+  collgrp_id=12 ("Labour"), coll_id=1953 ("Labour Force - Small Area
+  (Qtr Ended 31 Dec 2010 to Qtr Ended 31 Mar 2026)").
 
-*** NOT YET TESTED against the live QRSIS endpoint. *** collgrp_id/coll_id
-and the series/region-type/date-format strings are all confirmed real
-(read directly from Steve's captured wizard HTML), but this exact
-Python flow has not itself been run live yet -- test on the real workbook's
-2025 column against the known values before trusting it (Goondiwindi 3.15,
-Isaac 1.075, Maranoa 2.225, Toowoomba 3.0, Western Downs 3.925, Queensland
-TBD -- see TODO.md for why the SA2-aggregate estimate of ~4.03 is known
-to be wrong and this collection is expected to fix it).
+  The wizard is driven in the same way as in fetch_qgso_housing.py and
+  fetch_population_erp.py: the same _q() POST encoding, lxml parsing of
+  unclosed <OPTION> tags, udqctl_id extraction and six-step flow. The
+  code is duplicated rather than shared so that each fetcher stays
+  independent of the others (see the fetch_population_erp.py docstring).
 
-OUTPUT: writes into the SAME cache/unemployment/regions/ directory
-fetch_salm_unemployment.py uses (lga_*.json, state_queensland.json), in the
-SAME schema (indicators.unemployment = {"label":..., "values": {...}}) so
-update_employment.py needs no changes to pick these up -- it is already
-section-driven, not source-driven.
+Wizard parameters:
+  - Series: "Smoothed - Unemployed Persons (Number)", "Smoothed -
+    Unemployment Rate (Per cent)", "Smoothed - Labour Force (Number)".
+    Only the rate series is fetched.
+  - Region types available: GCCSA, LGA, RESREG, S (State), SA2, SA3,
+    SA4, SED-2017. Queensland is region "S/3 - Queensland".
+  - Time period: period="Quarterly", date_format="Q1" (other collections
+    in this pipeline use "Y1"/"Y2"). from_date and to_date are literal
+    option strings such as "Qtr Ended 31 Dec 2010" and "Qtr Ended
+    31 Mar 2026", the earliest and latest options in the dropdown.
+  - The region-type step accepts several types together (its <select>
+    is MULTIPLE). LGA and S are selected in one session, as in the
+    manually built QGSO extract "QGSO and BoM 2024.xlsx" (sheet Labour),
+    which holds LGA, State and SA2 columns from a single query.
+
+Methodology: annual value = mean of the four quarterly smoothed rates in
+the calendar year, complete years only. This reproduces the manually
+assembled 2024 extract for all five LGAs and Queensland (Queensland's
+4/4.1/4.1/4 gives 4.05, the workbook's 2024 value).
+
+Reference values for checking the 2025 column against the reference
+workbook: Goondiwindi 3.15, Isaac 1.075, Maranoa 2.225, Toowoomba 3.0,
+Western Downs 3.925. There is no reference value for Queensland 2025; an
+estimate aggregated from SA2 data (about 4.03) is known not to match the
+state series.
+
+Output: cache/unemployment/regions/lga_<slug>.json and
+state_queensland_benchmark.json, the directory and schema used by
+fetch_salm_unemployment.py (indicators.unemployment = {"label": ...,
+"values": {...}}). update_employment.py is driven by section rather
+than by source and reads these without change. Note that
+fetch_salm_unemployment.py writes lga_<slug>.json files with the same
+names when its LGA file is present.
 """
 
 from __future__ import annotations
@@ -99,18 +95,19 @@ HEADERS = {
 
 SERIES_RATE = "Smoothed - Unemployment Rate (Per cent)"
 FROM_DATE   = "Qtr Ended 31 Dec 2010"
-TO_DATE     = "Qtr Ended 31 Mar 2026"   # update each cycle -- likely the same
-                                        # 500-error-on-future-date behaviour
-                                        # confirmed for fetch_qgso_housing.py's
-                                        # collections (same QRSIS wizard
-                                        # mechanism), not independently
-                                        # re-tested for this collection
+TO_DATE     = "Qtr Ended 31 Mar 2026"   # update each cycle (fallback only)
+                                        # QRSIS is expected to return a
+                                        # 500 error for a date beyond the
+                                        # latest period, as it does for
+                                        # the collections used by
+                                        # fetch_qgso_housing.py; this has
+                                        # not been tested separately for
+                                        # this collection.
 PERIOD      = "Quarterly"
 DATE_FMT    = "Q1"
 
-# Workbook Employment-sheet row label -> QRSIS LGA code (confirmed against
-# the March-2026 SALM LGA file, same codes; QRSIS lists these as "LGA/33610"
-# etc.)
+# Workbook Employment-sheet row label -> LGA code. These are the codes
+# used in the SALM LGA file; QRSIS lists them as "LGA/33610" and so on.
 LGA_REGIONS = {
     "Goondiwindi":   "33610",
     "Isaac":         "33980",
@@ -134,7 +131,11 @@ def _q(*pairs) -> list[tuple]:
 
 
 def _parse_options(html: str, select_name: str) -> list[str]:
-    """MUST use lxml -- html.parser merges QRSIS's unclosed <OPTION> tags."""
+    """Return the option texts of the named <select>.
+
+    lxml is required: html.parser merges the unclosed <OPTION> tags
+    that QRSIS emits.
+    """
     soup = BeautifulSoup(html, "lxml")
     for sel in soup.find_all("select", {"name": select_name}):
         return [o.get_text(strip=True) for o in sel.find_all("option") if o.get_text(strip=True)]
@@ -166,8 +167,8 @@ class QRSISLabourFetcher(BaseFetcher):
 
         self._set_time_period(session, udqctl_id, time_periods_html)
 
-        # Multiple region types in one session (LGA + State), per the real
-        # wizard's MULTIPLE-select region-type page.
+        # The region-type page is a MULTIPLE select, so LGA and State are
+        # both chosen in the one session.
         self._select_region_type(session, udqctl_id, "LGA - Local Government Area")
         self._select_region_type(session, udqctl_id, "S - State")
 
@@ -233,17 +234,19 @@ class QRSISLabourFetcher(BaseFetcher):
                     "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
-        # ADDED 2026-09-29, same port as fetch_qgso_housing.py: this response
-        # IS the next page (Time Periods) -- Oracle PL/SQL WebTK returns each
-        # next screen directly from the POST. Returned so _set_time_period
-        # can discover the real current to_date instead of relying only on
-        # the hardcoded TO_DATE.
+        # The response to this POST is the next page (Time Periods);
+        # Oracle PL/SQL WebTK returns each next screen directly. It is
+        # returned so that _set_time_period can read the current to_date
+        # from the page rather than rely only on TO_DATE.
         return resp.text
 
     def _discover_max_to_date(self, time_periods_html: str) -> str | None:
-        """See fetch_qgso_housing.py's identical method for the full
-        rationale -- ported here unchanged (duplicated deliberately, per
-        this project's practice of not coupling fetchers to each other)."""
+        """Return the latest "to date" option on the Time Periods page, or
+        None if it cannot be found.
+
+        Duplicated from fetch_qgso_housing.py, which documents the
+        rationale, so that the fetchers stay independent of each other.
+        """
         soup = BeautifulSoup(time_periods_html, "lxml")
         to_date_marker = soup.find("input", {"name": "p_names", "value": "to_date"})
         if not to_date_marker:
@@ -262,11 +265,11 @@ class QRSISLabourFetcher(BaseFetcher):
     def _set_time_period(self, session, udqctl_id, time_periods_html: str = ""):
         to_date = self._discover_max_to_date(time_periods_html) if time_periods_html else None
         if to_date:
-            self.log.info(f"  Discovered real max To Date from the page: {to_date}")
+            self.log.info(f"  Latest To Date option on the page: {to_date}")
         else:
             to_date = TO_DATE
             self.log.warning(
-                f"  Could not discover the real To Date option from the page -- "
+                f"  Could not read the To Date option from the page -- "
                 f"falling back to the hardcoded {to_date!r}, which may now be stale."
             )
         data = _q("udqctl_id", udqctl_id, "coll_id", COLL_ID, "error_msg", "",
@@ -335,13 +338,12 @@ class QRSISLabourFetcher(BaseFetcher):
     # ── Output parsing ──────────────────────────────────────────────────────
 
     def _parse_output_html(self, html: str) -> dict:
-        """
-        Returns { region_code: { period: rate_or_None } }.
-        FIXED vs fetch_qgso_housing.py's version: that one's region-code
-        regex is (?:SA2|SA3|SA4|LGA)/[\\w]+ and silently drops "S/3" (state)
-        sections entirely -- confirmed by inspection, not by a live failure,
-        since this fetcher was never run against LGA/State data before.
-        Added "S" to the prefix alternation so the Queensland row is kept.
+        """Return { region_code: { period: rate_or_None } }.
+
+        The region-code pattern includes the "S" prefix as well as SA2,
+        SA3, SA4 and LGA, so that the state section ("S/3", Queensland)
+        is kept. The equivalent pattern in fetch_qgso_housing.py omits
+        "S" and would drop state sections.
         """
         result: dict[str, dict] = {}
         sections = re.split(r'Region\s*:\s*', html)
@@ -382,7 +384,9 @@ class QRSISLabourFetcher(BaseFetcher):
         return result
 
     def _annualize(self, raw: dict) -> dict:
-        """{ region_code: { year: mean_of_4_quarters } }, complete years only."""
+        """Return { region_code: { year: mean_of_4_quarters } }, complete
+        years only.
+        """
         import statistics as stats
         out = {}
         for code, periods in raw.items():

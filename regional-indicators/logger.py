@@ -1,9 +1,10 @@
 """
-logger.py
----------
-Centralised logging for all fetchers and the orchestrator.
-Each run gets its own timestamped log file in logs/.
-Console output is also shown, colour-coded by level.
+regional-indicators/logger.py
+
+Logging for the fetchers and run_update.py.
+
+Each run writes a timestamped log file to logs/ and prints colour-coded
+messages to the console.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# ANSI colour codes for console
+# ANSI colour codes for console output
 _COLOURS = {
     "DEBUG":    "\033[36m",   # cyan
     "INFO":     "\033[32m",   # green
@@ -37,22 +38,21 @@ class ColouredFormatter(logging.Formatter):
 
 def get_logger(name: str = "regional-indicators",
                run_timestamp: str | None = None) -> logging.Logger:
-    """
-    Returns a logger that writes to both the console and a timestamped
-    log file.  Call once from run_update.py; subsequent get_logger() calls
-    with the same name return the same logger instance.
+    """Return the root logger, writing to the console and to a timestamped
+    log file. Handlers are attached once; later calls return the same
+    logger.
     """
     logger = logging.getLogger(name)
 
     if logger.handlers:
-        # Already configured — return existing instance
+        # Already configured.
         return logger
 
     logger.setLevel(logging.DEBUG)
 
     ts = run_timestamp or datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
-    # ── File handler (plain text, DEBUG+) ─────────────────────────────────────
+    # ── File handler: plain text, DEBUG and above ─────────────────────────────
     log_path = LOG_DIR / f"{ts}.log"
     fh = logging.FileHandler(log_path, encoding="utf-8")
     fh.setLevel(logging.DEBUG)
@@ -61,7 +61,7 @@ def get_logger(name: str = "regional-indicators",
         datefmt="%Y-%m-%d %H:%M:%S",
     ))
 
-    # ── Console handler (coloured, INFO+) ─────────────────────────────────────
+    # ── Console handler: coloured, INFO and above ─────────────────────────────
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
     ch.setFormatter(ColouredFormatter(
@@ -77,8 +77,8 @@ def get_logger(name: str = "regional-indicators",
 
 
 def get_child_logger(parent_name: str, child_name: str) -> logging.Logger:
-    """
-    Returns a child logger, e.g. get_child_logger('regional-indicators', 'fetch_income')
-    inherits handlers from parent so everything goes to the same log file.
+    """Return a child logger, for example
+    get_child_logger('regional-indicators', 'fetch_income'). It uses the
+    parent's handlers, so all output goes to the same log file.
     """
     return logging.getLogger(f"{parent_name}.{child_name}")

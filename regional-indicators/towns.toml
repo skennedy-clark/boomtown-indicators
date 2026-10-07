@@ -1,11 +1,30 @@
 # regional-indicators/towns.toml
-# Configuration for all towns tracked in the indicators project.
-# Auto-updated from uploaded towns.toml — April 2026
 #
-# BOOKLET FIELDS (added for booklet generation):
-#   slug         - used as folder name and Python identifier
-#   district     - text shown on booklet title page
-#   cover_photo  - filename in resources/images/towns/{slug}/
+# Towns and benchmark regions covered by the indicators project. Read by
+# config.py; every fetcher, writer and booklet builder takes its geography
+# from this file.
+#
+# Fields (all optional except name and state):
+#   name             display name; matches the town headings in the workbook
+#   state            QLD, NSW or VIC; fetchers skip states they do not cover
+#   postcode(s)      primary postcode, and all postcodes for the town
+#   sa2_code         ABS SA2 code (ASGS 2021)
+#   sa2_name         SA2 name as it appears in the workbook's row labels
+#   sa3_code         ABS SA3 code (ASGS 2021)
+#   qgso_sa2         SA2 code used in QGSO regional database (QRSIS) queries
+#   qgso_lga         LGA code in QRSIS form ("LGA/<ABS LGA code>")
+#   lga              LGA name; matches the LGA block labels in the workbook
+#   lga_code         ABS LGA code, for towns that have no qgso_lga
+#   qps_division     Queensland Police Service division used for crime rates
+#   bom_station      Bureau of Meteorology station number for rainfall
+#   csg_notice_year  CSG notice year for the town (not currently used by the code)
+#   benchmark        true for comparison regions (see BENCHMARKS below)
+#   district         text shown on the booklet title page
+#   cover_photo      file name in resources/images/towns/<slug>/
+#   sa2_map_url      QGSO SA2 boundary map (PDF) used for the booklet map page
+#   notes            free text; not used by the code
+#
+# The table key ([towns.<slug>]) is used for folder and file names.
 
 [settings]
 output_dir   = "3 Web Content"
@@ -74,7 +93,7 @@ benchmark        = false
 district         = "Dalby and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-wambo.pdf"
-notes            = "Dalby has no SA2-level SALM entry; Wambo (307021183) used as proxy. Flag in outputs. RAINFALL FIXED 2026-09-21: bom_station corrected from 41240 to 41522 (Dalby Airport), the true published station -- 41240 was a SILO-availability substitute that broke continuity with the existing published record. 41522 is NOT in SILO; fetcher will fail clearly with a BOM link until manual_rainfall_data.toml has entries for it."
+notes            = "No SA2-level SALM entry; Wambo (307021183) is used as a proxy. Rainfall: station 41522 (Dalby Airport) is the published station and is not in the SILO dataset, so monthly figures come from manual_rainfall_data.toml."
 
 [towns.miles]
 name             = "Miles"
@@ -94,7 +113,7 @@ benchmark        = false
 district         = "Miles and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-miles-wandoan.pdf"
-notes            = "SA2 renamed Miles-Wandoan in ASGS 2021; Wandoan shares this SA2. NOTE 2026-09-17: sa2_name stored WITHOUT spaces around the hyphen to match the actual workbook row label exactly -- QRSIS itself displays this region as \"Miles - Wandoan\" (with spaces), an inconsistency in the workbook's own labeling, not a data error."
+notes            = "SA2 renamed Miles-Wandoan in ASGS 2021; Wandoan shares this SA2. sa2_name is written without spaces around the hyphen to match the workbook row label (QRSIS displays the region as 'Miles - Wandoan')."
 
 [towns.tara]
 name             = "Tara"
@@ -114,7 +133,7 @@ benchmark        = false
 district         = "Tara and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-tara.pdf"
-notes            = "RAINFALL FIXED 2026-09-21: bom_station corrected to 42086 (Woodlea) -- the true published station, matching the Exogenous tab. The old note here claimed the original station was 42104, a different number, and that 41099 (Tara Township) was substituted for SILO availability -- confirmed directly against SILO: 42086 IS actually in SILO, so no substitute was ever needed. Steve confirmed 042086/Woodlea as correct against the published record."
+notes            = "Rainfall: station 42086 (Woodlea) is the published station and is available in SILO."
 
 [towns.wandoan]
 name             = "Wandoan"
@@ -134,7 +153,7 @@ benchmark        = false
 district         = "Wandoan and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-miles-wandoan.pdf"
-notes            = "Wandoan merged into Miles-Wandoan (307011175) in ASGS 2021. Shares SA2 data with Miles. NOTE 2026-09-17: sa2_name stored WITHOUT spaces around the hyphen to match the actual workbook row label exactly -- QRSIS itself displays this region as \"Miles - Wandoan\" (with spaces)."
+notes            = "Merged into Miles-Wandoan (307011175) in ASGS 2021; shares SA2 data with Miles. sa2_name is written without spaces around the hyphen to match the workbook row label (QRSIS displays the region as 'Miles - Wandoan')."
 
 [towns.wallumbilla]
 name             = "Wallumbilla"
@@ -154,7 +173,7 @@ benchmark        = false
 district         = "Wallumbilla and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-roma-surrounds.pdf"
-notes            = "RESOLVED 2026-09-17: sa2_code/qgso_sa2 corrected to 307011177, confirmed as Roma Surrounds' real ASGS 2021 code (QGSO PDF + ABS Census QuickStats both agree) -- the old 307011178 was genuinely Tara's code, and 307011176 was Roma township's own code, neither was Roma Surrounds. Cross-checked against the truth workbook: Roma Surrounds' own Population (ERP) figure (6,287) is real and distinct from Roma township's (7,083) -- confirms this was a real data-correctness issue, not just a label mismatch. BOM station 43043 has >10% synthetic data 2009-2014. FIXED 2026-09-24: qps_division corrected from 'Roma' to 'Wallumbilla' -- confirmed a real, dedicated 'Wallumbilla' QPS division exists in the raw data and was never actually needed as a substitute. The 'Roma' substitute produced massive, systematic discrepancies against the existing workbook (10-30x+ off, many years showing existing=0 vs a real nonzero source value) -- switching to Wallumbilla's own division matches the existing workbook almost exactly (2023: 48.67 vs 51.41, 2024: 32.62 vs 31.91 -- the same small ~2-5% variance every correctly-mapped town shows)."
+notes            = "SA2 is Roma Surrounds (307011177), which is distinct from the Roma township SA2 (307011176). Rainfall: station 43043 has more than 10% synthetic (interpolated) data for 2009-2014. Crime: Wallumbilla has its own QPS division."
 
 [towns.goondiwindi]
 name             = "Goondiwindi"
@@ -174,7 +193,7 @@ benchmark        = false
 district         = "Goondiwindi and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-goondiwindi.pdf"
-notes            = "RAINFALL FIXED 2026-09-21: bom_station corrected to 41507 (New Kildonan), the true pre-2020 published station -- 41038 was a SILO-availability substitute. Confirmed directly against SILO: 41507 is genuinely NOT in SILO, so this town needs manual_rainfall_data.toml entries. IMPORTANT for whoever enters that data: the published record shows a station TRANSITION -- \"New Kildonan 041507 / WTP (2020→)\" -- meaning 2020 onward should use the WTP station's own readings, not New Kildonan's continued data, if BOM's site distinguishes them. WTP's own station number is not yet known. The current towns.toml schema can only hold one bom_station per town -- doesn't yet represent this transition; using 41507 here is correct for the pre-2020 record but may not be for 2020+ once the WTP number is found."
+notes            = "Rainfall: station 41507 (New Kildonan) is the published station up to 2019 and is not in the SILO dataset, so monthly figures come from manual_rainfall_data.toml. The published record changes to the Goondiwindi WTP station from 2020; that station's number is not recorded here, and bom_station holds a single station per town."
 
 [towns.moranbah]
 name             = "Moranbah"
@@ -194,7 +213,7 @@ benchmark        = false
 district         = "Moranbah and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-moranbah.pdf"
-notes            = "RAINFALL FIXED 2026-09-21: bom_station corrected from 34038 (WTP) back to 34035 (Moranbah Airport), the true published station used in prior booklets. 34038 was a SILO-availability substitute that broke continuity with the existing published record. 34035 is NOT in SILO; fetcher will fail clearly with a BOM link until manual_rainfall_data.toml has entries for it."
+notes            = "Rainfall: station 34035 (Moranbah Airport) is the published station and is not in the SILO dataset, so monthly figures come from manual_rainfall_data.toml."
 
 [towns.dysart]
 name             = "Dysart"
@@ -214,7 +233,7 @@ benchmark        = false
 district         = "Dysart and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-broadsound-nebo.pdf"
-notes            = "Dysart absorbed into Broadsound-Nebo (312011338) in ASGS 2021. Unemployment figures cover a wide rural area. Flag in outputs. NOTE 2026-09-17: sa2_name stored WITHOUT spaces around the hyphen (\"Broadsound-Nebo\") to match the actual workbook row label exactly -- QRSIS itself displays this region as \"Broadsound - Nebo\" (with spaces), an inconsistency in the workbook's own labeling, not a data error. sa2_name here is for workbook-row matching, not necessarily QRSIS's exact display string."
+notes            = "Absorbed into Broadsound-Nebo (312011338) in ASGS 2021, so SA2 figures such as unemployment cover a wide rural area. sa2_name is written without spaces around the hyphen to match the workbook row label (QRSIS displays the region as 'Broadsound - Nebo')."
 
 [towns.toowoomba]
 name             = "Toowoomba"
@@ -298,8 +317,8 @@ notes            = "West Toowoomba SA2 sub-area"
 
 
 # ─── BENCHMARKS ─────────────────────────────────────────────────────────────
-# benchmark = true: comparison regions, not study towns. Town-level fetchers
-# skip these (they use study towns only); LGA-level fetchers include them.
+# benchmark = true marks comparison regions, which are not study towns.
+# Town-level fetchers skip them; LGA-level fetchers include them.
 
 [towns.brisbane]
 name             = "Brisbane"
@@ -307,7 +326,7 @@ state            = "QLD"
 lga              = "Brisbane"
 qgso_lga         = "LGA/31000"
 benchmark        = true
-notes            = "ADDED 2026-10-06. Benchmark LGA for the Population sheet's LGA section (row 3-4). LGA level only -- no postcode/SA2/UCL configured on purpose, and benchmark = true keeps it out of every town-level fetcher. LGA code 31000 confirmed live against the ABS LGA codelist."
+notes            = "Benchmark LGA for the LGA section of the Population sheet. LGA level only: no postcode, SA2 or UCL is configured, and benchmark = true excludes it from town-level fetchers."
 
 
 # ─── NEW SOUTH WALES TOWNS ──────────────────────────────────────────────────
@@ -327,7 +346,7 @@ csg_notice_year  = 2015
 benchmark        = false
 district         = "Narrabri and District"
 cover_photo      = "cover.jpg"
-notes            = "FIXED 2026-09-23: sa2_code corrected from 102021116 (not a valid 2021 ASGS SA2 code at all -- confirmed via direct ABS ArcGIS lookup, empty result) to 110031197, confirmed live against ABS's own current SA2 dataset. sa3_code corrected from 10202 to 11003 (Moree - Narrabri), consistent with the corrected SA2 code. Found while mapping the Business sheet's SA2-keyed rows -- Narrabri Surrounds (110031198, the SA2 immediately adjacent) has no corresponding town in this project. NSW CSG town. Absent from SALM smoothed dataset. Unemployment data pending LGA-level fallback."
+notes            = "NSW town. SA3 11003 is Moree - Narrabri. The adjacent SA2, Narrabri Surrounds (110031198), has no town in this project. lga_code is the ABS LGA code (towns outside Queensland have no qgso_lga)."
 
 
 # ─── VICTORIA TOWNS ─────────────────────────────────────────────────────────
@@ -360,4 +379,4 @@ bom_station      = "85193"
 benchmark        = false
 district         = "Yarram and District"
 cover_photo      = "cover.jpg"
-notes            = "VIC town. FIXED 2026-09-28: sa2_code corrected from 212031483 and sa3_code from 21203 (neither is a valid ASGS 2021 code) to 205051104 / 20505 (Wellington), confirmed live against ABS's own SA2/SA3 datasets. The old note claiming Yarram was \"absent from SALM\" was this wrong code, not a data gap (same cause as Narrabri). bom_station corrected earlier to 85193."
+notes            = "VIC town. SA3 20505 is Wellington."

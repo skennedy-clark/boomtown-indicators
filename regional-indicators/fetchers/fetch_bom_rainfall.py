@@ -1,95 +1,102 @@
 """
 regional-indicators/fetchers/fetch_bom_rainfall.py
---------------------------------
-Fetches annual + seasonal rainfall totals, primarily from the SILO API
-(Queensland Government), falling back to manually-entered data for
-towns whose TRUE, published BOM station isn't in SILO's dataset.
 
-Source: SILO Patched Point Dataset
-API:    https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php
-Docs:   https://www.longpaddock.qld.gov.au/silo/
+Fetches annual and seasonal rainfall totals for each town's BOM station,
+primarily from the SILO API (Queensland Government), with manually
+entered monthly figures as the fallback for stations that SILO does not
+carry.
 
-SILO hosts BOM station data through a clean HTTP API — no session cookies, no FTP.
-Requires only an email address as username (no registration).
+Source:
+  SILO Patched Point Dataset
+  API:   https://www.longpaddock.qld.gov.au/cgi-bin/silo/PatchedPointDataset.php
+  Docs:  https://www.longpaddock.qld.gov.au/silo/
 
-Config required in config.py:
-    SILO_EMAIL = "uqsken12@uq.edu.au"
+  SILO serves BOM station data over a plain HTTP API (no session
+  cookies, no FTP). It requires only an email address as the username;
+  no registration is needed.
 
-REQUEST FORMAT
-  URL: PatchedPointDataset.php?format=csv&comment=R&station={N}&start=YYYYMMDD&finish=YYYYMMDD&username={email}
-  format=csv + comment=R returns daily rainfall only (smaller response than alldata)
+  Configuration required in config.py:
+      SILO_EMAIL = "<email address>"
 
-ACTUAL CSV FORMAT (verified from real response 2026-04-07):
+Request format:
+  PatchedPointDataset.php?format=csv&comment=R&station={N}&start=YYYYMMDD&finish=YYYYMMDD&username={email}
+  format=csv with comment=R returns daily rainfall only, a smaller
+  response than alldata.
+
+CSV layout:
   station,YYYY-MM-DD,daily_rain,daily_rain_source,metadata
   41240,2001-01-01,    0.0,0,"name=HEREWARD"
   41240,2001-01-02,    0.0,0,"latitude= -27.1858"
   ...
-  Note: metadata column carries station info in first ~8 rows, then empty
+  The metadata column carries station information in the first ~8 rows
+  and is empty after that.
 
-SOURCE CODES for daily_rain_source (verified):
-  0  = target station observed (ideal)
-  25 = nearby station observed (still real obs, not the target station)
-  15 = synthetic / interpolated from grid
-  Any year where >10% of days are code=15 is flagged in output notes.
-  Codes 0 and 25 are both treated as observed data.
+Source codes in daily_rain_source:
+  0  = observed at the target station
+  25 = observed at a nearby station
+  15 = synthetic / interpolated from the grid
+  Codes 0 and 25 are both treated as observed data. Any year in which
+  more than 10% of days are code 15 is flagged in the output note.
 
-POLICY, CHANGED 2026-09-21 -- NO MORE AUTO-SUBSTITUTION
-  Confirmed real, published-record continuity matters more than
-  automated data availability: towns.toml's bom_station is meant to be
-  the ACTUAL station used in the published workbook history (e.g.
-  Dalby Airport 041522, Moranbah Airport 034035), not whichever nearby
-  station happens to be easiest to fetch. An earlier version of this
-  fetcher auto-substituted a different SILO-available station when the
-  configured one wasn't found (via _find_alternative_station, now
-  removed from the main flow) -- this silently broke continuity with
-  years of already-published data using the true station. Confirmed
-  real example: Yarram's "Airport" station (85151) is real and
-  currently active per BOM's own climate archive, but simply isn't in
-  SILO's curated Patched Point Dataset -- a coverage gap, not a wrong
-  number, and auto-substituting a different station would have been
-  the wrong fix even though it "worked."
+Station policy (no automatic substitution):
+  Continuity with the published record takes priority over automated
+  data availability. towns.toml's bom_station is the station used in
+  the published workbook history (e.g. Dalby Airport 041522, Moranbah
+  Airport 034035), not whichever nearby station is easiest to fetch.
+  When the configured station is not in SILO, the fetcher does not
+  substitute another SILO station, because that would silently break
+  continuity with the years already published. Example: Yarram Airport
+  (85151) is an active station in BOM's climate archive but is not in
+  SILO's Patched Point Dataset; that is a coverage gap, and a
+  different station would give a different series.
 
-  New towns being added with no prior published history are a
-  different case -- picking the nearest SILO-available station for
-  those is legitimate (there's no continuity to preserve yet). That
-  decision happens once, by hand, when the town is added to
-  towns.toml -- not automatically at fetch time.
+  A new town with no published history is a different case: choosing
+  the nearest SILO-available station is legitimate because there is no
+  continuity to preserve. That choice is made once, manually, when the
+  town is added to towns.toml, not at fetch time.
 
-  When the TRUE station isn't in SILO: checks manual_rainfall_data.toml
-  for manually-entered monthly figures (a human reads them off BOM's
-  Climate Data Online page directly, since that page blocks automated
-  access but not ordinary browsing -- confirmed 2026-09-21). If found,
-  those run through the EXACT SAME total/summer/winter aggregation
-  logic as SILO data, just source-labelled as manual. If not found,
-  fails with a direct clickable link to that station's BOM CDO page.
+  When the configured station is not in SILO, manual_rainfall_data.toml
+  is checked for manually entered monthly figures. These are read from
+  BOM's Climate Data Online page in a browser, because that page blocks
+  automated access. Manual figures go through the same
+  total/summer/winter aggregation as SILO data and are labelled as
+  manual in the output. If there are none, the town fails with a
+  warning that links to the station's Climate Data Online page.
 
-BOM ANONYMOUS FTP -- CONFIRMED NOT A VIABLE SOURCE (2026-09-21)
-  Investigated as an alternative to SILO. BOM's own README at
-  ftp2.bom.gov.au/anon/gen/README states this service carries CURRENT
-  forecasts/warnings/observations/charts only -- historical station
-  climate records are explicitly a separate, PAID "registered user"
-  product, with only non-real samples available free. Not a path to
-  historical rainfall data. Don't revisit this without a real reason
-  to believe it's changed.
+BOM anonymous FTP is not a source:
+  BOM's README at ftp2.bom.gov.au/anon/gen/README states that the
+  service carries current forecasts, warnings, observations and charts
+  only. Historical station climate records are a separate, paid
+  "registered user" product, with only sample data available free.
 
-AGGREGATION
-  Daily/monthly mm → monthly totals → annual total and summer/winter split
+Aggregation:
+  Daily or monthly mm -> monthly totals -> annual total and
+  summer/winter split.
   Summer = Jan, Feb, Mar, Oct, Nov, Dec
   Winter = Apr, May, Jun, Jul, Aug, Sep
   Historic average = mean of all complete years in the full record
-  (All years with 12 complete months, not just YEAR_START-YEAR_END --
-  applies identically whether the record came from SILO or manual entry)
+  (every year with 12 complete months, not only YEAR_START-YEAR_END).
+  The same rule applies to SILO and manually entered records.
 
-DATA VALIDATION NOTE
-  Dalby (41240) 2024: SILO = 972.7mm, manual QGSO+BoM xlsx = 947.4mm
-  Difference (~2.5%) is expected — the manual xlsx had some missing days (None values).
-  SILO fills gaps from nearby stations; this is the preferred data source.
-  NOTE: 41240 was the auto-substituted station under the old policy --
-  towns.toml now correctly points at 041522 (Dalby Airport), the real
-  published station, which is NOT in SILO. This note is kept for
-  historical context, not as current guidance.
+BOM official average:
+  BOM's "Mean rainfall (mm)" annual figure for the station is also read
+  from its Climate Averages table (BOM_AVERAGES_URL) and written
+  alongside the computed average. Not every station has such a page.
 
-Website CSVs produced:
+Notes:
+  Data comparison for SILO station 41240 (near Dalby), 2024:
+  SILO = 972.7 mm; the manually compiled QGSO+BoM xlsx = 947.4 mm. The
+  difference (~2.5%) is expected: the manual xlsx had some missing days,
+  whereas SILO fills gaps from nearby stations. Station 41240 is not
+  the published Dalby station. towns.toml points at 041522 (Dalby
+  Airport), which is not in SILO, so this comparison illustrates SILO's
+  gap filling and is not guidance for Dalby.
+
+Output:
+  cache/silo_rainfall_<station>.csv            raw SILO download
+  cache/rainfall/<slug>_bom_rainfall.json      one per town
+
+Website CSVs produced from this data:
   Environment - total rainfall.csv
   Environment - summer rainfall.csv
   Environment - winter rainfall.csv
@@ -133,33 +140,35 @@ BOM_CDO_URL        = (
 )
 
 BOM_AVERAGES_URL = "https://www.bom.gov.au/climate/averages/tables/cw_{station}.shtml"
-# Confirmed genuinely accessible (2026-09-22, verified independently via
-# both web_fetch and a raw curl request -- real HTTP 200, real content).
-# A DIFFERENT BOM product from the interactive Climate Data Online portal
-# that blocks automated access -- this is their static "Climate Averages"
-# tables, not subject to the same block. Confirmed real row shape: label
-# cell, 12 month cells, Annual cell, years-of-data cell, date-range cell
-# (16 cells total for the "Mean rainfall (mm)" row specifically).
+# BOM's static "Climate Averages" tables. This is a different product
+# from the interactive Climate Data Online portal and does not block
+# automated requests. {station} is the station number zero-padded to
+# six digits. The "Mean rainfall (mm)" row layout is described in
+# _fetch_official_historic_average().
 
-# Source codes in daily_rain_source column
-CODE_SYNTHETIC   = 15   # interpolated/patched — flag if >10% of year
-CODE_MANUAL      = -1   # marker for manually-entered data (never "synthetic")
-# Codes 0 and 25 are both real observations (0=target station, 25=nearby station)
+# Source codes in the daily_rain_source column.
+CODE_SYNTHETIC   = 15   # interpolated/patched; a year is flagged if >10% of days
+CODE_MANUAL      = -1   # marker for manually entered data (never counted as synthetic)
+# Codes 0 (target station) and 25 (nearby station) are both observations.
 
-PATCH_THRESHOLD  = 0.10   # flag year if >this fraction of days are code=15
+PATCH_THRESHOLD  = 0.10   # flag a year if more than this fraction of days are code 15
 
 SUMMER_MONTHS = frozenset({1, 2, 3, 10, 11, 12})
 WINTER_MONTHS = frozenset({4, 5, 6, 7, 8, 9})
 
-# Earliest year to fetch — gives full historic record for average calculation
+# Earliest year to fetch. A long record is needed for the historic
+# average.
 FETCH_FROM_YEAR = 2001
 
 _manual_data_cache: dict | None = None
 
 
 def _load_manual_rainfall_data() -> dict:
-    """Load and cache manual_rainfall_data.toml -> {town: {(year, month): value_mm}}.
-    A missing file just means no manual entries exist yet, not an error."""
+    """Load and cache manual_rainfall_data.toml as
+    {town: {(year, month): value_mm}}.
+
+    A missing file means no manual entries exist and is not an error.
+    """
     global _manual_data_cache
     if _manual_data_cache is not None:
         return _manual_data_cache
@@ -224,10 +233,8 @@ class BOMRainfallFetcher(BaseFetcher):
         if not cache_path.exists() or self.force:
             ok, _ = self._download_station(station, cache_path, town.name, email)
             if not ok:
-                # NOT auto-substituting a different station -- continuity
-                # with the published record matters more than automated
-                # availability (see module docstring). Check manual
-                # entries instead.
+                # No other station is substituted (see "Station policy" in the
+                # module docstring). Manual entries are used instead, if any.
                 monthly = self._monthly_from_manual_data(town.name)
                 if monthly:
                     self.log.info(
@@ -243,10 +250,10 @@ class BOMRainfallFetcher(BaseFetcher):
                 self.log.warning(
                     f"  [{town.name}] Station {station} not in SILO Patched Point "
                     f"Dataset, and no manual entries found in "
-                    f"manual_rainfall_data.toml. This is the TRUE published "
-                    f"station -- not auto-substituting a different one. "
-                    f"Open this in a browser (not automatable, BOM blocks "
-                    f"scraping here) to read the monthly figures and add them "
+                    f"manual_rainfall_data.toml. This is the published "
+                    f"station, so no other station is substituted. "
+                    f"Open this link in a browser (BOM blocks automated "
+                    f"access) to read the monthly figures and add them "
                     f"to manual_rainfall_data.toml: {link}"
                 )
                 self.result.towns_failed.append(town.name)
@@ -254,7 +261,7 @@ class BOMRainfallFetcher(BaseFetcher):
         else:
             self.log.info(f"  [{town.name}] Using cached SILO data for station {station}")
 
-        # Parse SILO CSV → same aggregation path as manual data
+        # Parse the SILO CSV into the same structure as manual data.
         monthly = self._parse_csv(cache_path, town.name)
         if monthly is None:
             self.result.towns_failed.append(town.name)
@@ -274,28 +281,21 @@ class BOMRainfallFetcher(BaseFetcher):
         )
 
     def _fetch_official_historic_average(self, station: str, town_name: str) -> tuple[float | None, str]:
-        """Fetch BOM's own official 'Mean rainfall (mm) Annual' figure
-        for this station from their Climate Averages page -- confirmed
-        genuinely accessible (2026-09-22), a different BOM product from
-        the interactive portal that blocks automated access.
+        """Fetch BOM's official 'Mean rainfall (mm)' annual figure for this
+        station from its Climate Averages page.
 
-        Returns (value, note). value is None if genuinely unavailable
-        (network error, station not on this page, unexpected page
-        structure) -- the caller falls back to keeping whatever's
-        already in the workbook rather than blanking it or guessing,
-        per Steve's explicit instruction, but the note always explains
-        what happened so it's visible either way.
+        Returns (value, note). value is None when the figure is
+        unavailable (network error, no page for the station, unexpected
+        page structure). In that case the caller keeps the Historic
+        Average already in the workbook; it is neither blanked nor
+        estimated. The note always states what happened.
         """
-        # BUG FIXED 2026-10-06: BOM's page name uses the station number
-        # zero-padded to SIX digits (cw_041522.shtml). towns.toml holds
-        # the 5-digit form (41522), which was being used as-is -- every
-        # station returned 404, so this figure was never actually fetched
-        # and the writer silently fell back to carrying last year's
-        # average forward. Confirmed live: cw_41522 -> 404, cw_041522 ->
-        # 200. With the fix, 6 of the 12 workbook stations have a page
-        # (Dalby, Miles, Moranbah, Narrabri, Roma, Toowoomba); the other
-        # six genuinely have none (also 404 when padded) and still fall
-        # back, with the note below saying so.
+        # The page name uses the station number zero-padded to six digits
+        # (cw_041522.shtml), whereas towns.toml holds the 5-digit form
+        # (41522); the unpadded form returns 404. Of the 12 workbook
+        # stations, 6 have a page (Dalby, Miles, Moranbah, Narrabri, Roma,
+        # Toowoomba). The other six have none (404 when padded as well),
+        # so they take the fallback and the returned note says so.
         station_padded = str(station).zfill(6)
         url = BOM_AVERAGES_URL.format(station=station_padded)
         try:
@@ -327,15 +327,12 @@ class BOMRainfallFetcher(BaseFetcher):
                     f"existing Historic Average; worth checking manually: {url}"
                 )
 
-            # Confirmed real row shape (2026-09-22, verified against the live
-            # page, not just an isolated snippet): [0]=label, [1..12]=Jan..Dec,
-            # [13]=Annual, [14]=years-of-data, [15]=date-range, [16..17]=empty
-            # plot/map icon cells. Indexed from the START, not the end -- an
-            # earlier version used cells[-3]/cells[-2] and silently grabbed the
-            # date-range cell instead of Annual, because the real page has 18
-            # cells (with trailing plot/map icons) not the 16 an isolated test
-            # snippet assumed. Fixed positions from the start are stable
-            # regardless of how many decorative cells follow.
+            # Row layout on the live page (18 cells): [0]=label,
+            # [1..12]=Jan..Dec, [13]=Annual, [14]=years of data,
+            # [15]=date range, [16..17]=empty plot/map icon cells. Cells are
+            # indexed from the start because the number of trailing icon
+            # cells is not fixed; indexing from the end would pick up the
+            # date-range cell instead of Annual.
             annual_text = cells[13].get_text(strip=True)
             annual_value = float(annual_text)
             years_text = cells[14].get_text(strip=True)
@@ -356,14 +353,15 @@ class BOMRainfallFetcher(BaseFetcher):
             )
 
     def _monthly_from_manual_data(self, town_name: str) -> dict:
-        """Convert manual_rainfall_data.toml entries for this town into the
-        same {(year, month): [(rain_mm, source_code), ...]} shape
-        _parse_csv() produces from SILO CSV, so _aggregate() can be
-        reused completely unchanged. Uses a single synthetic "day" per
-        month at CODE_MANUAL (never counted as CODE_SYNTHETIC, so
-        manual entries never get flagged as interpolated/patched --
-        they're real numbers a human read directly, not the grid-
-        interpolated data that flag is for)."""
+        """Convert this town's manual_rainfall_data.toml entries into the
+        {(year, month): [(rain_mm, source_code), ...]} structure that
+        _parse_csv() produces, so that _aggregate() handles both sources.
+
+        Each month is represented by a single record with CODE_MANUAL.
+        That code is never counted as CODE_SYNTHETIC, so manual entries
+        are not flagged as interpolated: they are observed figures
+        transcribed from BOM, not grid-interpolated data.
+        """
         manual = _load_manual_rainfall_data().get(town_name, {})
         monthly: dict[tuple, list] = defaultdict(list)
         for (year, month), value_mm in manual.items():
@@ -375,7 +373,7 @@ class BOMRainfallFetcher(BaseFetcher):
     def _download_station(
         self, station: str, cache_path: Path, town_name: str, email: str
     ) -> tuple[bool, str]:
-        """Download SILO CSV for a station. Returns (success, station_used)."""
+        """Download the SILO CSV for a station. Returns (success, station)."""
         params = {
             "format":   "csv",
             "comment":  "R",
@@ -395,7 +393,7 @@ class BOMRainfallFetcher(BaseFetcher):
             resp.raise_for_status()
             content = resp.text
 
-            # SILO returns a plain-text error (not HTTP error) for invalid stations
+            # SILO reports an invalid station as plain text, not as an HTTP error.
             if "Invalid station" in content or "Sorry station" in content:
                 self.log.warning(
                     f"  [{town_name}] Station {station} not in SILO: "
@@ -403,7 +401,7 @@ class BOMRainfallFetcher(BaseFetcher):
                 )
                 return False, station
 
-            # Sanity check — should be CSV not HTML
+            # The response should be CSV, not HTML.
             if "<html" in content.lower()[:100]:
                 self.log.error(f"  [{town_name}] Got HTML response — unexpected error")
                 return False, station
@@ -421,11 +419,10 @@ class BOMRainfallFetcher(BaseFetcher):
     # ── Parse ──────────────────────────────────────────────────────────────────
 
     def _parse_csv(self, path: Path, town_name: str) -> dict | None:
-        """
-        Parse SILO CSV into:
+        """Parse a SILO CSV into
           { (year, month): [(rain_mm, source_code), ...] }
 
-        Actual SILO CSV format (comment=R):
+        SILO CSV layout (comment=R):
           station,YYYY-MM-DD,daily_rain,daily_rain_source,metadata
           41240,2001-01-01,    0.0,0,"name=HEREWARD"
           ...
@@ -438,7 +435,7 @@ class BOMRainfallFetcher(BaseFetcher):
                 self.log.error(f"  [{town_name}] Empty SILO CSV")
                 return None
 
-            # The first line IS the header — verify it looks right
+            # The first line is the header; check that it has the expected columns.
             header = lines[0].strip()
             if "YYYY-MM-DD" not in header and "daily_rain" not in header:
                 self.log.error(
@@ -453,7 +450,6 @@ class BOMRainfallFetcher(BaseFetcher):
             for row in reader:
                 try:
                     date_str = row["YYYY-MM-DD"].strip()
-                    # date format: YYYY-MM-DD
                     year  = int(date_str[:4])
                     month = int(date_str[5:7])
                     rain  = float(row["daily_rain"].strip())
@@ -488,17 +484,16 @@ class BOMRainfallFetcher(BaseFetcher):
         monthly: dict,
         town_name: str,
     ) -> tuple[dict, set, float | None]:
-        """
-        Aggregate daily/monthly records into annual totals -- identical
-        logic regardless of whether `monthly` came from SILO's daily CSV
-        or manual_rainfall_data.toml's monthly entries.
+        """Aggregate daily or monthly records into annual totals. The logic
+        is the same whether `monthly` came from SILO's daily CSV or from
+        manual_rainfall_data.toml's monthly entries.
 
         Returns:
-          annual        – { year: {"total": mm, "summer": mm, "winter": mm} }
-          patched_years – set of years where >PATCH_THRESHOLD days have code=15
-          historic_avg  – mean annual total across ALL complete years in record
+          annual        - { year: {"total": mm, "summer": mm, "winter": mm} }
+          patched_years - set of years where >PATCH_THRESHOLD days have code=15
+          historic_avg  - mean annual total across all complete years in record
         """
-        # Summarise each (year, month) bucket
+        # Summarise each (year, month) bucket.
         month_totals: dict[tuple, dict] = {}
         for (year, month), days in monthly.items():
             total_mm     = sum(d[0] for d in days)
@@ -521,7 +516,8 @@ class BOMRainfallFetcher(BaseFetcher):
                       for m in range(1, 13)
                       if (year, m) in month_totals}
 
-            # Skip incomplete years (don't include in historic average either)
+            # Skip incomplete years; they are also excluded from the historic
+            # average.
             if len(months) < 12:
                 continue
 
@@ -579,7 +575,7 @@ class BOMRainfallFetcher(BaseFetcher):
             self.result.towns_failed.append(town.name)
             return
 
-        # Build data quality note
+        # Build the data quality note.
         patch_note = ""
         flagged_in_range = sorted(y for y in patched_years if YEAR_START <= y <= YEAR_END)
         if flagged_in_range:

@@ -1,40 +1,29 @@
 """
 regional-indicators/transform/xlsx_update/update_population_erp.py
------------------------------------------------------------------------
-Writes the main SA2-level "Population (ERP)" figure from
-fetch_population_erp.py's cached output into the workbook's SA2 section
-on the Population sheet.
 
-Uses section="SA2" (base.py's new disambiguator) to land in the right
-section -- this indicator name collides with the LGA section's own
-"Population (ERP)" row for the same town names (confirmed real:
-Goondiwindi's LGA figure is 42% different from its SA2 figure), so
-section is not optional here the way it's been unnecessary for the UCL
-writes so far.
+Writes SA2-level estimated resident population (ERP) into the Population
+sheet.
 
-IMPORTANT: matches by town.sa2_name, NOT town.name. The SA2 section's
-row labels are real ABS SA2 names, not town names -- e.g. Toowoomba's
-three sub-areas need "Toowoomba - Central" / "North Toowoomba -
-Harlaxton" / "Toowoomba - West", not "Toowoomba (Central)" etc. This
-was flagged as an open gap weeks before fetch_population_erp.py existed
-to actually need it.
+Input:  cache/population/<slug>_population_erp.json, produced by
+        fetchers/fetch_population_erp.py.
+Target: the "SA2" section of the Population sheet, row "Population
+        (ERP)" in each SA2's block.
 
-Full source history is available (fetch_population_erp.py's
-series_by_year field), so every write goes through the ground-truth
-historical cross-check, same as update_population_nrw_lga.py -- more
-reliable than the shape-based guess for existing-data problems.
+The row name "Population (ERP)" also exists in the LGA section, under
+some of the same region names, so every lookup passes section="SA2".
 
-Uses xlwings (real Excel via COM automation), NOT openpyxl -- see
-base.py's docstring for why.
+Blocks are matched on the SA2 name recorded in the cache file, not the
+town name: the section is headed by ABS SA2 names (for example
+"Toowoomba - Central"), which differ from town names for several towns.
 
-*** NOT YET TESTED against a live Excel instance. *** The section
-parameter itself is tested (against a mock reproducing the real
-Goondiwindi LGA/SA2 collision), but this script's actual write against
-the real workbook has not been run yet -- test against a throwaway
-copy first, same as every other first run this project.
+The cache carries the full source series, so every write is checked
+against it with audit_historical_series.
+
+The LGA-level row is written by update_population_erp_lga.py. The
+workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_population_erp.py <path-to-Indicators_Data-Charts.xlsx> <cache/population dir> [--visible]
+    python update_population_erp.py <workbook.xlsx> <cache/population dir> [--visible]
 """
 
 from __future__ import annotations
@@ -76,11 +65,8 @@ def update_population_erp(xlsx_path: Path, cache_dir: Path, visible: bool = Fals
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
 
-                # sa2_name is the real ABS SA2 region name, captured by
-                # fetch_population_erp.py from the matched QRSIS region
-                # string -- confirmed reliable, including for towns whose
-                # SA2 name differs from town.name (Toowoomba's three
-                # sub-areas each get their own correct, distinct name).
+                # The block heading is the ABS SA2 name captured by the fetcher,
+                # which differs from the town name for several towns.
                 town_display_name = data.get("town")
                 sa2_name = data.get("sa2_name") or town_display_name
                 series_by_year = data.get("series_by_year") or {}

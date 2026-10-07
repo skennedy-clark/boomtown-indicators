@@ -1,71 +1,55 @@
 """
-fetchers/fetch_narrabri_sales_rent.py
---------------------------------------
-Fetches Mean/Median Sales Price, Sales No., and Median Weekly Rent for New
-Bonds (House 3-bed, and Total/all-types 3-bed) for Narrabri (LGA), for the
-Housing sheet's Narrabri block (rows 132-141). Confirmed via direct
-inspection of the real starting file that this block needs exactly these
-five indicators, matching row labels and sub-rows exactly.
+regional-indicators/fetchers/fetch_narrabri_sales_rent.py
 
-SOURCE: NSW Department of Communities and Justice (DCJ) Rent and Sales
-Report -- quarterly, LGA-level, since 2011. Confirmed live 2026-10-01 as
-the real, current, authoritative source (matches the sheet's own "New
-Bonds" terminology exactly, almost certainly the same source the sheet
-was originally built from).
+Fetches mean and median sales price, sales number, and median weekly
+rent for new bonds (House 3-bedroom, and Total 3-bedroom) for Narrabri
+(LGA), for the Narrabri block of the Housing sheet (rows 132-141).
 
-STRUCTURE, confirmed by downloading real files and inspecting directly,
-not assumed:
-  - Each quarter publishes TWO separate files: a "Sales tables" workbook
-    and a "Rent tables" workbook, both with an "LGA" sheet.
-  - Sales LGA sheet: long/tidy format, one row per (LGA, DwellingType).
-    Columns confirmed: "Median Sales Price $'000s", "Mean Sales Price
-    $'000s", "Sales No." -- values in THOUSANDS, multiplied by 1000 below
-    to match the sheet's existing full-dollar convention (confirmed: the
-    sheet's own history is in whole dollars, e.g. 282034.72, not 282.03).
-    Narrabri's relevant row has DwellingType="Total" (all dwelling types
-    combined) -- confirmed live: Q1 2026 gives Median=$435k, Mean=$458k,
-    Sales No.=51.
-  - Rent LGA sheet: long/tidy format, one row per (LGA, DwellingType,
-    Bedrooms). Column confirmed: "Median Weekly Rent for New Bonds $".
-    TWO rows needed, confirmed live: DwellingType="House" + Bedrooms="3
-    Bedrooms" (matches the sheet's "House 3-Bed" row exactly), and
-    DwellingType="Total" + Bedrooms="3 Bedrooms" (matches the sheet's
-    bare "Total" row -- confirmed by value: both read $500 in the same
-    live quarter, consistent with the "Total" row being the ALL-types
-    3-bedroom figure, not an all-bedrooms figure).
+Source: NSW Department of Communities and Justice (DCJ) Rent and Sales
+Report: quarterly, LGA level, since 2011. Its "New Bonds" terminology
+matches the sheet's row labels.
+  https://dcj.nsw.gov.au/about-us/families-and-communities-statistics/housing-rent-and-sales/rent-and-sales-report.html
 
-FILE NAMING, confirmed inconsistent across quarters -- live-tested
-multiple real historical filenames, including several different naming
-conventions in the same calendar year (e.g. "issue-152-sales-tables-
-mar-2025.xlsx" vs "sales_tables_june_2025_quarter.xlsx" -- underscores vs
-hyphens, issue-number-prefixed vs not). No single predictable pattern
-exists, so this fetcher does NOT try to guess historical filenames the
-way other fetchers in this project discover a current release slug.
-Instead:
-  - Known-good historical filenames (2025, all 4 quarters, both sales and
-    rent) are hardcoded as a confirmed-working backfill -- every one of
-    the 8 live-tested directly (HTTP 200), not assumed from the list they
-    came from.
-  - The CURRENT quarter's files are discovered live each run, by scraping
-    the live "rent-and-sales-report.html" landing page, which reliably
-    links the latest quarter under a predictable "{type}-tables-
-    {month}-{year}-quarter.xlsx" pattern (confirmed live 2026-10-01: Rent
-    = June 2026, Sales = March 2026 -- rent and sales are NOT
-    synchronised to the same quarter, reflecting their different
-    reporting lags, confirmed from the page itself).
-  - update each cycle: once a full NEW calendar year's 4 quarters exist,
-    add them to QUARTER_FILES the same way 2025's were added, by visiting
-    the "Previous rent and sales reports" archive page and copying the
-    real filenames -- there is no way to discover these automatically
-    given the inconsistent naming, confirmed above.
+File layout:
+  - Each quarter has two files, a "Sales tables" workbook and a "Rent
+    tables" workbook, each with an "LGA" sheet.
+  - Sales LGA sheet: long format, one row per (LGA, DwellingType).
+    Columns "Median Sales Price $'000s", "Mean Sales Price $'000s" and
+    "Sales No.". Prices are in thousands and are multiplied by 1000 to
+    match the sheet, which holds whole dollars (282034.72, not 282.03).
+    Narrabri's row is the one with DwellingType="Total" (all dwelling
+    types); for example Q1 2026 gives median $435k, mean $458k and 51
+    sales.
+  - Rent LGA sheet: long format, one row per (LGA, DwellingType,
+    Bedrooms). Column "Median Weekly Rent for New Bonds $". Two rows
+    are read: DwellingType="House" with Bedrooms="3 Bedrooms" (the
+    sheet's "House 3-Bed" row), and DwellingType="Total" with
+    Bedrooms="3 Bedrooms" (the sheet's "Total" row, which is the
+    all-types 3-bedroom figure, not an all-bedrooms figure).
 
-AGGREGATION: matches this project's established convention for region-
-level Housing data (see fetch_qgso_housing.py's _fetch_regions) -- price
-and rent are the MEAN of the 4 quarterly values for the year; Sales No.
-is the SUM of the 4 quarterly counts (a count, not a rate, so summing is
-correct the same way it is for QLD's housing sales count and building
-approvals elsewhere in this project). Complete years only (all 4 quarters
-present).
+File naming: file names are inconsistent between quarters, including
+within one calendar year ("issue-152-sales-tables-mar-2025.xlsx"
+against "sales_tables_june_2025_quarter.xlsx": underscores or hyphens,
+with or without an issue number). Historical file names therefore
+cannot be derived, and are handled as follows:
+  - The file names for 2025 (four quarters, sales and rent) are listed
+    in QUARTER_FILES as a backfill.
+  - The current quarter's files are discovered on each run by scraping
+    the "rent-and-sales-report.html" landing page, which links the
+    latest quarter as "{type}-tables-{month}-{year}-quarter.xlsx". Rent
+    and sales are not published for the same quarter, because their
+    reporting lags differ (for example Rent = June 2026 with Sales =
+    March 2026).
+  - Update each cycle: once all four quarters of a new calendar year
+    exist, add them to QUARTER_FILES, copying the file names from the
+    "Previous rent and sales reports" archive page.
+
+Aggregation: as for region-level Housing data in fetch_qgso_housing.py
+(_fetch_regions). Price and rent are the mean of the four quarterly
+values for the year; Sales No. is the sum of the four quarterly counts.
+Complete years only (all four quarters present).
+
+Output: cache/housing/regions/narrabri_sales_rent.json.
 """
 
 from __future__ import annotations
@@ -98,11 +82,10 @@ LANDING_PAGE = (
 
 NARRABRI_NAME = "Narrabri"
 
-# update each cycle -- known-good historical filenames, live-tested
-# individually (HTTP 200) on 2026-10-01, not assumed from wherever this
-# list originally came from. Add new quarters here once a full calendar
-# year is available; see the module docstring for why this can't be
-# discovered automatically.
+# Update each cycle. Historical file names, each of which resolves on
+# the DCJ site. Add a year's quarters once the full calendar year is
+# available; the names cannot be discovered automatically (see the
+# module docstring).
 QUARTER_FILES = {
     # (year, quarter): (sales_filename, rent_filename)
     (2025, 1): ("issue-152-sales-tables-mar-2025.xlsx", "issue-151-rent-tables-mar-2025.xlsx"),
@@ -123,12 +106,13 @@ RENT_LABELS = {
 
 
 def _discover_current_quarter_files(log) -> dict[str, str] | None:
-    """Scrape the live landing page for the current quarter's real
-    filenames -- confirmed live 2026-10-01 these appear as direct /content/
-    dam/... links under predictable button text ("Rent tables <Month>
-    <Year> quarter" / "Sales tables <Month> <Year> quarter"). Returns
-    {"sales": url, "rent": url} or None if the page structure doesn't
-    match (falls back to the hardcoded QUARTER_FILES backfill only).
+    """Return the current quarter's file URLs, scraped from the landing
+    page, as {"sales": url, "rent": url}.
+
+    The files are linked as /content/dam/... URLs under button text of
+    the form "Rent tables <Month> <Year> quarter" and "Sales tables
+    <Month> <Year> quarter". Returns None if both links cannot be found,
+    in which case only the QUARTER_FILES backfill is used.
     """
     try:
         resp = requests.get(LANDING_PAGE, timeout=30)
@@ -251,10 +235,9 @@ class NarrabriSalesRentFetcher(BaseFetcher):
         quarters = dict(QUARTER_FILES)  # (year, quarter) -> (sales_fn, rent_fn)
 
         current = _discover_current_quarter_files(self.log)
-        # The current page's sales/rent quarters aren't necessarily the
-        # same quarter (confirmed live: rent lags less than sales) -- each
-        # is merged in under its OWN reporting quarter, parsed from its
-        # filename, rather than assumed to match.
+        # The sales and rent files on the landing page are not necessarily
+        # for the same quarter (rent lags less than sales). Each is filed
+        # under its own reporting quarter, parsed from its file name.
         current_urls: dict[tuple[int, int], dict[str, str]] = {}
         if current:
             for kind, url in current.items():
@@ -283,7 +266,7 @@ class NarrabriSalesRentFetcher(BaseFetcher):
 
         for (yr, q), urls in current_urls.items():
             if (yr, q) in by_quarter_data:
-                continue  # already have this quarter from the hardcoded backfill
+                continue  # already loaded from QUARTER_FILES
             merged = {}
             if "sales" in urls:
                 p = self.download(urls["sales"], f"dcj_sales_{yr}q{q}", suffix=".xlsx")
@@ -301,7 +284,8 @@ class NarrabriSalesRentFetcher(BaseFetcher):
             self.result.add_error("ALL", "No Narrabri sales/rent data assembled from any quarter")
             return
 
-        # Aggregate by calendar year -- mean for price/rent, sum for sales count
+        # Aggregate by calendar year: mean for price and rent, sum for the
+        # sales count.
         by_year: dict[int, dict[str, list]] = {}
         for (yr, q), vals in by_quarter_data.items():
             if not (YEAR_START <= yr <= YEAR_END):

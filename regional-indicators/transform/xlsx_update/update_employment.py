@@ -1,42 +1,37 @@
 """
 regional-indicators/transform/xlsx_update/update_employment.py
------------------------------------------------------------------------
-Writes fetch_salm_unemployment.py's per-REGION cache files
-(cache/unemployment/regions/{sa2|lga}_*.json) into the Employment sheet.
 
-CONFIRMED REAL STRUCTURE (2026-09-28, direct inspection of the 2026 reference):
-  Row 1: plain calendar-year integers from column C (2001 ... 2025) -- the same
-    layout as the Crime sheet, so this script REUSES Crime's already-tested
-    year-column / existing-series / write helpers rather than duplicating them
-    (import from update_crime; both sheets must keep this layout in step).
-  Row 2: fiscal labels for the early columns ("2000/01" ...) then the same
-    plain integer as row 1 from 2011 on. When a NEW year column is created,
-    row 2 is filled with the year too, to keep that pattern.
-  Three sections, each introduced by a marker in column A:
-      "LGA"   (row 3, a header row: A="LGA", B="Label")  -> 5 LGA rows
-      "SA2"   (row 9)                                    -> 15 SA2 rows
-      "State" (row 25)                                   -> NSW, Queensland (benchmark)
-  Every data row has column B = "Smoothed Unemployment rate (%)" and column A =
-    the region name. THE SAME NAME APPEARS IN TWO SECTIONS ("Goondiwindi" is
-    both an LGA and an SA2), so a region row is only ever searched for WITHIN
-    its own section's bounds -- same disambiguation as Business's NPP/PP.
-  Values are plain constants (no formulas) in every SA2/LGA cell.
+Writes smoothed unemployment rates into the Employment sheet.
 
-NOT IN SCOPE: the two State rows. SALM does not publish states; their source
-(looks like ABS Labour Force Survey) is still to be confirmed. This script never
-touches the State section.
+Input:  cache/unemployment/regions/*.json, one file per region,
+        produced by fetch_salm_unemployment.py (SA2), fetch_qrsis_labour.py
+        (Queensland LGAs and state) and fetch_nsw_labour.py (NSW).
+Target: the Employment sheet.
 
-Reuses audit.py's shared write-with-flag mechanism: a shape-based series concern
-still writes the value (bold red), never silently withheld; only a genuine
-cell-level block (formula / unexpected content) stops a write.
+Sheet layout:
+  Row 1  calendar years from column C.
+  Row 2  fiscal labels for the early columns, then the calendar year.
+         When a new year column is created, row 2 is filled to match.
+  Sections "LGA", "SA2" and "State", each introduced by its name in
+  column A. Every data row has the region name in column A and
+  "Smoothed Unemployment rate (%)" in column B.
 
-*** NOT YET TESTED against a live Excel instance. *** The row/section finding and
-the per-region write logic are tested against a mock built to the real structure
-and the real region files; the actual xlwings write hasn't run yet -- test on a
-throwaway copy first.
+A region name can occur in more than one section (Goondiwindi is both
+an LGA and an SA2), so a region is searched for only within the bounds
+of its own section.
+
+The year-column, existing-series and write helpers are shared with the
+Crime sheet, which has the same header layout, and are imported from
+update_crime.
+
+A series-level audit concern does not block the write: the value is
+written and marked bold red for review. A cell-level block (a formula
+or unexpected content) prevents the write.
+
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_employment.py <xlsx> <cache/unemployment dir> [--visible]
+    python update_employment.py <workbook.xlsx> <cache/unemployment dir> [--visible]
 """
 
 from __future__ import annotations
@@ -66,7 +61,7 @@ def _column_a(sheet) -> list:
 
 
 def _find_section_rows(sheet) -> dict:
-    """{ 'LGA': 3, 'SA2': 9, 'State': 25 } -- each marker must appear exactly once."""
+    """Return {section name: row} for the section headings. Each must occur exactly once."""
     col_a = _column_a(sheet)
     found = {}
     for section, marker in SECTION_MARKERS.items():
@@ -81,7 +76,7 @@ def _find_section_rows(sheet) -> dict:
 
 
 def _find_region_row(sheet, section_rows: dict, section: str, label: str) -> int:
-    """Search ONLY within `section`'s rows (marker+1 up to the next marker)."""
+    """Return the row of `region` within `section`, searching only that section's rows."""
     start = section_rows[section] + 1
     later = [r for r in section_rows.values() if r > section_rows[section]]
     end = (min(later) - 1) if later else sheet.used_range.last_cell.row
@@ -100,8 +95,10 @@ def _find_region_row(sheet, section_rows: dict, section: str, label: str) -> int
 
 
 def _ensure_fiscal_label(sheet, year: int) -> None:
-    """When a NEW year column was just created, row 2 is empty; later columns
-    repeat the plain year there, so do the same. Never overwrites a label."""
+    """Fill row 2 for a newly created year column with the calendar year.
+
+    Matches the existing columns. An existing label is never overwritten.
+    """
     col = _find_year_column(sheet, year)
     cell = sheet.cells(FISCAL_LABEL_ROW, col)
     if cell.value is None:
@@ -110,8 +107,10 @@ def _ensure_fiscal_label(sheet, year: int) -> None:
 
 
 def process_region(sheet, section_rows: dict, data: dict):
-    """One region's latest complete year -> its row. Returns
-    (result_line, counts_as_written, counts_as_flagged)."""
+    """Write one region's latest complete year.
+
+    Returns (result_line, counts_as_written, counts_as_flagged).
+    """
     section = data["section"]
     label = data["region"]
     tag = f"{section}:{label}"
@@ -123,20 +122,11 @@ def process_region(sheet, section_rows: dict, data: dict):
     year, value = int(latest), values[latest]
     source_series = {int(y): v for y, v in values.items()}
 
-    # ROUNDING FIX 2026-09-29: found on the first live run against the real
-    # 2026 exemplar -- every current-year cell on this sheet (all 21 tested,
-    # flagged and clean alike) is stored at 1 decimal place, but this writer
-    # was passing full precision (e.g. 2.525) into both the write and the
-    # cell-conflict check. Result: 8 of 12 flags that run produced were pure
-    # rounding artifacts (source rounds to exactly the stored value -- e.g.
-    # Maranoa stored=2.2, source=2.225, round(source,1)=2.2) rather than real
-    # discrepancies; only 4 were genuine (Roma, Queensland, and two others).
-    # Historical cells are NOT rounded this way (many hold long decimals --
-    # e.g. 3.966666666666667) -- this appears to be a human-entry convention
-    # for the newest column specifically, not a sheet-wide rule, so only the
-    # value being written this year is rounded; source_series (used for the
-    # historical-series comparison against existing SAVED years) is left at
-    # full precision, unchanged.
+    # The current-year column of this sheet is stored to one decimal place,
+    # so the value written is rounded to match; otherwise the cell audit
+    # would report rounding differences as conflicts. Earlier columns hold
+    # unrounded values, so the source series used for the historical
+    # comparison is left at full precision.
     value = float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
     try:

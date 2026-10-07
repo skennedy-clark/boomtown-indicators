@@ -1,6 +1,6 @@
 """
-transform/booklet/pages/data_page.py
---------------------------------------
+regional-indicators/transform/booklet/pages/data_page.py
+
 Generic chart page builder, used for all indicator pages:
   - Unemployment
   - Housing (sale price, sales volume, rent, approvals)
@@ -13,8 +13,8 @@ Each page follows the same pattern:
   - Data notes paragraph
   - Footer line
 
-The chart renders as a table of proportional bars, matching the visual
-style of the 2022 PDF booklets.
+Each chart is drawn as a table of proportional bars, to match the
+visual style of the 2022 PDF booklets.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ BAR_AREA_W    = CONTENT_TWIPS - YEAR_COL_W - VAL_COL_W
 ROW_H_PT      = 14
 
 
-# ── Low-level XML helpers (local, no EMU conversion needed) ──────────────────
+# ── Low-level XML helpers (widths in twips, no EMU conversion) ───────────────
 
 def _tbl_width(table, twips: int):
     tbl   = table._tbl
@@ -73,7 +73,7 @@ def _tc_width(cell, twips: int):
     tcW = OxmlElement("w:tcW")
     tcW.set(qn("w:w"),    str(int(twips)))
     tcW.set(qn("w:type"), "dxa")
-    # tcW must be first child of tcPr in schema order
+    # tcW must be the first child of tcPr in schema order.
     tcPr.insert(0, tcW)
 
 
@@ -105,14 +105,12 @@ def _header_row(table, series_labels: list[str]):
     hdr = table.add_row()
     _row_height(hdr, ROW_H_PT + 3)
 
-    # Year cell
     yc = hdr.cells[0]
     no_borders(yc)
     _tc_width(yc, YEAR_COL_W)
     set_cell_bg(yc, HEX_PURPLE)
     _cell_para(yc, "Year", 7, bold=True, colour=WHITE, align=WD_ALIGN_PARAGRAPH.RIGHT)
 
-    # Bar label cell
     bc = hdr.cells[1]
     no_borders(bc)
     _tc_width(bc, BAR_AREA_W)
@@ -120,7 +118,6 @@ def _header_row(table, series_labels: list[str]):
     label = "  /  ".join(series_labels)
     _cell_para(bc, label, 7, bold=True, colour=WHITE)
 
-    # Value cell
     vc = hdr.cells[2]
     no_borders(vc)
     _tc_width(vc, VAL_COL_W)
@@ -133,8 +130,8 @@ def _header_row(table, series_labels: list[str]):
 def _data_row(table, year: str, values: list[float | None], max_val: float,
               bar_colours: list[str], format_fn, shade: bool,
               multi_series: bool = False):
-    """
-    Add one data row. Supports 1 or 2 series (stacked bars for 2-series).
+    """Add one data row. One or two series are supported; with two
+    series the bars are stacked.
     """
     row = table.add_row()
     _row_height(row, ROW_H_PT)
@@ -155,8 +152,8 @@ def _data_row(table, year: str, values: list[float | None], max_val: float,
     bc.paragraphs[0].paragraph_format.space_before = Pt(0)
     bc.paragraphs[0].paragraph_format.space_after  = Pt(0)
 
-    # Build inner bar table
-    # Segments: one per series value, plus empty remainder
+    # Inner bar table: one segment per series value, plus the empty
+    # remainder.
     segments = []
     total_bar = 0
     for val, colour in zip(values, bar_colours):
@@ -209,30 +206,29 @@ def build_chart(doc: Document,
                 series: list[dict],
                 format_fn,
                 years: list[str] | None = None):
-    """
-    Build and add a bar chart table to `doc`.
+    """Build a bar chart table and add it to `doc`.
 
     Args:
         doc:       python-docx Document
         series:    list of dicts, each with:
-                     'label': str  — column header label
-                     'data':  dict — {year_str: numeric_value}
-                     'color': str  — hex colour for bar (without #)
-        format_fn: callable(value) → str for value display
-        years:     ordered list of year strings to include;
-                   defaults to union of all series years, sorted
+                     'label': str  - column header label
+                     'data':  dict - {year string: numeric value}
+                     'color': str  - hex colour of the bar (without #)
+        format_fn: callable(value) -> str, used to display values
+        years:     ordered list of year strings to include; defaults
+                   to the sorted union of the years in all series
     """
     if not series:
         return
 
-    # Collect all years across all series
+    # Years present in any series.
     if years is None:
         all_years = set()
         for s in series:
             all_years |= set(s['data'].keys())
         years = sorted(all_years)
 
-    # Max value across all series for bar scaling
+    # Bars are scaled to the maximum value across all series.
     all_vals = [v for s in series for v in s['data'].values() if v is not None]
     if not all_vals:
         p = doc.add_paragraph()
@@ -244,7 +240,7 @@ def build_chart(doc: Document,
     labels = [s['label'] for s in series]
     colours = [s['color'] for s in series]
 
-    # Outer 3-col table
+    # Outer three-column table.
     table = doc.add_table(rows=0, cols=3)
     _tbl_width(table, CONTENT_TWIPS)
 
@@ -541,7 +537,9 @@ def build_crime_page(doc: Document, town_cfg: dict):
 # ── Shared data notes helper ──────────────────────────────────────────────────
 
 def _data_notes(doc, items: list[tuple[str, bool]]):
-    """items: list of (text, bold) tuples concatenated into one paragraph."""
+    """Add the data notes paragraph. `items` is a list of (text, bold)
+    tuples, concatenated into one paragraph.
+    """
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(4)
     p.paragraph_format.space_after  = Pt(2)

@@ -1,57 +1,44 @@
 """
 regional-indicators/transform/xlsx_update/update_fuel.py
------------------------------------------------------------
-Writes fetch_fuel.py's cached output (RACQ annual average regular
-unleaded petrol prices) into the Exogenous sheet's Fuel section.
 
-Built 2026-10-06.
+Writes annual average petrol prices into the Exogenous sheet.
 
-SHEET LAYOUT (confirmed against the real 2025 working file)
-    Fuel            | <years across this row>      <- section header row
-    Bowen           |                              <- town row, column A only
-    Average RULP Price (cents) | Bowen RULP | ...  <- the row written
-    Brisbane
-    Average RULP Price (cents) | ...
+Input:  cache/fuel/racq_rulp_annual.json, produced by
+        fetchers/fetch_fuel.py (RACQ Annual Fuel Price Report).
+Target: the "Fuel" section of the Exogenous sheet.
+
+Sheet layout:
+    Fuel                         <years>     section heading and year header
+    <location>                               heading, column A only
+    Average RULP Price (cents)   <values>    the row written
+    <location>
+    Average RULP Price (cents)   <values>
     ...
-The Fuel section has its OWN year header row (the "Fuel" row itself);
-it is not the sheet's row 1 and does not line up with it in every
-column, so the year column is found from the Fuel row. If the new year
-isn't there yet it is appended straight after the last year in that
-row, and the year is written into the Fuel row as its header.
+The Fuel section has its own year header (the "Fuel" row), separate
+from row 1 of the sheet. The year column is located in that row; a new
+year is appended directly after the last year in the row and written
+into the header.
 
-WHICH TOWNS: whichever blocks the sheet has. A block is any row in the
-Fuel section whose NEXT row is labelled "Average RULP Price (cents)";
-its column A text is looked up (case-insensitive, whitespace stripped)
-in RACQ's list of locations. Nothing is hardcoded and towns.toml is
-not involved -- RACQ's locations are its own list (Bowen is on it, and
-it is not a study town). A block whose name RACQ doesn't publish is
-reported and left alone.
+Locations are taken from the sheet, not from configuration. Every row
+in the section that is followed by an "Average RULP Price (cents)" row
+is a location block, and its column A text is looked up in the report's
+list of locations (case-insensitive, surrounding whitespace ignored).
+A block whose name the report does not publish is reported and left
+unchanged. To add a location, add a block to the sheet.
 
-Each write goes through audit.py's cell, series and ground-truth
-historical checks. RACQ's table carries about eleven years of history,
-so the sheet's existing figures are compared with the report; where an
-earlier year differs the result line says so (RACQ does restate
-figures -- each report "supersedes all previous reports") but only the
-NEW year is written.
+Only the report year is written. The report also carries about eleven
+years of history, which is passed to the historical audit; earlier
+years on the sheet that differ from the report are listed in the result
+line and are not modified.
 
-NOT WRITTEN (yet):
-  - the derived rows below the town blocks (annual fuel cost and its
-    year-on-year change) -- formulas that need extending by one column;
-  - the Queensland / Australia benchmark rows the 2026 reference file
-    adds at the bottom of the section. They don't exist in the 2025
-    working file, and this pipeline doesn't create rows. The Queensland
-    figure is already in the cache ("queensland_mean_of_locations").
+Out of scope: the derived rows below the location blocks (annual fuel
+cost and its year-on-year change) and any state or national benchmark
+rows.
 
-Uses xlwings (real Excel via COM automation), NOT openpyxl -- see
-base.py's docstring for why.
-
-Tested 2026-10-06 against the real 2025 working file's cell contents
-through tests/fake_xlwings_sheet.py (a stand-in for the Excel sheet
-object): 8 written, all equal to the 2026 reference file. First real
-Excel run still to be confirmed.
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_fuel.py <path-to-Indicators_Data-Charts.xlsx> <cache/fuel dir> [--visible]
+    python update_fuel.py <workbook.xlsx> <cache/fuel dir> [--visible]
 """
 
 from __future__ import annotations
@@ -95,10 +82,11 @@ def _find_section_header_row(labels: list[str]) -> int:
 
 
 def _find_blocks(labels: list[str], header_row: int) -> list[tuple[str, int]]:
-    """(town name, row to write) for every block in the Fuel section:
-    a non-empty row directly followed by an INDICATOR_LABEL row."""
+    """Return (location name, row to write) for every block in the Fuel
+    section: a non-empty row directly followed by an INDICATOR_LABEL row.
+    """
     blocks = []
-    for index in range(header_row, len(labels) - 1):      # index is 0-based for row index+1
+    for index in range(header_row, len(labels) - 1):      # labels[index] is sheet row index + 1
         name, below = labels[index], labels[index + 1]
         if name and name != INDICATOR_LABEL and below == INDICATOR_LABEL:
             blocks.append((name, index + 2))
@@ -106,8 +94,9 @@ def _find_blocks(labels: list[str], header_row: int) -> list[tuple[str, int]]:
 
 
 def _find_year_column(sheet, header_row: int, year: int) -> int:
-    """Column for `year` in the Fuel section's own header row, creating
-    it straight after the last year in that row if it isn't there."""
+    """Return the column for `year` in the Fuel section's header row,
+    appending one directly after the last year if needed.
+    """
     max_col = sheet.used_range.last_cell.column
     header = sheet.range((header_row, FIRST_YEAR_COLUMN), (header_row, max_col)).value
     if not isinstance(header, list):
@@ -150,10 +139,13 @@ def _read_existing_series(sheet, header_row: int, row: int, exclude_col: int) ->
 
 
 def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
-    """Audit and write the report year's figure for every town block in
-    the Fuel section. Separate from the Excel open/save handling so it
-    can be exercised against any sheet-like object. Returns
-    (result lines, written count, flagged count)."""
+    """Audit and write the report year's price for every location block.
+
+    Separate from the Excel session handling so that it can be run
+    against any object with the xlwings Sheet interface (see
+    tests/fake_xlwings_sheet.py). Returns
+    (result lines, written count, flagged count).
+    """
     results: list[str] = []
     written_count = 0
     flagged_count = 0

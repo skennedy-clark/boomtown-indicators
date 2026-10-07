@@ -1,71 +1,75 @@
 """
 regional-indicators/fetchers/fetch_fuel.py
----------------------------------------------
+
 Fetches annual average regular unleaded petrol (RULP) prices for
-Queensland locations from RACQ's Annual Fuel Price Report -- the source
+Queensland locations from RACQ's Annual Fuel Price Report, the source
 for the Exogenous sheet's Fuel section ("Average RULP Price (cents)"
 under Bowen, Brisbane, Dalby, Goondiwindi, Miles, Moranbah, Roma and
 Toowoomba).
 
-Built 2026-10-06. Fuel had no fetcher or writer before this.
+Source:
+    RACQ publishes one "Annual Fuel Price Report <year>" PDF each
+    January. Its Appendix 1 has a table headed "Average RULP Prices in
+    Queensland": one row per location (41 in the 2025 report), twelve
+    monthly columns for the report year, then one annual-average column
+    per year going back about eleven years (2025 ... 2015). Values are
+    cents per litre; "nd" means no data.
 
-SOURCE
-RACQ publishes one "Annual Fuel Price Report <year>" PDF each January.
-Its Appendix 1 has a table headed "Average RULP Prices in Queensland":
-one row per location (41 in the 2025 report), twelve monthly columns
-for the report year, then one annual-average column per year going
-back about eleven years (2025 ... 2015). Values are cents per litre;
-"nd" means no data.
+    One report therefore carries both the new year and the published
+    history, which lets the writer cross-check the sheet's existing
+    figures against the source.
 
-One report therefore carries the new year AND the published history,
-which is what lets the writer cross-check the sheet's existing figures
-against the source.
+Validation:
+    The eight 2025 figures parsed from the 2025 report match the
+    reference workbook exactly:
+      Bowen 178.4 / Brisbane 185.2 / Dalby 171.2 / Goondiwindi 170.8 /
+      Miles 174.5 / Moranbah 189.5 / Roma 169.1 / Toowoomba 174.8
+    The plain mean of all 41 locations' 2025 averages is 178.98, which
+    matches the reference workbook's "Fuel for benchmark: Qld" figure.
 
-CONFIRMED LIVE 2026-10-06 against the hand-built 2026 answer key: all
-eight 2025 figures match exactly --
-  Bowen 178.4 / Brisbane 185.2 / Dalby 171.2 / Goondiwindi 170.8 /
-  Miles 174.5 / Moranbah 189.5 / Roma 169.1 / Toowoomba 174.8
--- and the plain mean of all 41 locations' 2025 averages is 178.98,
-matching the answer key's "Fuel for benchmark: Qld" figure.
+Finding the report:
+    Nothing year-specific is hardcoded. The RACQ pages in RACQ_PAGES are
+    scanned for links whose file name contains
+    "annual-fuel-price-report-<year>", and the newest year is used. Both
+    pages return the report link to an ordinary request. The file name
+    is not predictable (the 2025 one ends "-v3.pdf"), so it is
+    discovered, not constructed.
 
-FINDING THE REPORT (nothing year-specific is hardcoded)
-RACQ's fuel pages are scanned for links whose file name contains
-"annual-fuel-price-report-<year>"; the newest year wins. Confirmed
-live: both pages below return the 2025 report's link to an ordinary
-request. The file name itself is not predictable (the 2025 one ends
-"-v3.pdf"), which is why it is discovered, not constructed.
+If the download fails (site change, network block):
+    Download the PDF manually from the page named in the error message
+    and save it, under any name containing
+    "annual-fuel-price-report-<year>", into
+    regional-indicators/cache/fuel/ and re-run. The newest such file in
+    that folder is used whenever the live download is unavailable.
 
-IF THE DOWNLOAD FAILS (site change, network block)
-Download the PDF by hand from the page named in the error message and
-save it, under any name containing "annual-fuel-price-report-<year>",
-into  regional-indicators/cache/fuel/  then re-run. The newest such
-file already in that folder is used whenever the live download is
-unavailable.
+PDF reading:
+    pypdfium2 (a project dependency). In its text output each table row
+    is a single line: the location name followed by its numbers,
+    separated by single spaces (as in the 2025 report). A row is
+    therefore parsed as
+    "<name> <12 monthly values> <N annual values>". The annual years
+    are derived from the "Dec-<yy>" header: the first annual column is
+    always the report year, then descending.
 
-PDF READING
-pypdfium2 (already a project dependency). In its text output each
-table row comes out as ONE line: the location name followed by its
-numbers, single-space separated (confirmed against the 2025 report),
-so a row is parsed as "<name> <12 monthly values> <N annual values>".
-The annual years are taken from the "Dec-<yy>" header -- the first
-annual column is always the report year, then descending.
+Locations:
+    All locations in the table are written. This fetcher does not
+    consult towns.toml: RACQ's list is its own (Bowen is included;
+    Chinchilla, Tara and Wandoan are not), and the writer fills
+    whichever town blocks exist in the sheet's Fuel section. To track
+    another RACQ location, add a block to the sheet.
 
-WHICH LOCATIONS
-All of them. This fetcher does not consult towns.toml: RACQ's list is
-its own (Bowen is there; Chinchilla, Tara, Wandoan are not), and the
-writer simply fills whichever town blocks exist in the sheet's Fuel
-section. To track another RACQ location, add a block to the sheet.
+Output: cache/fuel/racq_rulp_annual.json
+    {"source": "...", "report_year": 2025, "report_url": "...",
+     "pdf_file": "...", "years": [2025, 2024, ...],
+     "locations": {"Dalby": {"2025": 171.2, "2024": 175.6, ...}, ...},
+     "queensland_mean_of_locations": {"2025": 178.98, ...}}
+    Read by transform/xlsx_update/update_fuel.py.
 
-OUTPUT: cache/fuel/racq_rulp_annual.json
-  {"source": "...", "report_year": 2025, "report_url": "...",
-   "pdf_file": "...", "years": [2025, 2024, ...],
-   "locations": {"Dalby": {"2025": 171.2, "2024": 175.6, ...}, ...},
-   "queensland_mean_of_locations": {"2025": 178.98, ...}}
-Read by transform/xlsx_update/update_fuel.py.
-
-NOT COVERED (yet): diesel (same appendix, second table -- the sheet has
-no diesel rows), and the Australian Institute of Petroleum national
-benchmark the 2026 answer key adds at the bottom of the Fuel section.
+Not covered:
+    Diesel (the second table in the same appendix; the sheet has no
+    diesel rows), and the Australian Institute of Petroleum national
+    benchmark that the reference workbook adds at the bottom of the
+    Fuel section.
 
 Usage:
     python run_update.py --only fuel
@@ -120,7 +124,8 @@ OUTPUT_NAME    = "racq_rulp_annual.json"
 
 def discover_report_url(log) -> tuple[str, int] | None:
     """Scan RACQ's fuel pages for the newest Annual Fuel Price Report
-    link. Returns (absolute url, report year) or None."""
+    link. Returns (absolute url, report year) or None.
+    """
     found: dict[int, str] = {}
     for page in RACQ_PAGES:
         try:
@@ -130,7 +135,8 @@ def discover_report_url(log) -> tuple[str, int] | None:
             log.warning(f"  Could not read {page}: {exc}")
             continue
         for href, year in REPORT_LINK_RE.findall(resp.text):
-            # keep the first link seen for each year; drop the ?rev=&hash= query
+            # Keep the first link seen for each year. The pattern stops at ".pdf",
+            # which drops the ?rev=&hash= query string.
             found.setdefault(int(year), urljoin(RACQ_BASE, href.replace("&amp;", "&")))
     if not found:
         return None
@@ -140,7 +146,9 @@ def discover_report_url(log) -> tuple[str, int] | None:
 
 
 def newest_local_report() -> tuple[Path, int] | None:
-    """The newest annual report PDF already sitting in cache/fuel/."""
+    """Return (path, report year) for the newest annual report PDF in
+    cache/fuel/, or None if there is none.
+    """
     best: tuple[Path, int] | None = None
     if FUEL_CACHE_DIR.exists():
         for path in FUEL_CACHE_DIR.glob("*.pdf"):
@@ -151,8 +159,9 @@ def newest_local_report() -> tuple[Path, int] | None:
 
 
 def extract_table_text(pdf_path: Path) -> str:
-    """Text of the RULP table: everything from its title up to the
-    diesel table's title (or the end of that page)."""
+    """Return the text of the RULP table: everything from its title up to
+    the diesel table's title, or to the end of that page.
+    """
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         for index in range(len(pdf)):
@@ -172,9 +181,10 @@ def parse_rulp_table(text: str) -> tuple[list[int], dict[str, dict[int, float]]]
     {location: {year: cents per litre}}). 'nd' cells are left out.
 
     The report year comes from the "Dec-<yy>" month header. Every data
-    row must have the same number of values (12 months + one per annual
-    year); a row with a different count is skipped, and if NO rows parse
-    or the counts disagree the whole thing raises rather than guess.
+    row must have the same number of values (12 months plus one per
+    annual year). Lines with no more than 12 values are skipped. If no
+    rows parse, or the rows disagree on the number of values, a
+    ValueError is raised.
     """
     m = re.search(r"Dec-(\d{2})\b", text)
     if not m:

@@ -2702,9 +2702,97 @@ Three sections on the sheet. Only Rainfall has any code.
       header row, existing series). Pull into one shared module once
       both are confirmed in real Excel.
 
+### Education -- CONFIRMED in real Excel (Steve's run, 2026-10-07)
+
+---
+
+## Web export built (2026-10-07) -- roadmap step 2
+
+Recreates the website folder "3 Web Content": one folder per town, one
+CSV per indicator, every file extended to the newest year.
+
+- [x] `transform/web_export.py`: reads the finished workbook (read-only,
+      openpyxl, never saves -- no Excel needed) and writes the folder.
+      Replaces the hand-run `CSV export.xlsm` macro. Supersedes
+      `transform/to_csv.py` for the website output (that one builds from
+      fetcher cache and covers only some indicators).
+- [x] `web_export_map.csv`: one line per CSV (329), saying which sheet /
+      section / block / row each file comes from. Rows are found by name,
+      never by row number. Built by matching every CSV in the 2025
+      folder to the workbook row holding its numbers (284 matched every
+      year exactly; the other 45 are rows whose history the 2026
+      workbook has since revised). To add a town or indicator to the
+      website, add lines to this file. `.gitignore` now excepts it from
+      the blanket `*.csv` rule.
+- [x] Checked on three workbooks (answer key, 2025 original, Steve's
+      latest test-copy): all 329 lines resolve in each, and each
+      resolves to the same series, not a neighbouring row.
+- [x] Checked against the 2025 folder using the 2026 answer key: 302 of
+      329 files have identical history (235 identical outright, 67 with
+      the new year added); number text matches cell for cell.
+      27 files differ because the workbook's history has been revised
+      since (LGA population 2017-2024, non-resident workers 2018-2019,
+      some rainfall) or the old file was edited by hand.
+- [x] Format: 2 lines, no quotes, CRLF, header 2000-<latest year> in
+      every file; numbers written as Excel displayed them (at most 7
+      digits, rounded half-up).
+- [x] Figures dated after the current year are left out (projections
+      sitting further along the same row, e.g. Narrabri LGA 2031).
+- [x] `--compare-with "<last year's folder>"` reports file by file what
+      changed. `--dry-run` writes nothing.
+- [x] Tests: `tests/test_web_export.py` (16). Whole suite: 60 passed.
+- [ ] **CHECK WITH STEVE -- two files reproduce what looks like a slip in
+      the 2025 export** (flagged in the map's note column):
+      - `Toowoomba/Residential building approvals.csv` holds the
+        Toowoomba - Central SA2 figures (10 for 2025); the Toowoomba
+        (LGA) block, which that folder's other housing files use, has its
+        own approvals row (928).
+      - `Toowoomba (Central)/Residential building approvals.csv` holds
+        the Toowoomba - East SA2 figures (14), not Toowoomba - Central
+        (10).
+      Mapped as the 2025 export had them for now; one-line change each
+      in the map if they should be corrected.
+- [ ] Also seen in the 2025 folder, NOT reproduced (the export follows
+      the workbook): `Toowoomba/Rent` 2025 was 548 (that is Toowoomba -
+      East; the LGA row says 503); `Narrabri/House sales` 2025 was 135
+      (workbook 239); `Tara` and `Wallumbilla` non-resident workers in
+      town had 0 for 2025 (workbook blank); a few files had thousands
+      separators, stray blank lines, or a missing 2024 header.
+- [ ] Fuel and Queensland/Australia benchmark rows added to the 2026
+      answer key are not in the map (nothing in the 2025 folder used
+      them).
+
 ### Housekeeping from the 2026-10-06 push
 - [ ] `tests/fake_xlwings_sheet.py` is NOT in the pushed repo, so three
       tests in `tests/test_population_erp_lga.py` error on import
       (22 passed, 3 errors). Add the file.
 - [ ] Pushed `update_population_erp_lga.py` has one stale docstring line
       mentioning `[lga_regions.*]`; code is identical. Cosmetic.
+
+---
+
+## End-to-end runner (2026-10-07)
+
+- [x] `regional-indicators/run_end_to_end.py`: fresh copy of the starting
+      workbook -> every fetcher -> all 13 writers in sheet order -> website
+      folder, in one command. A failed step is recorded and the run
+      continues. Everything is saved to
+      `regional-indicators/logs/end_to_end_<date>_<time>.log`, with a
+      one-line-per-step summary at the end.
+- [x] Run in the cloud sandbox (no Excel): the fetch step ran all 18
+      fetchers for real in about 5.5 minutes -- 16 passed; `bom_rainfall`
+      reports its two known stations; `salm_unemployment` timed out
+      reaching dewr.gov.au from the sandbox (network there, to be seen on
+      Steve's machine). The 13 writer steps failed cleanly as expected
+      without Excel and the run carried on; the website step wrote all
+      329 files.
+- [x] Writer inputs confirmed from each fetcher's output path. Two
+      corrections to the older test plan in this file: Income reads
+      `cache\ato` (not `cache\income`), and Business takes a year
+      argument (2025 for the 2024/25 column).
+- [x] `web_export.py`: the earlier folder is now read BEFORE anything is
+      written, so comparing with the folder being regenerated works.
+- [x] Tests: `tests/test_run_end_to_end.py` (6), one more in
+      `tests/test_web_export.py`. Whole suite: 67 passed.
+- [ ] **NEEDS STEVE: the real end-to-end run** (Excel). Then compare the
+      resulting test copy with the 2026 answer key, sheet by sheet.

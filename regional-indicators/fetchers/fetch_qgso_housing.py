@@ -1,43 +1,59 @@
 """
-fetchers/fetch_qgso_housing.py
--------------------------------
+regional-indicators/fetchers/fetch_qgso_housing.py
+
 Fetches housing indicators from the QGSO Regional Database (QRSIS).
-QLD only.
+Queensland only.
 
-COLLECTIONS FETCHED:
-  1925  Residential land and dwelling sales   (Sep 2000 – Sep 2025, quarterly, SA2)
-  1929  Median rent                            (Dec 1989 – Mar 2026, quarterly, SA2)
-  2075  Building Approvals (Historical)        (Jul 2001 – Dec 2018, monthly, LGA)
-  2031  Building Approvals (Current)           (Jan 2019 – present, monthly, LGA)
+Source:
+  https://www.qgso.qld.gov.au/statistics/queensland-regions/regional-tools-statistics/queensland-regional-database
 
-INDICATORS PRODUCED (per town, annual):
+Collections fetched (coverage as last recorded):
+  1925  Residential land and dwelling sales   (Sep 2000 - Sep 2025, quarterly, SA2)
+  1929  Median rent                            (Dec 1989 - Mar 2026, quarterly, SA2)
+  2075  Building Approvals (Historical)        (Jul 2001 - Dec 2018, monthly)
+  2031  Building Approvals (Current)           (Jan 2019 - present, monthly)
+
+Indicators produced (per town, annual):
   housing_sales_count    Detached dwelling: number of sales
   housing_median_price   Detached dwelling: median sale price ($)
   rent_3bed_median       House - 3 bedrooms - median rent of lodgements ($/week)
   building_approvals     Residential dwelling units (Private); New Houses (Number)
 
-CRITICAL IMPLEMENTATION NOTES:
-  1. POST encoding: Oracle PL/SQL WebTK reads p_names/p_values as interleaved
-     parallel arrays. Must use list of (key,val) tuples — dicts group all
-     p_names first then all p_values which Oracle misreads. Use _q() helper.
+The same four series are also fetched for the LGA, SA2 and State regions
+that the Housing sheet lists in its own sections (see _fetch_regions).
 
-  2. HTML parsing: QRSIS serves HTML with unclosed <OPTION> tags. BeautifulSoup's
-     html.parser merges option texts into one string. Must use lxml parser.
+Output:
+  cache/housing/<slug>_qgso.json                 one per town
+  cache/housing/regions/<section>_<slug>.json    one per region
 
-  3. udqctl_id extraction: Redirect URL uses interleaved format
+Implementation notes:
+  1. POST encoding: Oracle PL/SQL WebTK reads p_names/p_values as
+     interleaved parallel arrays. The form data must be a list of
+     (key, value) tuples; a dict groups all p_names before all p_values,
+     which the server misreads. The _q() helper builds the list.
+
+  2. HTML parsing: QRSIS serves HTML with unclosed <OPTION> tags.
+     BeautifulSoup's html.parser merges the option texts into one
+     string, so the lxml parser is required.
+
+  3. udqctl_id extraction: the redirect URL uses the interleaved form
      ?p_names=udqctl_id&p_values=3908, not ?udqctl_id=3908.
 
-  4. Building approvals geography: SA2-level data not available for most small
-     QLD towns. Use LGA-level (qgso_lga field from towns.toml) instead.
+  4. Building approvals geography: towns are queried by SA2, except the
+     Toowoomba towns (TOOWOOMBA_LGA_SLUGS), which use the Toowoomba LGA
+     (LGA/36910) as in previous booklets.
 
-  5. Exact series names from QRSIS (verified from live session):
+  5. Series names must match QRSIS exactly:
      - 'Detached dwelling: number of sales (Number)'
      - 'Detached dwelling: median sale price ($)'
      - 'House - 3 bedrooms - median rent of lodgements ($/week)'
      - 'Residential dwelling units (Private); New Houses (Number)'
 
-SOURCE:
-  https://www.qgso.qld.gov.au/statistics/queensland-regions/regional-tools-statistics/queensland-regional-database
+  6. Annual sales count: the per-town output takes the "Year Ended
+     31 Dec" value only, whereas the region-level output sums the four
+     quarterly values (see _fetch_regions for the evidence). The two
+     methods give different figures; the per-town method has not been
+     reconciled with the region-level one.
 """
 
 from __future__ import annotations
@@ -78,7 +94,7 @@ HEADERS = {
     "Origin":  "https://statistics.qgso.qld.gov.au",
 }
 
-# Exact series names as returned by QRSIS (verified from live session)
+# Series names exactly as QRSIS returns them.
 SERIES_SALES_COUNT = "Detached dwelling: number of sales (Number)"
 SERIES_SALES_PRICE = "Detached dwelling: median sale price ($)"
 SERIES_RENT        = "House - 3 bedrooms - median rent of lodgements ($/week)"
@@ -89,31 +105,25 @@ COLLECTIONS = {
         "id":         "1925",
         "series":     [SERIES_SALES_COUNT, SERIES_SALES_PRICE],
         "from_date":  "Year Ended 30 Sep 2000",
-        # BUG FIXED 2026-09-29: was "Year Ended 30 Sep 2025" -- a stale
-        # date that silently cut the query off before the December 2025
-        # quarter existed in the request at all, regardless of whether the
-        # server had it. Confirmed real and precisely explains a pattern
-        # that looked like a genuine data/methodology problem: every 2025
-        # price figure was built from only 3 of 4 quarters, systematically
-        # understating a rising market's true annual mean (the missing
-        # Dec-2025 quarter was consistently the year's highest). Extending
-        # to match "rent"'s to_date below recovers the 4th quarter and
-        # reproduces the real workbook's 2025 price to within 0.1% (e.g.
-        # Toowoomba LGA: 693637 computed vs 692825 in the workbook) --
-        # confirmed live, not assumed. Update this value again as later
-        # quarters become available; matching "rent"'s to_date keeps both
-        # collections' completeness in step going forward.
-        "to_date":    "Year Ended 31 Mar 2026",   # update each cycle -- confirmed 2026-09-29 this
-                                                  # collection 500-errors on a to_date beyond what its
-                                                  # own dropdown offers (tested deliberately), so this
-                                                  # cannot be set generously far ahead to self-maintain
+        # Fallback To Date, used when the newest option cannot be read from
+        # the Time Periods page (see _set_time_period). It must reach the
+        # latest quarter the collection offers. A value that stops before
+        # the December quarter leaves that year's price as the mean of 3 of
+        # 4 quarters, which understates a rising market (in 2025 the
+        # December quarter was the highest). With all four quarters the
+        # computed 2025 price is within 0.1% of the workbook (Toowoomba LGA:
+        # 693637 computed, 692825 in the workbook). Kept equal to "rent"'s
+        # to_date so both collections stay in step. The collection returns
+        # HTTP 500 for a to_date beyond what its own dropdown offers, so the
+        # value cannot be set far ahead.
+        "to_date":    "Year Ended 31 Mar 2026",   # update each cycle
         "geo":        "SA2",       # region type to select
     },
     "rent": {
         "id":         "1929",
         "series":     [SERIES_RENT],
         "from_date":  "Year Ended 31 Dec 2000",
-        "to_date":    "Year Ended 31 Mar 2026",   # update each cycle -- see "sales" above
+        "to_date":    "Year Ended 31 Mar 2026",   # update each cycle; see "sales" above
         "geo":        "SA2",
     },
     "approvals_hist": {
@@ -123,22 +133,16 @@ COLLECTIONS = {
         "to_date":    "Dec 2018",
         "period":     "Monthly",
         "date_fmt":   "M1",
-        # BUG FOUND AND FIXED 2026-09-30, root cause of "No SA2 regions
-        # matched" failing on EVERY run this entire project: "Y" here made
+        # This collection's Time Periods page carries a hidden
+        # p_concorded_data="N" default. Sending "Y" (which makes
         # _set_time_period append p_concorded_data=Y to the time-period
-        # POST. Confirmed live, step by step, that this collection's own
-        # Time Periods page ships a hidden p_concorded_data="N" default --
-        # forcing "Y" instead silently empties the server's region-type
-        # list completely (confirmed: 0 available region types come back
-        # with "Y", vs the real 8 -- GCCSA/LGA/RESREG/S/SA2/SA3/SA4/SED --
-        # with "N"). Same confirmed for approvals_curr (2031) below: both
-        # collections' own default is "N", not "Y". With "N", Roma's real
-        # code (SA2/307011176) is present among 548 real SA2 regions,
-        # verified directly, not assumed. "N" is also this dict's existing
-        # default in _set_time_period (concorded = cfg.get("concorded",
-        # "N")), so this key could be removed entirely; left explicit here
-        # as a record of what was tested and confirmed, not just a default
-        # nobody set on purpose.
+        # POST) empties the server's region-type list: 0 region types are
+        # offered, against 8 with "N" (GCCSA/LGA/RESREG/S/SA2/SA3/SA4/SED),
+        # and the fetch then fails with "No SA2 regions matched". The same
+        # applies to approvals_curr (2031) below. With "N" the list has 548
+        # SA2 regions, including Roma (SA2/307011176). "N" is also the
+        # default in _set_time_period; it is set explicitly here because
+        # the value matters.
         "concorded":  "N",
         "geo":        "SA2",
         "approvals":  True,
@@ -150,7 +154,7 @@ COLLECTIONS = {
         "to_date":    "Jan 2026",   # update each cycle
         "period":     "Monthly",
         "date_fmt":   "M1",
-        "concorded":  "N",   # see approvals_hist above -- same bug, same live-confirmed fix
+        "concorded":  "N",   # see approvals_hist above
         "geo":        "SA2",
         "approvals":  True,
     },
@@ -158,32 +162,22 @@ COLLECTIONS = {
 
 
 
-# Toowoomba approvals use LGA boundary per previous booklets (not SA2)
-# All other towns use SA2. LGA code for Toowoomba = LGA/36910
+# Toowoomba approvals use the LGA boundary, as in previous booklets.
+# All other towns use SA2. Toowoomba's LGA code is LGA/36910.
 TOOWOOMBA_LGA_SLUGS = {"toowoomba", "toowoomba_central", "toowoomba_harlaxton", "toowoomba_west"}
 TOOWOOMBA_LGA_CODE  = "LGA/36910"
 
-# ── Region-level sales/price/rent for the Housing sheet's own LGA/SA2/State
-# sections (ADDED 2026-09-29) ───────────────────────────────────────────────
-# CONFIRMED LIVE (2026-09-29): sales (1925) and rent (1929) both support
-# region types "LGA - Local Government Area" and "S - State" directly, in
-# addition to the SA2 type already used for per-town output -- tested via a
-# live wizard walk-through, not assumed. Brisbane = LGA/31000, Queensland =
-# S/3 (same state code as the Labour collection). These were previously
-# NEVER queried at LGA or State level at all -- fetch_qgso_housing.py's
-# per-town output only ever produced SA2-level sales/price/rent, even
-# though the Housing sheet's entire "LGA" section (6 blocks) and the
-# Queensland benchmark's sales/price/rent rows need this level specifically.
+# ── Region-level series for the Housing sheet's LGA/SA2/State sections ─────────
+# Sales (1925) and rent (1929) support the region types "LGA - Local
+# Government Area" and "S - State" as well as the SA2 type used for the
+# per-town output. Brisbane = LGA/31000, Queensland = S/3 (the same state
+# code as the Labour collection). The per-town output is SA2-level only,
+# whereas the Housing sheet's "LGA" section (6 blocks) and the Queensland
+# benchmark rows need LGA and State figures, which these regions supply.
 #
-# NOT COVERED: building approvals at LGA or State level. Tested live and
-# found WORSE than the existing per-town code assumed: selecting the LGA
-# region type for the approvals_curr collection (2031) returns ZERO
-# available regions, not just for SA2 as previously documented -- confirmed
-# through the actual production _fetch_collection() code path, not just an
-# ad-hoc script. This is a genuine open problem, not yet solved; needs
-# either more investigation or a live walkthrough (same as how the Labour
-# collection id was only found that way). Both approvals rows on every
-# LGA/SA2/State block are left unfetched by this addition.
+# Building approvals (2075, 2031) are fetched for the same regions. All
+# three region types are available for those collections provided
+# p_concorded_data is "N" (see COLLECTIONS["approvals_hist"]).
 
 LGA_REGIONS = {
     "Brisbane":       "LGA/31000",   # benchmark, not a project town
@@ -194,8 +188,7 @@ LGA_REGIONS = {
     "Western Downs":  "LGA/37310",
 }
 
-# Same 13 SA2 codes verified for Business (2026-09-23) and Employment
-# (2026-09-28) -- reused here rather than re-derived.
+# SA2 codes as verified for the Business and Employment fetchers.
 SA2_REGIONS = {
     "Broadsound-Nebo":             "312011338",
     "Chinchilla":                  "307011172",
@@ -218,19 +211,18 @@ REGION_SERIES_LABELS = {
     SERIES_SALES_PRICE: "Detached dwelling: median sale price ($)",
     SERIES_SALES_COUNT: "Detached dwelling: number of sales (Number)",
     SERIES_RENT:        "House - 3 bedrooms - median rent of lodgements ($/week)",
-    # ADDED 2026-09-30: region-level approvals, following the concorded=N
-    # fix confirmed live for the per-town approvals collections -- LGA/SA2/
-    # State region types all confirmed available under the same fix (80 real
-    # LGA regions including Brisbane+Toowoomba; S/3 Queensland present too),
-    # so the earlier "LGA returns zero regions" note (see _fetch_regions'
-    # docstring) was the same bug, not a real limitation. Handled with its
-    # own monthly-sum branch in _fetch_regions, not the quarterly mean/sum
-    # logic the other three series use.
+    # Region-level approvals. With p_concorded_data="N" the approvals
+    # collections offer the LGA, SA2 and State region types (80 LGA regions,
+    # including Brisbane and Toowoomba, and S/3 Queensland). The data is
+    # monthly, so _fetch_regions sums it in a separate branch from the
+    # quarterly logic used for the other three series.
     SERIES_APPROVALS:   "Building Approvals: Residential dwelling units (Private) New Houses (Number)",
 }
 
 def _q(*pairs) -> list[tuple]:
-    """Build interleaved p_names/p_values list from alternating (name, value) args."""
+    """Build the interleaved p_names/p_values list from alternating
+    (name, value) arguments.
+    """
     result = []
     it = iter(pairs)
     for name in it:
@@ -241,9 +233,10 @@ def _q(*pairs) -> list[tuple]:
 
 
 def _parse_options(html: str, select_name: str) -> list[str]:
-    """
-    Parse <option> text values from a named <select>.
-    MUST use lxml — html.parser merges unclosed <OPTION> tags into one string.
+    """Return the <option> texts of the named <select>.
+
+    The lxml parser is required: html.parser merges unclosed <OPTION>
+    tags into one string.
     """
     soup = BeautifulSoup(html, "lxml")
     for sel in soup.find_all("select", {"name": select_name}):
@@ -263,8 +256,8 @@ class QGSOHousingFetcher(BaseFetcher):
             self.log.info("No QLD towns configured — nothing to fetch")
             return
 
-        # SA2 map: sa2_code → town (for sales/rent)
-        sa2_map: dict[str, list] = {}  # sa2_code → [town, ...] (multiple towns may share an SA2)
+        # SA2 map used for sales and rent.
+        sa2_map: dict[str, list] = {}  # sa2_code -> [town, ...]; several towns may share an SA2
         for town in towns:
             sa2 = getattr(town, "qgso_sa2", None) or town.sa2_code
             if sa2:
@@ -274,8 +267,8 @@ class QGSOHousingFetcher(BaseFetcher):
             self.result.add_error("ALL", "No SA2 codes available for QGSO lookup")
             return
 
-        # For building approvals: most towns use SA2, but Toowoomba uses LGA
-        # (per previous booklets: Roma/Chinchilla/etc = SA2, Toowoomba = LGA)
+        # Building approvals: most towns use SA2 (Roma, Chinchilla, etc.);
+        # Toowoomba uses LGA, as in previous booklets.
         approvals_sa2_map: dict[str, list] = {}
         approvals_lga_map: dict[str, list] = {}
         for town in towns:
@@ -285,15 +278,15 @@ class QGSOHousingFetcher(BaseFetcher):
                 sa2 = getattr(town, "qgso_sa2", None) or town.sa2_code
                 if sa2:
                     approvals_sa2_map.setdefault(str(sa2), []).append(town)
-                    # Note: towns with shared SA2 (Roma+Wallumbilla, Miles+Wandoan)
-                    # both get added here so both receive the data
+                    # Towns that share an SA2 (Roma and Wallumbilla, Miles and
+                    # Wandoan) are both added, so both receive the data.
 
         all_data: dict[str, dict] = {}
 
         for coll_key, cfg in COLLECTIONS.items():
             self.log.info(f"  Collection: {coll_key} (id={cfg['id']})")
             if cfg.get("approvals"):
-                # Merge SA2 and LGA region maps for approvals
+                # Approvals use the SA2 and LGA region maps together.
                 region_map = {**{k: v for k, v in approvals_sa2_map.items()},
                               **{k: v for k, v in approvals_lga_map.items()}}
             else:
@@ -349,10 +342,9 @@ class QGSOHousingFetcher(BaseFetcher):
             self.log.info(f"  {town.name}: {summary}")
             self.result.towns_ok.append(town.name)
 
-        # Region-level output for the Housing sheet's own LGA/SA2/State
-        # sections (ADDED 2026-09-29) -- separate from the per-town files
-        # above, which stay untouched. See REGION_SERIES_LABELS' docstring
-        # note for what this covers (sales/price/rent only, not approvals).
+        # Region-level output for the Housing sheet's LGA/SA2/State
+        # sections. It is written separately from the per-town files above
+        # and covers sales, price, rent and building approvals.
         try:
             self._fetch_regions()
         except Exception as exc:
@@ -360,32 +352,26 @@ class QGSOHousingFetcher(BaseFetcher):
             self.result.add_error("REGIONS", f"Region-level fetch failed: {exc}")
 
     def _fetch_regions(self):
-        """
-        Query sales (1925) and rent (1929) at LGA, SA2, and State region
-        types together in ONE session per collection (all three types
-        confirmed live to work together, 2026-09-29), and write one JSON
-        per region into cache/housing/regions/, matching the schema
-        update_employment.py's region files already use so update_housing.py
-        can reuse the same section-driven wiring pattern.
+        """Fetch the region-level series and write one JSON file per region
+        into cache/housing/regions/.
+
+        Sales (1925), rent (1929) and building approvals (2075, 2031) are
+        each queried at the LGA, SA2 and State region types together, in
+        one session per collection. The output uses the same schema as the
+        Employment region files, so update_housing.py can use the same
+        section-driven wiring.
         """
         import statistics as stats
         from config import YEAR_START, YEAR_END
 
-        # BUG FIXED 2026-09-29, found on the first live run: merging
-        # {**LGA_REGIONS, **SA2_REGIONS, **STATE_REGIONS} by LABEL first
-        # silently drops entries where the same name is used at two
-        # geography levels -- "Goondiwindi" is both an LGA and an SA2 label
-        # on this sheet, and the SA2 entry clobbered the LGA one during the
-        # dict merge, so the LGA-level query for it never even ran. Codes
-        # are unique across all three dicts (LGA/, plain digits, S/), so
-        # build region_map keyed by CODE directly from each source dict
-        # separately -- never merge by label.
-        # region_map: code -> (label, section). Keying by code (unique across
-        # all three dicts) and carrying section through from the start avoids
-        # BOTH the dict-merge collision above AND a second one that would
-        # otherwise happen at output time -- by_region below is keyed by code
-        # too, not by label, so LGA-Goondiwindi and SA2-Goondiwindi (same
-        # label, different geography) never share a bucket.
+        # region_map: code -> (label, section). The map is keyed by code and
+        # built from each source dict separately, never by merging the dicts
+        # on label: the same label can occur at two geography levels
+        # ("Goondiwindi" is both an LGA and an SA2 on the sheet), and a merge
+        # by label would drop one of them. Codes are unique across the three
+        # dicts (LGA/..., SA2/..., S/...). by_region below is keyed by code
+        # for the same reason, so the LGA and the SA2 named Goondiwindi never
+        # share a bucket.
         region_map = {}
         for label, code in LGA_REGIONS.items():
             region_map[code] = (label, "LGA")
@@ -394,7 +380,7 @@ class QGSOHousingFetcher(BaseFetcher):
         for label, code in STATE_REGIONS.items():
             region_map[code] = (label, "State")
 
-        by_region: dict[str, dict[str, dict[int, list]]] = {}  # code -> series -> year -> [values]
+        by_region: dict[str, dict[str, dict[int, list]]] = {}  # code -> series -> year -> {period: value}
 
         for coll_key in ("sales", "rent"):
             cfg = COLLECTIONS[coll_key]
@@ -442,22 +428,17 @@ class QGSOHousingFetcher(BaseFetcher):
                     for series_name, v in vals.items():
                         if v is None or series_name not in REGION_SERIES_LABELS:
                             continue
-                        # Keep the period label alongside each value (not just a
-                        # flat list) -- sales count needs the December quarter
-                        # specifically, not an average of all four; see the fix
-                        # note below.
+                        # Each value is stored under its period label, not in a
+                        # flat list, so the number of quarters present in a year
+                        # can be checked when the annual sales count is built.
                         by_region.setdefault(code, {}).setdefault(series_name, {}) \
                                  .setdefault(yr, {})[period] = v
 
-        # ADDED 2026-09-30: region-level Building Approvals, following the
-        # concorded=N fix (see COLLECTIONS["approvals_hist"/"approvals_curr"]
-        # above) -- separate pass, not folded into the sales/rent loop above,
-        # because this data is MONTHLY (needs _parse_month_year + summing,
-        # not the quarterly mean/sum logic sales/rent use) and comes from TWO
-        # collections (hist: 2001-2018, curr: 2019-onward) that must be
-        # merged into one continuous series per region, matching exactly how
-        # the existing per-town code already does this merge (see
-        # _aggregate()'s "Merge into existing if present (hist + curr)").
+        # Building approvals are fetched in a separate pass because the data
+        # is monthly (parsed with _parse_month_year and summed, unlike the
+        # quarterly series above) and comes from two collections (2075:
+        # 2001-2018, 2031: 2019 onward) that are merged into one continuous
+        # series per region, as _aggregate() does for the per-town output.
         for coll_key in ("approvals_hist", "approvals_curr"):
             cfg = COLLECTIONS[coll_key]
             session = requests.Session()
@@ -515,58 +496,34 @@ class QGSOHousingFetcher(BaseFetcher):
             label, section = region_map[code]
             indicators = {}
             for series_name, by_year in series_data.items():
-                # BUG FIXED 2026-09-29, found on the first live run: this used
-                # to take the mean of all 4 quarters for EVERY series,
-                # including sales count -- but "Detached dwelling: number of
-                # sales (Number)" is a ROLLING 12-MONTH TOTAL as of each
-                # quarter-end (confirmed by the existing, already-proven
-                # per-town code, which takes ONLY the December-quarter value
-                # for exactly this reason -- see its "Dec-quarter rolling
-                # 12-month total" docstring note). Averaging 4 near-equal
-                # rolling annual totals divides the true figure by ~4 --
-                # exactly the systematic ~4.0x gap seen against every region's
-                # real history on the first live run (2.0x for 2000, the
-                # collection's first, partial year -- confirming the theory
-                # precisely). Price and rent are genuinely per-quarter medians
-                # and are correctly averaged across all 4 quarters, unchanged.
+                # Annual figures. Price and rent are per-quarter medians and are
+                # averaged over the quarters present. Sales count and approvals
+                # are counts and are summed, as described in each branch.
                 if series_name == SERIES_SALES_COUNT:
-                    # BUG FIXED 2026-09-29 (second attempt -- first attempt,
-                    # taking the December value alone as a "rolling 12-month
-                    # total", was ALSO wrong, disproven by direct testing: it
-                    # still showed the same ~4x gap against real history).
-                    # Confirmed instead, by live-checking all 4 of Toowoomba
-                    # LGA's real 2024 "Year Ended" values (3307/3325/3441/3435)
-                    # against the workbook's known 13484: SUM of the 4 gives
-                    # 13508, a 0.2% margin -- the same small margin seen
-                    # everywhere else in this project. "Year Ended DD Mon
-                    # YYYY" is this collection's (misleading) label for a
-                    # quarter-end reading; each value is a per-quarter count,
-                    # not a rolling annual total, and the annual figure is
-                    # their SUM -- same "sum, not mean or single-quarter"
-                    # principle already proven for QPS Crime early in this
-                    # project. IMPORTANT: the EXISTING per-town code (this
-                    # file's original _aggregate() for "sales") makes the
-                    # SAME wrong assumption this fix replaces -- it also
-                    # takes only the December value. That is long-shipped,
-                    # already-used code, not just this new addition -- see
-                    # TODO.md, needs checking and very likely needs the same
-                    # fix, but NOT changed here to avoid touching a working
-                    # code path without first confirming the scope live.
+                    # In this collection a "Year Ended DD Mon YYYY" period is a
+                    # quarter-end reading whose value is that quarter's count,
+                    # not a rolling 12-month total, so the annual figure is the
+                    # sum of the four quarters. Check: Toowoomba LGA's four 2024
+                    # values (3307/3325/3441/3435) sum to 13508, against 13484
+                    # in the workbook (0.2%). Taking the mean of the four, or
+                    # the December value alone, gives about a quarter of the
+                    # workbook's figures. Years without all four quarters are
+                    # omitted.
+                    #
+                    # Known limitation: the per-town code (_aggregate, "sales")
+                    # takes only the December value and so does not follow this
+                    # rule. It has not been changed because the effect on the
+                    # per-town output has not been verified.
                     values = {
                         str(yr): int(sum(period_vals.values()))
                         for yr, period_vals in by_year.items() if len(period_vals) == 4
                     }
                 elif series_name == SERIES_APPROVALS:
-                    # Sum of whatever monthly values are present for the year
-                    # -- NOT requiring exactly 12, matching the existing
-                    # per-town code's leniency (a year straddling the
-                    # hist/curr collection boundary, or the current
-                    # in-progress year, will have fewer than 12; that's
-                    # expected, not an error, same as elsewhere in this
-                    # project's "skip incomplete years" vs "sum what's there"
-                    # distinction -- approvals counts are a genuine running
-                    # total for whatever months have been approved so far,
-                    # unlike a rate that would be misleading if partial).
+                    # Sum of the monthly values present for the year. Twelve
+                    # months are not required: the current, in-progress year
+                    # has fewer, and the per-town code applies the same rule.
+                    # A partial-year count is still a valid total of approvals
+                    # to date, unlike a partial-year mean.
                     values = {
                         str(yr): int(sum(period_vals.values()))
                         for yr, period_vals in by_year.items() if period_vals
@@ -588,12 +545,10 @@ class QGSOHousingFetcher(BaseFetcher):
                 ),
                 "note": (
                     "Median price and rent = mean of 4 quarterly medians. Sales count = "
-                    "SUM of the 4 quarterly values for the calendar year (each 'Year "
-                    "Ended...' period is a per-quarter count despite its label -- do not "
-                    "average or take a single quarter). All three match real history to "
-                    "within the usual small vintage margin. Building approvals = sum of "
-                    "whatever monthly values are present for the year (fixed 2026-09-30, "
-                    "see COLLECTIONS[\"approvals_curr\"] for the concorded=N root cause)."
+                    "sum of the 4 quarterly values for the calendar year (each 'Year "
+                    "Ended...' period is a per-quarter count despite its label). "
+                    "Building approvals = sum of the monthly values present for the "
+                    "year."
                 ),
                 "indicators": indicators,
             }
@@ -606,7 +561,9 @@ class QGSOHousingFetcher(BaseFetcher):
     # ── Per-collection fetch ─────────────────────────────────────────────────────
 
     def _fetch_collection(self, coll_key, cfg, region_map) -> dict[str, dict]:
-        """
+        """Run the QRSIS query wizard for one collection and return
+        {town slug: {indicator: {year: value}}}.
+
         region_map: { region_code: [town, ...] }
           For SA2: { "307011176": [roma_town] }
           For LGA: { "LGA/34860": [roma_town, wallumbilla_town] }
@@ -620,7 +577,7 @@ class QGSOHousingFetcher(BaseFetcher):
             raise RuntimeError(f"Failed to get udqctl_id for collection {cfg['id']}")
         self.log.info(f"    udqctl_id={udqctl_id}")
 
-        # Step 2: series — get available, match exact names, select
+        # Step 2: series (list available, match exact names, select)
         avail_series  = self._get_options(session, "QIS1110W$UDQSER.ProcessSeries",
                                           udqctl_id, "infoser.htm", "p_new_multi")
         self.log.info(f"    Available series: {avail_series}")
@@ -633,10 +590,9 @@ class QGSOHousingFetcher(BaseFetcher):
         # Step 3: time period
         self._set_time_period(session, udqctl_id, cfg["id"], cfg, time_periods_html)
 
-        # Step 4: region type
-        # Determine which region type to select based on region codes
-        # For mixed SA2+LGA approvals, select both types
-        # Check if region_map contains LGA codes (for Toowoomba approvals)
+        # Step 4: region type. SA2 and/or LGA is selected according to
+        # the codes in region_map; LGA codes occur in the approvals map
+        # (Toowoomba).
         has_lga = any(str(k).startswith("LGA/") for k in region_map)
         has_sa2 = any(not str(k).startswith("LGA/") for k in region_map)
         geo_label = "SA2 - Statistical Area Level 2"  # default
@@ -710,32 +666,25 @@ class QGSOHousingFetcher(BaseFetcher):
                     "error_msg", "", "op_mode", "Next"),
             timeout=30,
         )
-        # ADDED 2026-09-29, porting fetch_population_erp.py's proven pattern:
-        # this response IS the next page (Time Periods) -- Oracle PL/SQL
-        # WebTK returns each next screen directly from the POST, no separate
-        # fetch needed. Returned so _set_time_period can read the real
-        # available to_date range instead of relying only on a hardcoded
-        # guess (see _discover_max_to_date below).
+        # Oracle PL/SQL WebTK returns the next screen (Time Periods) as the
+        # response to this POST, so no separate request is needed. The page
+        # is returned so that _set_time_period can read the available To
+        # Date range from it (see _discover_max_to_date).
         return resp.text
 
     def _discover_max_to_date(self, time_periods_html: str) -> str | None:
-        """
-        Parse the real 'To Date' dropdown out of the Time Periods page and
-        return its newest (default-selected, or first-listed) option.
+        """Return the newest option of the 'To Date' dropdown on the Time
+        Periods page, or None if it cannot be found.
 
-        GENERALIZED from fetch_population_erp.py's version 2026-09-29: that
-        one only accepts plain digit years (ERP's collection uses a bare
-        year <select>). This collection's options are free text ("Qtr Ended
-        31 Mar 2026", "Year Ended 31 Dec 2025") -- confirmed real from
-        Steve's captured QRSIS walkthrough of the Labour collection, which
-        showed this exact To Date <select>, most-recent-first, with the
-        newest option marked selected="selected". Accepts any non-empty
-        option text rather than digit-only, and prefers the selected option;
-        if none is marked selected, falls back to the FIRST option in the
-        list (confirmed real ordering: most-recent-first) rather than trying
-        to parse and sort arbitrary date-format strings, which would be
-        fragile across the different label styles ("Year Ended", "Qtr
-        Ended") this project's various collections use.
+        The options are free text ("Qtr Ended 31 Mar 2026", "Year Ended
+        31 Dec 2025"), listed most recent first, with the newest marked
+        selected="selected". Any non-empty option text is accepted (the
+        equivalent function in fetch_population_erp.py accepts only plain
+        digit years, because the ERP collection uses a bare year
+        <select>). The selected option is preferred; if none is marked
+        selected, the first option is returned. The date strings are not
+        parsed or sorted, because the label styles ("Year Ended", "Qtr
+        Ended") differ between collections.
         """
         soup = BeautifulSoup(time_periods_html, "lxml")
         to_date_marker = soup.find("input", {"name": "p_names", "value": "to_date"})
@@ -754,20 +703,18 @@ class QGSOHousingFetcher(BaseFetcher):
 
     def _set_time_period(self, session, udqctl_id, coll_id, cfg, time_periods_html: str = ""):
         from_date  = cfg["from_date"]
-        # UPDATED 2026-09-29: discover the real current to_date from the live
-        # page rather than trusting only the hardcoded config value -- same
-        # self-updating approach already proven in fetch_population_erp.py.
-        # Falls back to cfg["to_date"] (still kept, and still needs manual
-        # updates -- see "update each cycle" comment on it) if discovery
-        # fails, so a page-structure change degrades to the old behaviour
-        # rather than breaking outright.
+        # The To Date is read from the live page where possible, as in
+        # fetch_population_erp.py, so the query extends to the newest period
+        # without a config change. If that fails, cfg["to_date"] is used; it
+        # still needs the manual "update each cycle" edit, and keeps the
+        # fetcher working if the page structure changes.
         to_date = self._discover_max_to_date(time_periods_html) if time_periods_html else None
         if to_date:
-            self.log.info(f"    Discovered real max To Date from the page: {to_date}")
+            self.log.info(f"    Latest To Date option on the page: {to_date}")
         else:
             to_date = cfg["to_date"]
             self.log.warning(
-                f"    Could not discover the real To Date option from the page -- "
+                f"    Could not read the To Date option from the page -- "
                 f"falling back to the hardcoded {to_date!r}, which may now be stale."
             )
         period     = cfg.get("period", "Quarterly")
@@ -776,7 +723,8 @@ class QGSOHousingFetcher(BaseFetcher):
         data = _q("udqctl_id", udqctl_id, "coll_id", coll_id, "error_msg", "",
                   "date_format", date_fmt, "period", period,
                   "from_date", from_date, "to_date", to_date)
-        # concorded data: sales/rent use hidden field "N", approvals use checkbox "Y"
+        # p_concorded_data is sent only when the collection config asks for
+        # "Y". All collections currently use "N", the pages' own hidden default.
         if concorded == "Y":
             data.append(("p_concorded_data", "Y"))
         data.append(("p_op_mode", "Next"))
@@ -803,7 +751,7 @@ class QGSOHousingFetcher(BaseFetcher):
         for code, towns in region_map.items():
             town_names = [t.name for t in towns] if isinstance(towns, list) else [towns.name]
             if str(code).startswith("LGA/"):
-                # Already has prefix
+                # already has its prefix
                 prefix = str(code)
             elif geo == "SA3":
                 prefix = f"SA3/{code}"
@@ -870,19 +818,19 @@ class QGSOHousingFetcher(BaseFetcher):
     # ── HTML parsing ─────────────────────────────────────────────────────────────
 
     def _parse_output_html(self, html: str) -> dict:
-        """
-        Parse QRSIS output HTML. Returns:
+        """Parse QRSIS output HTML. Returns:
           { region_code: { period: { series_name: float|None } } }
-        Region code is the SA2 number or LGA code (e.g. "307011176" or "LGA/34860")
+        The region code keeps its type prefix as shown in the output,
+        e.g. "SA2/307011176" or "LGA/34860".
         """
         result: dict[str, dict] = {}
 
-        # Output has sections like "Region : SA2/307011176 - Roma" or
-        # "Region : LGA/34860 - Maranoa (R)"
-        # Split on "Region :" to get one section per region
+        # The output has one section per region, headed for example
+        # "Region : SA2/307011176 - Roma" or "Region : LGA/34860 - Maranoa (R)".
+        # Splitting on "Region :" gives one section per region.
         sections = re.split(r'Region\s*:\s*', html)
         for section in sections[1:]:
-            # Extract region code — SA2/NNNNN, SA3/NNNNN or LGA/NNNNN
+            # Region code: SA2/..., SA3/..., SA4/..., LGA/... or S/...
             m = re.match(r'((?:SA2|SA3|SA4|LGA|S)/[\w]+)', section)
             if not m:
                 continue
@@ -932,7 +880,7 @@ class QGSOHousingFetcher(BaseFetcher):
 
         result: dict[str, dict] = {}
 
-        # Build region_code → list of towns
+        # Resolve each region code to its towns.
         for code, towns in region_map.items():
             if str(code).startswith("LGA/"):
                 region_key = str(code)
@@ -1000,7 +948,7 @@ class QGSOHousingFetcher(BaseFetcher):
                         v = vals.get(SERIES_APPROVALS)
                         if v is not None:
                             app_yr[str(yr)] = app_yr.get(str(yr), 0) + int(v)
-                    # Merge into existing if present (hist + curr)
+                    # Merge the historical and current collections into one series.
                     if slug in result and "building_approvals" in result[slug]:
                         result[slug]["building_approvals"].update(app_yr)
                     else:

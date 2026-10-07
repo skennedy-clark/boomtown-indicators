@@ -1,41 +1,30 @@
 """
 regional-indicators/transform/xlsx_update/update_population_nrw.py
----------------------------------------------------------------------
-Writes the per-town UCL-level "Non-resident workers on-shift" figure
-(sub_label "Non-resident workers (UCL)") from fetch_population_nrw.py's
-cached output. Split out from what used to be a combined LGA+UCL
-script -- see update_population_nrw_lga.py for the LGA-level sibling,
-which writes a different section of the same sheet from the same
-cache files.
 
-Uses xlwings (real Excel via COM automation), NOT openpyxl -- openpyxl
-was confirmed to corrupt this specific workbook. See base.py's
-docstring for the full explanation.
+Writes urban-centre (UCL) non-resident worker counts into the Population
+sheet.
 
-Runs the pre-write audits from audit.py on every town before writing.
-The UCL/FTE source file only ever gives the latest year (no history),
-so these writes use the shape-based series audit only, NOT the
-ground-truth historical cross-check (that requires full source
-history, which update_population_nrw_lga.py has for its own writes,
-but this script doesn't).
+Input:  cache/population/<slug>_population_nrw.json, produced by
+        fetchers/fetch_population_nrw.py.
+Target: the "UCL" section of the Population sheet, row "Non-resident
+        workers on-shift" with sub-label "Non-resident workers (UCL)".
 
---deep-audit: for any flagged entry, cross-checks the corresponding
-LGA's own history in the same year(s), using the SAME cache file's
-lga_nrw_on_shift_by_year field (already fetched, no extra request
-needed) -- a real regional workforce event should show up at both
-levels; a UCL-only blip is more likely a genuine data-entry error
-specific to that cell. This is context for a human to weigh, not a
-verdict. Confirmed on real data: correctly shows Isaac LGA's +26%
-swing in 2012 corroborating Moranbah's flagged UCL figure that year,
-and a weaker -9% case for Moranbah's flagged 2016.
+The LGA-level figures in the same cache files are written by
+update_population_nrw_lga.py.
 
-*** NOT YET TESTED against a live Excel instance for this specific
-split -- the combined version this was split from WAS tested live and
-worked correctly; this split preserves that logic unchanged, but
-re-confirm after placing it. ***
+The source publishes only the latest year at UCL level, so these writes
+are checked with the cell and shape-based series audits only; no
+historical comparison is possible.
+
+--deep-audit adds context to any flagged town: the corresponding LGA
+series (already in the cache file) is examined for a change in the same
+year. A genuine regional change normally appears at both levels. The
+output informs review; it does not change what is written.
+
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_population_nrw.py <path-to-Indicators_Data-Charts.xlsx> <cache/population dir> [--visible] [--deep-audit]
+    python update_population_nrw.py <workbook.xlsx> <cache/population dir> [--visible] [--deep-audit]
 """
 
 from __future__ import annotations

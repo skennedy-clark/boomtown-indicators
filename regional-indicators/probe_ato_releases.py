@@ -1,3 +1,15 @@
+"""
+regional-indicators/probe_ato_releases.py
+
+Diagnostic script: lists the ATO Taxation Statistics releases published
+on data.gov.au, newest first, and reports whether each contains the
+individuals tables used by fetchers/fetch_income.py and
+fetchers/fetch_income_table6.py.
+
+Usage:
+    python regional-indicators/probe_ato_releases.py
+"""
+
 from __future__ import annotations
 
 from datetime import date
@@ -11,11 +23,8 @@ PACKAGE_SHOW_URL = (
 
 
 def candidate_financial_years() -> list[str]:
-    """
-    Generate plausible ATO release years, newest first.
-
-    In June 2026, candidates include:
-      2025-26, 2024-25, 2023-24, ...
+    """Return candidate ATO release years as financial-year strings,
+    newest first.
     """
     current_year = date.today().year
 
@@ -44,8 +53,7 @@ def inspect_package(financial_year: str) -> dict | None:
     try:
         payload = response.json()
     except requests.JSONDecodeError:
-        # data.gov.au occasionally returns HTML or an empty response
-        # for package slugs that do not exist.
+        # data.gov.au may return HTML or an empty body for an unknown package.
         return None
 
     if not payload.get("success"):

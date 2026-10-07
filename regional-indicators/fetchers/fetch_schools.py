@@ -1,75 +1,82 @@
 """
 regional-indicators/fetchers/fetch_schools.py
-------------------------------------------------
+
 Fetches school enrolments and teaching staff for each town from ACARA's
-School Profile data -- the source for the Exogenous sheet's Education
+School Profile data, the source for the Exogenous sheet's Education
 section ("Full Time Equivalent Enrolments" and "Full Time Equivalent
 Teaching Staff" under each town).
 
-Built 2026-10-07. Education had no fetcher or writer before this.
+Source:
+    ACARA (Australian Curriculum, Assessment and Reporting Authority)
+    publishes School Profile workbooks through its Data Access Program:
+      - "School Profile 2008-<year>.xlsx"  every school, every year
+        (about 30 MB, ~170,000 rows in the 2008-2025 file)
+      - "School Profile <year>.xlsx"       the latest year only (about
+        2 MB)
+    Both have a "DataDictionary" sheet and one data sheet whose name
+    starts "SchoolProfile". One row per school per year. The dataset is
+    national and covers every state.
 
-SOURCE
-ACARA (Australian Curriculum, Assessment and Reporting Authority)
-publishes School Profile workbooks through its Data Access Program:
-  - "School Profile 2008-<year>.xlsx"  every school, every year (about
-    30 MB, ~170,000 rows in the 2008-2025 file)
-  - "School Profile <year>.xlsx"       the latest year only (about 2 MB)
-Both have a "DataDictionary" sheet and one data sheet whose name starts
-"SchoolProfile". One row per school per year. National -- every state.
+    Fields used (exact header text):
+      "Calendar Year", "Postcode", "School Name",
+      "Full Time Equivalent Enrolments",
+      "Full Time Equivalent Teaching Staff"
 
-Fields used (exact header text):
-  "Calendar Year", "Postcode", "School Name",
-  "Full Time Equivalent Enrolments",
-  "Full Time Equivalent Teaching Staff"
+Method:
+    A town's figure for a year is the sum over every school whose
+    Postcode equals the town's primary postcode (towns.toml `postcode`,
+    singular).
+      - Postcode is text in ACARA's file ("4405") and is compared as a
+        string.
+      - Only the primary postcode is used, not `postcodes` (plural).
+        Toowoomba is the one town with two: 4350 alone gives 23,463.7
+        FTE enrolments for 2025, which equals the reference workbook's
+        figure; 4350 and 4352 together give 27,968.5. The Income sheet
+        uses the same rule.
+      - A school with no figure for a measure adds nothing.
+      - Sums are rounded to 1 decimal place (ACARA's own precision).
 
-METHOD
-A town's figure for a year is the SUM over every school whose Postcode
-equals the town's PRIMARY postcode (towns.toml `postcode`, singular).
-  - Postcode is TEXT in ACARA's file ("4405"), compared as a string.
-  - PRIMARY postcode only, not `postcodes` (plural): confirmed for
-    Toowoomba, the one town with two -- 4350 alone gives 23,463.7 FTE
-    enrolments for 2025, exactly the reference workbook's figure; 4350
-    and 4352 together give 27,968.5. Same rule the Income sheet uses.
-  - A school with no figure for a measure simply adds nothing.
-  - Sums are rounded to 1 decimal place (ACARA's own precision).
+Validation:
+      - 2025: for all 12 towns on the sheet, both measures (24 figures)
+        equal the reference workbook exactly.
+      - 2024: the 2008-2025 file reproduces the sheet's existing 2024
+        column exactly for all 12 towns, both measures. Reproducing the
+        previous year is the cross-validation required before a new
+        year is accepted.
+      - Earlier years differ slightly from the sheet for some towns
+        (Chinchilla, Goondiwindi, Wandoan, Toowoomba; mostly under 2%,
+        up to 15% for Wandoan's small numbers), which indicates that
+        ACARA has restated its back series since those columns were
+        filled. The writer reports these differences and does not
+        change the sheet.
 
-CONFIRMED LIVE 2026-10-07
-  - 2025: all 12 towns on the sheet, both measures (24 figures), equal
-    the hand-built 2026 answer key exactly.
-  - 2024 (the cross-validation this project requires before trusting a
-    new year): the 2008-2025 file reproduces the existing 2024 column
-    for all 12 towns, both measures, exactly.
-  - Earlier years differ slightly from the sheet for some towns
-    (Chinchilla, Goondiwindi, Wandoan, Toowoomba; mostly under 2%, up
-    to 15% for Wandoan's small numbers) -- ACARA's back series has
-    evidently been restated since those columns were filled. The writer
-    reports these and does not change them.
+Finding the file:
+    Nothing year-specific is hardcoded. File names are predictable, so
+    the newest is found by trying the current year, then the two years
+    before it:
+        School Profile 2008-<year>.xlsx      (preferred: carries history)
+        School Profile <year>.xlsx           (fallback: latest year only)
+    The first that exists is downloaded into cache/schools/ and reused
+    on later runs (use --force to download again).
 
-FINDING THE FILE (nothing year-specific is hardcoded)
-File names are predictable, so the newest is found by trying this
-year, then last year, then the year before:
-    School Profile 2008-<year>.xlsx      (preferred: carries history)
-    School Profile <year>.xlsx           (fallback: latest year only)
-The first that exists is downloaded into cache/schools/ and reused on
-later runs (use --force to download again).
+If the download fails:
+    Download "School Profile" manually from ACARA's Data Access page
+    (https://www.acara.edu.au/contact-us/acara-data-access), save it
+    into regional-indicators/cache/schools/ keeping "School Profile"
+    and the year in the file name, and re-run. The newest such file in
+    that folder is used whenever the live download is unavailable.
 
-IF THE DOWNLOAD FAILS
-Download "School Profile" by hand from ACARA's Data Access page
-(https://www.acara.edu.au/contact-us/acara-data-access), save it into
-regional-indicators/cache/schools/ keeping "School Profile" and the
-year in the file name, and re-run. The newest such file already in
-that folder is used whenever the live download is unavailable.
+Output: cache/schools/<slug>_schools.json, one per town with a postcode
+    {"town": "Dalby", "state": "QLD", "postcode": "4405",
+     "source": "...", "file": "...", "year": 2025,
+     "schools": ["Dalby State School", ...],          # latest year
+     "indicators": {
+       "fte_enrolments":     {"2008": 2651.6, ..., "2025": 3181.4},
+       "fte_teaching_staff": {"2008": 198.7,  ..., "2025": 236.0}}}
+    Read by transform/xlsx_update/update_education.py.
 
-OUTPUT: cache/schools/<slug>_schools.json, one per town with a postcode
-  {"town": "Dalby", "state": "QLD", "postcode": "4405",
-   "source": "...", "file": "...", "year": 2025,
-   "schools": ["Dalby State School", ...],          # latest year
-   "indicators": {
-     "fte_enrolments":     {"2008": 2651.6, ..., "2025": 3181.4},
-     "fte_teaching_staff": {"2008": 198.7,  ..., "2025": 236.0}}}
-Read by transform/xlsx_update/update_education.py.
-
-Reading the 30 MB file takes roughly half a minute.
+Notes:
+    Reading the 30 MB file takes roughly half a minute.
 
 Usage:
     python run_update.py --only schools
@@ -99,7 +106,7 @@ except ImportError:
 
 BASE_URL = "https://dataandreporting.blob.core.windows.net/anrdataportal/Data-Access-Program/"
 ACARA_PAGE = "https://www.acara.edu.au/contact-us/acara-data-access"
-HISTORY_START_YEAR = 2008          # ACARA's multi-year file has always started here
+HISTORY_START_YEAR = 2008          # first year of ACARA's multi-year file
 YEARS_BACK_TO_TRY = 3
 TIMEOUT_S = 300
 
@@ -116,8 +123,9 @@ LOCAL_NAME_RE = re.compile(r"school\s*profile.*?(\d{4})(?!.*\d{4})", re.IGNORECA
 
 
 def candidate_file_names(this_year: int) -> list[tuple[str, int]]:
-    """(file name, latest year in it), newest first; multi-year file
-    before the single-year one for each year."""
+    """Return (file name, latest year in it) candidates, newest first, with
+    the multi-year file before the single-year one for each year.
+    """
     names = []
     for year in range(this_year, this_year - YEARS_BACK_TO_TRY, -1):
         names.append((f"School Profile {HISTORY_START_YEAR}-{year}.xlsx", year))
@@ -126,9 +134,13 @@ def candidate_file_names(this_year: int) -> list[tuple[str, int]]:
 
 
 def newest_local_file() -> tuple[Path, int] | None:
-    """Newest School Profile workbook already in cache/schools/ (by the
-    last year in its name; a multi-year file beats a single-year one of
-    the same year because it is larger)."""
+    """Return (path, year) for the newest School Profile workbook in
+    cache/schools/, or None.
+
+    Files are ranked by the last year in their name. For the same year
+    the larger file is preferred, which selects the multi-year file over
+    the single-year one.
+    """
     best: tuple[Path, int] | None = None
     if SCHOOLS_CACHE_DIR.exists():
         for path in SCHOOLS_CACHE_DIR.glob("*.xlsx"):
@@ -149,8 +161,11 @@ def _number(value) -> float:
 def aggregate_by_postcode(xlsx_path: Path, postcodes: set[str]) -> dict:
     """Read a School Profile workbook and return
     {postcode: {year: {"enrol": sum, "staff": sum, "schools": [names]}}}
-    for the postcodes asked for. Streams the sheet (read_only) -- the
-    multi-year file is far too big to load whole."""
+    for the requested postcodes.
+
+    The sheet is streamed (read_only) because the multi-year file is
+    too large to load whole.
+    """
     wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
     try:
         sheet = next(
@@ -256,9 +271,13 @@ class ACARASchoolsFetcher(BaseFetcher):
             self.result.towns_ok.append(town.name)
 
     def _get_workbook(self) -> Path | None:
-        """Newest School Profile workbook: a cached copy of the newest
-        file ACARA has, downloading it if needed; else whatever is
-        already saved locally."""
+        """Return the path of the newest School Profile workbook, or None.
+
+        Candidates are tried newest first: a cached copy is used if
+        present (unless --force), otherwise the file is downloaded if
+        ACARA has it. If none can be obtained, the newest workbook
+        already saved locally is used.
+        """
         for name, year in candidate_file_names(datetime.now().year):
             url = BASE_URL + quote(name)
             dest = SCHOOLS_CACHE_DIR / name

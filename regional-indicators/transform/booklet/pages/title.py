@@ -1,14 +1,14 @@
 """
-transform/booklet/pages/title.py
----------------------------------
-Page 2: Title / contact details page.
+regional-indicators/transform/booklet/pages/title.py
+
+Builds page 2 of the booklet: the title and contact details page.
 
 Layout:
-  - UQ logo top right
+  - UQ logo, top right
   - "DATA REPORT" label
   - Large italic title "INDICATORS OF CHANGE IN {TOWN} AND DISTRICT"
   - Centred date line
-  - Contact block at bottom
+  - Contact block at the bottom
 """
 from pathlib import Path
 from docx import Document
@@ -28,7 +28,7 @@ from common import (
     set_table_width,
 )
 
-# Contact details — update as needed
+# Contact details; update as needed.
 CONTACT = {
     "name":       "UQ Centre for Natural Gas",
     "university": "The University of Queensland | Brisbane, QLD, 4072 AUSTRALIA",
@@ -37,23 +37,23 @@ CONTACT = {
 }
 
 
-# update each cycle -- the date_str default below is dead in the normal CLI
-# path (make_booklet.py always computes and passes a real date_str); only
-# matters if this is called directly
+# The date_str default applies only when this function is called
+# directly; make_booklet.py always computes and passes date_str.
+# Update the default each cycle.
 def build_title_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"):
-    """
-    Append title/contact page content to `doc`.
+    """Append the title and contact page content to `doc`.
 
     Args:
         doc:       python-docx Document
-        town_cfg:  dict with keys: name, district (optional, defaults to "{name} and District")
-        date_str:  update date string
+        town_cfg:  dict with keys name and, optionally, district
+                   (default "{name} and District")
+        date_str:  date of the data update, as printed on the page
     """
     town_name  = town_cfg["name"]
     district   = town_cfg.get("district", f"{town_name} and District")
     logo_path  = SHARED_IMG / "uq_logo.png"
 
-    # ── UQ LOGO (top right) ────────────────────────────────────────────────────
+    # ── UQ logo (top right) ────────────────────────────────────────────────────
     logo_p = doc.add_paragraph()
     logo_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     logo_p.paragraph_format.space_before = Pt(0)
@@ -62,14 +62,14 @@ def build_title_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
     if logo_path.exists():
         logo_run.add_picture(str(logo_path), width=Inches(1.8))
 
-    # "CREATE CHANGE" tagline under logo, right-aligned
+    # "CREATE CHANGE" tagline under the logo, right-aligned.
     tagline_p = doc.add_paragraph()
     tagline_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     tagline_p.paragraph_format.space_before = Pt(0)
     tagline_p.paragraph_format.space_after  = Pt(0)
     tr = tagline_p.add_run("CREATE CHANGE")
     set_run_font(tr, 7, colour=GREY_DARK)
-    # Thin rule under tagline
+    # Thin rule under the tagline.
     pPr = tagline_p._p.get_or_add_pPr()
     pBdr = OxmlElement("w:pBdr")
     bot  = OxmlElement("w:bottom")
@@ -78,10 +78,11 @@ def build_title_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
     bot.set(qn("w:color"), "AAAAAA")
     bot.set(qn("w:space"), "2")
     pBdr.append(bot)
-    # pBdr must precede spacing/jc in pPr — insert at front
+    # pBdr must precede spacing/jc in the pPr schema, so it is inserted
+    # first.
     pPr.insert(0, pBdr)
 
-    # ── BIG SPACER ─────────────────────────────────────────────────────────────
+    # ── Spacer ─────────────────────────────────────────────────────────────────
     add_spacer(doc, 60)
 
     # ── "DATA REPORT" label ────────────────────────────────────────────────────
@@ -91,7 +92,7 @@ def build_title_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
     dr_run = dr_p.add_run("DATA REPORT")
     set_run_font(dr_run, 14, bold=True, colour=PURPLE)
 
-    # ── MAIN TITLE ─────────────────────────────────────────────────────────────
+    # ── Main title ─────────────────────────────────────────────────────────────
     title_lines = [
         "INDICATORS OF CHANGE IN",
         district.upper(),
@@ -103,7 +104,7 @@ def build_title_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
         tr = tp.add_run(line)
         set_run_font(tr, 26, bold=True, italic=True, colour=PURPLE)
 
-    # ── DATE LINE ──────────────────────────────────────────────────────────────
+    # ── Date line ──────────────────────────────────────────────────────────────
     add_spacer(doc, 48)
     date_p = doc.add_paragraph()
     date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -112,7 +113,7 @@ def build_title_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
     dr2 = date_p.add_run(f"Statistical data updated in {date_str}")
     set_run_font(dr2, 10, colour=GREY_DARK)
 
-    # ── CONTACT BLOCK ──────────────────────────────────────────────────────────
+    # ── Contact block ──────────────────────────────────────────────────────────
     add_spacer(doc, 48)
 
     c_label = doc.add_paragraph()

@@ -1,35 +1,29 @@
 """
-regional-indicators/transform/xlsx_update/audit.py -- pre-write auditing
-for a workbook that's been maintained by hand for years and is known to
-contain "crud": stray values left over from ad-hoc analysis done
-directly in the sheet, formulas nobody meant to leave behind, and
-historical data points that may be a one-off miscopy rather than a
-genuine update.
+regional-indicators/transform/xlsx_update/audit.py
 
-Three checks, meant to run BEFORE any write:
+Pre-write audits for the indicators workbook.
 
-1. CELL AUDIT -- what's currently in the exact cell we're about to
-   write into? Empty, a formula, something that already matches the
-   new value, or genuinely unexpected content.
+The workbook has been maintained by hand for many years. Target cells
+can contain leftover formulas or stray values, and historical rows can
+contain transcription errors. Every write is therefore preceded by up to
+three checks:
 
-2. SERIES AUDIT -- does the new value fit the EXISTING historical row
-   in a way consistent with a genuine update? Two sub-checks: scale
-   mismatch (wrong row / wrong geography level) and, when no ground-
-   truth history is available, a shape-based guess at whether a
-   nearby point looks like an isolated miscopy.
+1. Cell audit: what the target cell currently holds -- empty, a
+   formula, a value that already matches, or unexpected content.
 
-3. HISTORICAL AUDIT -- when a full freshly re-fetched source series is
-   available, compare every existing year against the real source
-   value directly (ground truth), rather than guessing from shape
-   alone. This is strictly more reliable than the series audit's
-   shape-based guess, and supersedes it when available -- confirmed on
-   real data: Isaac's 2012 NRW figure looked like an isolated miscopy
-   by shape alone, but exactly matches the real source; the ground-
-   truth check correctly clears it.
+2. Series audit: whether the new value is consistent with the existing
+   row. Detects a scale mismatch (a sign of the wrong row or geography
+   level) and, from the shape of the series alone, isolated outliers and
+   step changes.
 
-None of these fix anything automatically -- all three produce a
-structured report for a human to read. Same principle throughout: flag
-it loudly, don't guess.
+3. Historical audit: when the full source series is available, each
+   existing year is compared with the source value. This supersedes the
+   shape-based outlier check, which cannot distinguish a transcription
+   error from genuine volatility.
+
+The audits never modify data. They return structured results that the
+writers use to decide whether to write, and that are reported for
+review.
 """
 
 from __future__ import annotations
@@ -58,18 +52,18 @@ class CellAuditResult:
 
     @property
     def needs_review(self) -> bool:
-        """FORMULA and UNEXPECTED_CONTENT should stop a human, not get
-        silently overwritten. EMPTY and MATCHES_NEW_VALUE are safe to
-        write through without interrupting anyone."""
+        """True for FORMULA and UNEXPECTED_CONTENT, which must not be
+        overwritten without review. EMPTY and MATCHES_NEW_VALUE are safe.
+        """
         return self.state in (CellState.FORMULA, CellState.UNEXPECTED_CONTENT)
 
 
 def audit_cell(cell, new_value, tolerance: float = 0.01) -> CellAuditResult:
-    """Inspect a single xlwings Range/cell before writing into it.
+    """Classify the current content of a target cell.
 
-    tolerance: relative difference allowed for "matches new value"
-    (default 1% -- covers minor rounding/revision differences without
-    masking a genuinely different figure).
+    tolerance: relative difference within which an existing value counts
+        as matching the new value (default 1%, to absorb rounding and
+        minor revisions).
     """
     formula = cell.formula
     value = cell.value
@@ -92,18 +86,9 @@ def audit_cell(cell, new_value, tolerance: float = 0.01) -> CellAuditResult:
             ),
         )
 
-    # BUG FIXED 2026-09-29, found via Housing: xlwings can return a cell's
-    # existing value as a Python Decimal (confirmed real on this workbook's
-    # price/rent cells -- e.g. Decimal('385')), which `isinstance(value,
-    # (int, float))` does not recognise. Every Decimal-typed cell was
-    # silently skipping the whole tolerance check below and falling straight
-    # through to UNEXPECTED_CONTENT regardless of how close the values
-    # actually were -- confirmed directly: Decimal('385') == 385.0 is True
-    # in plain Python, so cells that were exact or near-exact matches (e.g.
-    # 385 vs 385.0, 480 vs 480.0) were being flagged as conflicts. This is
-    # shared code used by every writer (Crime, Employment, Business,
-    # Housing) -- see TODO.md, some past "flagged" results elsewhere may
-    # have been false flags caused by this, not genuine discrepancies.
+    # xlwings can return numeric cell values as decimal.Decimal, so Decimal
+    # is accepted alongside int and float; otherwise matching values would
+    # be reported as unexpected content.
     from decimal import Decimal
     numeric_types = (int, float, Decimal)
     if isinstance(value, numeric_types) and isinstance(new_value, numeric_types):
@@ -136,10 +121,10 @@ def audit_cell(cell, new_value, tolerance: float = 0.01) -> CellAuditResult:
 
 class SeriesFlag(Enum):
     OK = "ok"
-    SCALE_MISMATCH = "scale_mismatch"        # possible wrong-row/wrong-geography-level
-    ISOLATED_OUTLIER = "isolated_outlier"    # likely single miscopy, series reverts after
-    STEP_CHANGE = "step_change"              # new value breaks from trend, no reversion to judge yet
-    TOO_SHORT = "too_short"                  # not enough history to judge anything
+    SCALE_MISMATCH = "scale_mismatch"        # possible wrong row or geography level
+    ISOLATED_OUTLIER = "isolated_outlier"    # single point that departs from, then returns to, the series
+    STEP_CHANGE = "step_change"              # new value departs from the latest existing value
+    TOO_SHORT = "too_short"                  # not enough history to assess
 
 
 @dataclass
@@ -156,22 +141,17 @@ def audit_series(
     scale_bounds: tuple = (0.3, 3.0),
     spike_threshold: float = 0.25,
 ) -> SeriesAuditResult:
-    """Check an existing {year: value} time series against a new
-    incoming value for two different failure modes:
+    """Check a new value against the existing {year: value} series.
 
-    1. SCALE_MISMATCH -- the new value is wildly different in
-       magnitude from the historical series (outside scale_bounds x
-       the series median). A wrong-row / wrong-geography-level red
-       flag about the WRITE TARGET, not a comment on whether the new
-       value itself is correct.
+    SCALE_MISMATCH: the new value lies outside `scale_bounds` times the
+        series median. Indicates a wrong target row or geography level.
+    ISOLATED_OUTLIER: an existing point departs from both neighbours by
+        more than `spike_threshold` and the series then reverts.
+    STEP_CHANGE: the new value differs from the latest existing value by
+        more than `spike_threshold`.
 
-    2. ISOLATED_OUTLIER vs STEP_CHANGE, within the EXISTING series --
-       a single miscopied point spikes away from both neighbours and
-       the series reverts afterward; a genuine revision or real-world
-       change tends to persist rather than revert. This function
-       flags the PATTERN only -- see audit_historical_series() for a
-       ground-truth version of this same question, which supersedes
-       this shape-based guess when a source series is available.
+    The outlier and step checks infer from shape only; prefer
+    audit_historical_series() when a source series is available.
     """
     values = sorted(existing_series.items())
     if len(values) < 3:
@@ -248,13 +228,12 @@ def audit_series(
 # ── Historical cross-check against freshly re-fetched source data ─────────
 
 class HistoricalMatchFlag(Enum):
-    MINOR_DISCREPANCY = "minor_discrepancy"  # differs, but not by an order of
-                                              # magnitude -- noted, not assumed
-                                              # wrong (could be a legitimate
-                                              # published revision)
-    MAJOR_DISCREPANCY = "major_discrepancy"  # differs by roughly an order of
-                                              # magnitude or more -- a clear
-                                              # error (e.g. a mistyped digit),
+    MINOR_DISCREPANCY = "minor_discrepancy"  # differs by less than an order of
+                                              # magnitude; reported, does not block
+                                              # (sources do revise published
+                                              # figures)
+    MAJOR_DISCREPANCY = "major_discrepancy"  # differs by an order of magnitude
+                                              # or more; treated as an error and
                                               # blocks the write
 
 
@@ -269,7 +248,7 @@ class YearComparison:
 
 @dataclass
 class HistoricalAuditResult:
-    comparisons: list  # list[YearComparison], only years with a real discrepancy
+    comparisons: list  # list[YearComparison]; only years that differ
 
     @property
     def has_major_discrepancy(self) -> bool:
@@ -283,27 +262,16 @@ class HistoricalAuditResult:
 def audit_historical_series(
     existing_series: dict,
     source_series: dict,
-    major_discrepancy_ratio: float = 10.0,   # "an order of magnitude", taken literally
-    negligible_tolerance: float = 0.02,      # within 2% isn't worth reporting at all
+    major_discrepancy_ratio: float = 10.0,   # ratio at or above which a difference blocks
+    negligible_tolerance: float = 0.02,      # relative difference below which it is ignored
 ) -> HistoricalAuditResult:
-    """Compare every year where we have BOTH an existing workbook value
-    AND a freshly re-fetched source value -- ground truth, not a
-    statistical guess.
+    """Compare existing workbook values with the source series.
 
-    Real result confirmed on real data: Isaac's LGA NRW series (2011:
-    13,590 / 2012: 17,125 / 2013: 14,950) exactly matches a fresh
-    Bowen Basin download -- the shape-based series audit flagged 2012
-    as a likely miscopy purely because it spikes away from its
-    neighbours, with no way to know it's genuine workforce volatility.
-    This function correctly finds zero discrepancy for all three
-    years, because it checks against the real number instead of
-    guessing from shape alone.
-
-    Years present in only one of the two series aren't compared. A
-    ratio >= major_discrepancy_ratio is treated as a clear error and
-    blocks the write; anything smaller (but outside
-    negligible_tolerance) is noted but does NOT block -- published
-    sources do sometimes revise historical figures by a modest amount.
+    Only years present in both series are compared. Differences within
+    `negligible_tolerance` are ignored. A ratio at or above
+    `major_discrepancy_ratio` is a MAJOR_DISCREPANCY and blocks the
+    write; smaller differences are MINOR_DISCREPANCY and are reported
+    only, since published sources revise historical figures.
     """
     comparisons = []
     for year, existing_val in existing_series.items():
@@ -335,10 +303,11 @@ def audit_historical_series(
 
 @dataclass
 class WriteAuditReport:
-    """Combined result of all audits for one (town, indicator, year)
-    write. safe_to_write is the single thing calling code should check
-    -- everything else is context for the human reviewing a flagged
-    entry."""
+    """Combined audit result for one write.
+
+    Callers check `safe_to_write`; the remaining fields describe why a
+    write was flagged.
+    """
     cell_audit: CellAuditResult
     series_audit: SeriesAuditResult
     historical_audit: "HistoricalAuditResult | None" = None
@@ -347,18 +316,14 @@ class WriteAuditReport:
     @property
     def safe_to_write(self) -> bool:
         if self.override_reason is not None:
-            # A verified override always wins -- it exists specifically
-            # to write through a flag that's been independently checked
-            # and confirmed correct. See verified_overrides.toml.
+            # An exact verified override takes precedence over every audit.
             return True
 
         cell_ok = not self.cell_audit.needs_review
 
         if self.historical_audit is not None:
-            # Ground-truth comparison supersedes the shape-based
-            # ISOLATED_OUTLIER/STEP_CHANGE guesses when available --
-            # SCALE_MISMATCH (wrong-row detection) is a different,
-            # still-useful check and keeps blocking regardless.
+            # With a source series, the historical comparison replaces the
+            # shape-based outlier and step checks. SCALE_MISMATCH still blocks.
             series_ok = self.series_audit.flag != SeriesFlag.SCALE_MISMATCH
             historical_ok = not self.historical_audit.has_major_discrepancy
             return cell_ok and series_ok and historical_ok
@@ -368,20 +333,12 @@ class WriteAuditReport:
 
     @property
     def should_write_with_flag(self) -> bool:
-        """True when the ONLY reason safe_to_write is False is a
-        series-shape or historical-discrepancy concern -- NEVER a
-        cell-level block (a formula or unexpected existing content).
-        Distinguishes "this number looks unusual, write it but flag it
-        visually for review" from "this cell isn't safe to touch at
-        all, don't write anything" -- overwriting a live formula or
-        someone's stray note is a different, higher-stakes risk than a
-        suspicious-but-plausible number, and must never be silently
-        written over regardless of formatting. Callers that support
-        visual flagging (e.g. writing the value in bold red rather than
-        leaving the cell untouched) should check this after
-        safe_to_write comes back False; callers that don't support it
-        can ignore this and keep the existing block-everything
-        behaviour, which remains correct either way.
+        """True when the write is blocked only by a series or historical
+        concern, not by the content of the target cell.
+
+        Writers that support visual flagging may then write the value
+        and mark it (bold red) for review. A cell-level block (a formula
+        or unexpected content) is never written through.
         """
         if self.safe_to_write:
             return False
@@ -403,9 +360,7 @@ class WriteAuditReport:
                     f"source={c.source_value:,} ({c.ratio:.1f}x)"
                 )
         if self.override_reason is not None:
-            # Show the override AND whatever it's overriding -- full
-            # transparency about why this was flagged in the first
-            # place, not just that it got waved through.
+            # Report the override together with the flags it overrides.
             if parts:
                 return f"OVERRIDE APPLIED ({self.override_reason}) — originally flagged: " + " | ".join(parts)
             return f"OVERRIDE APPLIED ({self.override_reason})"
@@ -415,21 +370,11 @@ class WriteAuditReport:
 
 
 def apply_write_formatting(cell, safe_to_write: bool, should_write_with_flag: bool) -> None:
-    """Shared font formatting for the write-with-flag pattern (2026-09-24,
-    promoted here once a second indicator -- Business -- needed the same
-    "flag with colour, don't block" behaviour Income already had, per
-    Steve's stated preference: small-count data especially benefits,
-    since the shape-based series checks trip constantly on trivial
-    absolute changes when the underlying numbers are small, and on
-    pre-existing historical anomalies unrelated to the new write at
-    all -- flagging visually rather than blocking means neither ever
-    withholds real data, just marks it for optional review).
+    """Apply font formatting for a write.
 
-    A clean write resets to plain black, not bold -- a cell that was
-    once flagged and is now writing cleanly shouldn't stay visually
-    flagged forever. CONFIRMED via a real xlwings crash (2026-09-23):
-    Font.color has no "None means automatic" pathway -- must be an
-    explicit RGB tuple, black (0,0,0) here, not None.
+    A clean write is set to regular black, clearing any earlier flag.
+    A flagged write is set to bold red. xlwings requires an explicit RGB
+    tuple for Font.color; None is not accepted.
     """
     if safe_to_write:
         cell.number_format = "General"
@@ -442,11 +387,11 @@ def apply_write_formatting(cell, safe_to_write: bool, should_write_with_flag: bo
 
 
 def describe_write_outcome(label: str, report: "WriteAuditReport", coord: str, extra_note: str = "") -> tuple[str, bool, bool]:
-    """Shared three-way outcome description for a write attempt --
-    written cleanly, written but visually flagged (see
-    should_write_with_flag), or genuinely not written at all (a
-    cell-level block, never overridden regardless of formatting).
-    Returns (result_line, counts_as_written, counts_as_flagged).
+    """Describe the outcome of a write attempt.
+
+    Returns (result_line, counts_as_written, counts_as_flagged) for the
+    three cases: written, written and flagged for review, or not
+    written.
     """
     suffix = f" ({extra_note})" if extra_note else ""
     if report.safe_to_write and not report.should_write_with_flag:

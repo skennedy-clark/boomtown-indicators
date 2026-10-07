@@ -60,6 +60,8 @@ get_bom.py
 *.xlsx
 *.xls
 *.csv
+# ...except the website export map, which is configuration, not data
+!regional-indicators/web_export_map.csv
 assemble_maps/**/*.shp
 assemble_maps/**/*.shx
 assemble_maps/**/*.dbf

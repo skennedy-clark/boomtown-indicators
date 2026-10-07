@@ -1,7 +1,7 @@
 """
-transform/booklet/common.py
----------------------------
-Shared constants, styles, and helpers for booklet generation.
+regional-indicators/transform/booklet/common.py
+
+Shared constants, styles and helpers for booklet generation.
 """
 from pathlib import Path
 from docx.shared import Pt, Inches, RGBColor, Emu
@@ -27,7 +27,7 @@ GREY_DARK   = RGBColor(0x44, 0x44, 0x44)
 GREY_MED    = RGBColor(0xCC, 0xCC, 0xCC)
 GREY_LIGHT  = RGBColor(0xF2, 0xF2, 0xF2)
 
-# Hex strings for XML-level shading
+# Hex strings for shading set directly in the XML.
 HEX_PURPLE      = "51247A"
 HEX_TEAL        = "00A9CE"
 HEX_WHITE       = "FFFFFF"
@@ -35,11 +35,11 @@ HEX_GREY_LIGHT  = "F2F2F2"
 HEX_GREY_MED    = "CCCCCC"
 
 # ── Page dimensions (A4 portrait, in EMU) ──────────────────────────────────────
-# 1 inch = 914400 EMU; A4 = 210mm x 297mm
+# 1 inch = 914400 EMU; A4 = 210 mm x 297 mm
 PAGE_W_MM   = 210
 PAGE_H_MM   = 297
 MARGIN_MM   = 20
-CONTENT_W_MM = PAGE_W_MM - 2 * MARGIN_MM   # 170mm
+CONTENT_W_MM = PAGE_W_MM - 2 * MARGIN_MM   # 170 mm
 
 PAGE_W_EMU  = int(PAGE_W_MM  * 914400 / 25.4)
 PAGE_H_EMU  = int(PAGE_H_MM  * 914400 / 25.4)
@@ -67,8 +67,11 @@ def add_para(doc, text, size_pt, bold=False, italic=False, colour=None,
     return p
 
 def add_spacer(doc, points=12):
-    """Fixed-height blank paragraph. Uses EXACT line spacing to prevent
-    Word's default 'Multiple 1.08' style from inflating the height."""
+    """Add a blank paragraph of fixed height.
+
+    Exact line spacing is used so that Word's default "Multiple 1.08"
+    line spacing does not increase the height.
+    """
     from docx.enum.text import WD_LINE_SPACING
     p  = doc.add_paragraph()
     pf = p.paragraph_format
@@ -81,20 +84,21 @@ def add_spacer(doc, points=12):
 # ── Table helpers ──────────────────────────────────────────────────────────────
 
 def set_cell_bg(cell, hex_colour):
-    """Set cell background shading colour.
-    In tcPr schema order: tcW → tcBorders → shd → ...
-    We insert shd after tcBorders if present, else after tcW, else at end.
+    """Set the background shading colour of a cell.
+
+    The tcPr schema order is tcW, tcBorders, shd, ... so the shd element
+    is inserted after tcBorders if present, otherwise after tcW,
+    otherwise appended.
     """
     tc   = cell._tc
     tcPr = tc.get_or_add_tcPr()
-    # Remove any existing shd to avoid duplicates
+    # Remove any existing shd so that there is only one.
     for ex in tcPr.findall(qn("w:shd")):
         tcPr.remove(ex)
     shd  = OxmlElement("w:shd")
     shd.set(qn("w:val"),   "clear")
     shd.set(qn("w:color"), "auto")
     shd.set(qn("w:fill"),  hex_colour)
-    # Insert after tcBorders if present, else after tcW, else append
     tcb = tcPr.find(qn("w:tcBorders"))
     tcw = tcPr.find(qn("w:tcW"))
     if tcb is not None:
@@ -105,16 +109,17 @@ def set_cell_bg(cell, hex_colour):
         tcPr.append(shd)
 
 def set_cell_borders(cell, top=None, bottom=None, left=None, right=None):
-    """Set cell borders. Pass None for a side to remove it, or a dict with
-    style/size/color keys to set it."""
+    """Set the borders of a cell. For each side, None removes the border
+    and a dict with style/size/color keys sets it.
+    """
     tc   = cell._tc
     tcPr = tc.get_or_add_tcPr()
-    # Remove any existing tcBorders element
+    # Remove any existing tcBorders element.
     for existing in tcPr.findall(qn("w:tcBorders")):
         tcPr.remove(existing)
     tcBorders = OxmlElement("w:tcBorders")
-    # OOXML strict uses w:start/w:end; transitional uses w:left/w:right.
-    # python-docx targets transitional, so use left/right.
+    # Strict OOXML names the sides w:start/w:end; transitional uses
+    # w:left/w:right. python-docx writes transitional, so left/right.
     for side, val in [("top", top), ("bottom", bottom), ("left", left), ("right", right)]:
         el = OxmlElement(f"w:{side}")
         if val is None:
@@ -124,7 +129,7 @@ def set_cell_borders(cell, top=None, bottom=None, left=None, right=None):
             el.set(qn("w:sz"),    str(val.get("size", 4)))
             el.set(qn("w:color"), val.get("color", "000000"))
         tcBorders.append(el)
-    # tcBorders must come after tcW in tcPr schema
+    # tcBorders must follow tcW in the tcPr schema.
     tcW_el = tcPr.find(qn("w:tcW"))
     if tcW_el is not None:
         tcW_el.addnext(tcBorders)
@@ -132,22 +137,24 @@ def set_cell_borders(cell, top=None, bottom=None, left=None, right=None):
         tcPr.append(tcBorders)
 
 def no_borders(cell):
-    set_cell_borders(cell)  # all None = none
+    set_cell_borders(cell)  # every side None: no borders
 
 def set_table_width(table, width_emu):
-    """Replace (not append) the tblW element so there is never a duplicate."""
+    """Set the table width, replacing any existing tblW element so that
+    there is never a duplicate.
+    """
     tbl   = table._tbl
     tblPr = tbl.find(qn("w:tblPr"))
     if tblPr is None:
         tblPr = OxmlElement("w:tblPr")
         tbl.insert(0, tblPr)
-    # Remove all existing tblW elements
     for existing in tblPr.findall(qn("w:tblW")):
         tblPr.remove(existing)
     tblW = OxmlElement("w:tblW")
     tblW.set(qn("w:w"),    str(int(width_emu / 914400 * 1440)))
     tblW.set(qn("w:type"), "dxa")
-    # tblW must follow tblStyle but precede jc/borders in schema
+    # tblW must follow tblStyle and precede jc and the borders in the
+    # tblPr schema.
     tbl_style = tblPr.find(qn("w:tblStyle"))
     if tbl_style is not None:
         tbl_style.addnext(tblW)
@@ -155,7 +162,9 @@ def set_table_width(table, width_emu):
         tblPr.insert(0, tblW)
 
 def set_col_width(cell, width_twips):
-    """Set cell width in twips (1440 twips = 1 inch). Replaces any existing tcW."""
+    """Set the cell width in twips (1440 twips = 1 inch), replacing any
+    existing tcW element.
+    """
     tc   = cell._tc
     tcPr = tc.get_or_add_tcPr()
     for existing in tcPr.findall(qn("w:tcW")):
@@ -163,7 +172,7 @@ def set_col_width(cell, width_twips):
     tcW = OxmlElement("w:tcW")
     tcW.set(qn("w:w"),    str(int(width_twips)))
     tcW.set(qn("w:type"), "dxa")
-    tcPr.insert(0, tcW)  # tcW must be first child in tcPr
+    tcPr.insert(0, tcW)  # tcW must be the first child of tcPr
 
 # ── Image helpers ──────────────────────────────────────────────────────────────
 
@@ -179,11 +188,11 @@ def add_image_centered(doc, path, width_mm):
 # ── Section header ─────────────────────────────────────────────────────────────
 
 def add_section_header(doc, title, subtitle=None):
-    """Purple banner heading used on each data page."""
+    """Add the purple banner heading used on each data page."""
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after  = Pt(4)
-    # Purple background via shading on paragraph
+    # The purple background is paragraph shading.
     p.paragraph_format.left_indent  = Pt(10)
     p.paragraph_format.right_indent = Pt(10)
     pPr = p._p.get_or_add_pPr()
@@ -191,8 +200,8 @@ def add_section_header(doc, title, subtitle=None):
     shd.set(qn("w:val"),   "clear")
     shd.set(qn("w:color"), "auto")
     shd.set(qn("w:fill"),  HEX_PURPLE)
-    # shd must precede spacing and ind — insert at position 0 (before pStyle would be
-    # wrong, but we never set pStyle so pos 0 is the first child = correct)
+    # shd must precede spacing and ind in the pPr schema. No pStyle is
+    # set on this paragraph, so position 0 is correct.
     pPr.insert(0, shd)
     run = p.add_run(title)
     set_run_font(run, 16, bold=True, colour=WHITE)
@@ -227,6 +236,6 @@ def add_footer_line(doc, town_name):
     top.set(qn("w:color"), HEX_PURPLE)
     top.set(qn("w:space"), "4")
     pBdr.append(top)
-    pPr.insert(0, pBdr)  # pBdr must precede spacing/jc in pPr schema
+    pPr.insert(0, pBdr)  # pBdr must precede spacing/jc in the pPr schema
     run = p.add_run(f"This information has been compiled for use in consultation with the {town_name} community")
     set_run_font(run, 8, italic=True, colour=PURPLE)

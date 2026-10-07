@@ -1,49 +1,34 @@
 """
 regional-indicators/transform/xlsx_update/update_population_erp_lga.py
----------------------------------------------------------------------------
-Writes the LGA-level "Population (ERP)" figure from
-fetch_population_erp_lga.py's cached output into the Population sheet's
-LGA section -- the "Residents (LGA)" row under Brisbane, Goondiwindi,
-Isaac, Maranoa, Narrabri, Toowoomba and Western Downs
-(Population!AA4, AA6, AA9, AA12, AA14, AA17, AA20 for 2025).
 
-Sibling of update_population_erp.py, which writes the same indicator
-name into the SA2 section. The two must not be confused:
-  - this script   : section="LGA", reads *_population_erp_lga.json
-  - the SA2 script: section="SA2", reads *_population_erp.json
-The indicator name "Population (ERP)" is identical in both sections and
-several block names are too (Goondiwindi and Toowoomba appear in LGA,
-SA2 and UCL sections with very different values), so section="LGA" is
-what keeps each figure in its own row. Requires the 2026-10-06 fix in
-base.py's _find_town_indicator_row (the "LGA" header is in row 2, above
-where the scan used to start).
+Writes LGA-level estimated resident population (ERP) into the Population
+sheet.
 
-Matches on the block name only (the JSON's "region", which is
-towns.toml's [lga_regions.*] name). No sub-label is used: column B
-reads "Residents (LGA)" in the 2025 working file but "Toowoomba
-Residents (LGA)" for one block in the 2026 reference file -- the same
-wording drift that caught update_population_nrw_lga.py out. Within a
-block in the LGA section the indicator name alone is unique.
+Input:  cache/population/lga_<slug>_population_erp_lga.json, produced
+        by fetchers/fetch_population_erp_lga.py.
+Target: the "LGA" section of the Population sheet, row "Population
+        (ERP)" in each LGA's block.
 
-Full source history is available (2001 onwards), so every write goes
-through audit.py's ground-truth historical cross-check. Note the ABS
-revises recent years of ERP each release (rebasing after a Census), so
-the existing workbook history typically differs from the source by a
-fraction of a percent for the last several years. That is expected and
-does not block the write; this script writes the NEW year only and
-does not rewrite earlier years.
+The same row name exists in the SA2 section (written by
+update_population_erp.py) under some of the same region names, so every
+lookup passes section="LGA". The two writers read different cache files
+(*_population_erp_lga.json and *_population_erp.json) and cannot pick up
+each other's input.
 
-Uses xlwings (real Excel via COM automation), NOT openpyxl -- see
-base.py's docstring for why.
+Blocks are matched on the LGA name (the `lga` field of the towns in
+towns.toml). The column B sub-label is not used because its wording
+varies between workbooks; within a block the row name is unique.
 
-Tested 2026-10-06 against the real 2025 working file's cell contents
-through a stand-in for the Excel sheet object (this script cannot be
-run for real outside Windows/Mac Excel): all seven rows found, all
-seven values land in the right cells and equal the 2026 reference
-file. First real Excel run still to be confirmed by Steve.
+The cache carries the full source series from 2001, so every write is
+checked against it with audit_historical_series. The ABS revises recent
+years with each release, so small differences from existing workbook
+values are expected; they are reported and do not block the write. Only
+the latest year is written; earlier years are not modified.
+
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_population_erp_lga.py <path-to-Indicators_Data-Charts.xlsx> <cache/population dir> [--visible]
+    python update_population_erp_lga.py <workbook.xlsx> <cache/population dir> [--visible]
 """
 
 from __future__ import annotations
@@ -63,10 +48,13 @@ CACHE_GLOB = "*_population_erp_lga.json"
 
 
 def write_lga_erp(sheet, cache_files: list[Path]) -> tuple[list[str], int, int]:
-    """Write every cached LGA figure into `sheet`. Split out from the
-    Excel open/save handling so the row-finding and audit logic can be
-    exercised against any sheet-like object. Returns
-    (result lines, written count, flagged count)."""
+    """Write every cached LGA figure into `sheet`.
+
+    Separate from the Excel session handling so that it can be run
+    against any object with the xlwings Sheet interface (see
+    tests/fake_xlwings_sheet.py). Returns
+    (result lines, written count, flagged count).
+    """
     results: list[str] = []
     written_count = 0
     flagged_count = 0

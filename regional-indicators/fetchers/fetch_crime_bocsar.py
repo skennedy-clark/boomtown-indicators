@@ -1,67 +1,63 @@
 """
-fetchers/fetch_crime_bocsar.py
-----------------------------
+regional-indicators/fetchers/fetch_crime_bocsar.py
+
 Fetches NSW recorded crime incident data from the NSW Bureau of Crime
-Statistics and Research (BOCSAR).
+Statistics and Research (BOCSAR) and converts it to annual rates per
+1,000 persons.
 
 Source: bocsar.nsw.gov.au/statistics-dashboards/open-datasets/criminal-offences-data.html
-Direct downloads (no auth, updated quarterly):
+Direct downloads (no authentication, updated quarterly):
   NSW-wide: https://bocsar.nsw.gov.au/content/dam/dcj/bocsar/documents/open-datasets/Incident_by_NSW.xlsx
   By LGA:   https://bocsarblob.blob.core.windows.net/bocsar-open-data/RCI_offencebymonth.xlsm
 
 Population for LGA-level rates:
-  ABS Regional population by LGA, 2001-2025 (annual, 30 June reference date):
+  ABS Regional population by LGA, 2001-2025 (annual, 30 June reference
+  date):
   https://www.abs.gov.au/statistics/people/population/regional-population/2024-25/32180DS0004_2001-25.xlsx
 
-METHODOLOGY, confirmed 2026-09-24 against real data, not assumed:
-  Both BOCSAR files are WIDE format: one row per (geography, offence
-  category, subcategory), one column per month (1995 onward). The
-  NSW-wide file has population built in per row ("2025 population",
-  "2026 population" columns); the LGA-level file does NOT, so LGA
-  rates need the separate ABS population lookup above.
+File layout:
+  Both BOCSAR files are wide format: one row per (geography, offence
+  category, subcategory) and one column per month from 1995 onward. The
+  NSW-wide file carries population in each row ("2025 population" and
+  "2026 population" columns). The LGA file does not, so LGA rates use
+  the ABS population lookup above.
 
-  Rate = SUM of the 12 monthly incident counts across ALL subcategories
-  within a category, for the target year, divided by (population / 1000)
-  -- same "sum, not mean" principle already proven correct for QPS
-  (an annual rate is a rate PER YEAR, not an average month). Verified
-  directly: NSW-wide Assault 2024 computed at 8.98 vs the real
-  workbook's known 8.85 (1.5% off); Narrabri LGA Assault 2024 computed
-  at 13.71 vs the real workbook's known 13.91 (1.5% off) -- same small
-  margin as every other state's crime data in this project, not a
-  methodology problem.
+Methodology:
+  Rate = sum of the 12 monthly incident counts across all subcategories
+  within a category for the year, divided by (population / 1000). The
+  annual figure is a sum, not a monthly mean, as for the QPS fetcher.
+  Checked against the reference workbook: NSW-wide Assault 2024 computes
+  to 8.98 against 8.85, and Narrabri LGA Assault 2024 to 13.71 against
+  13.91 (both about 1.5%), the same margin as the other states' crime
+  data.
 
-  Skip incomplete years: BOCSAR's most recent year is partial (2026
-  only had 6 of 12 months, matching its own "Jun 2026" cutoff) --
-  same "skip incomplete years" pattern already proven correct
-  elsewhere. Also skip any year with no matching ABS population figure
-  (the population series currently ends 2025) -- a year needs BOTH a
-  complete 12 months of crime data AND a population figure to produce
-  a rate at all.
+  Incomplete years are skipped; BOCSAR's most recent year is normally
+  partial. Years with no matching population figure are also skipped
+  (the ABS series currently ends at 2025). A year needs both a complete
+  12 months of incidents and a population figure to produce a rate.
 
-CONFIRMED REAL CATEGORY MAPPING: all 8 sheet categories (Assault, Drug
-offences, Malicious damage to property, Other offences, Other offences
-against the person, Robbery, Theft, Transport regulatory offences) are
-literal, exact "Offence category" values in BOCSAR's own data -- no
-grouping or combining needed, unlike QPS's turnover-band situation.
+Categories: the eight sheet categories (Assault, Drug offences,
+Malicious damage to property, Other offences, Other offences against
+the person, Robbery, Theft, Transport regulatory offences) are exact
+"Offence category" values in the BOCSAR data, so no grouping or
+combining is needed.
 
-GENERALIZED 2026-09-24, per Steve's explicit direction ("knowing there
-will be a fetch victoria, tasmania, nt, wa at some point"): this
-fetcher's shape is meant to be the template for those. What's
-NSW-specific here (narrowly, so the next state fetcher copies the
-right things): the two BOCSAR URLs, the wide-format-with-Month-Year-
-columns parser, the 8-category label list, and the "does this file
-have population built in" split. What's already state-agnostic and
-should NOT be re-invented per state: the output JSON schema
-(indicators[key] = {"label": ..., "values": {...}}, read generically
-by update_crime.py), the sum-not-mean annual aggregation principle,
-and the skip-incomplete-years safeguard. A future state fetcher should
-produce the same JSON shape from whatever that state's own source
-actually looks like -- update_crime.py needs no changes to support it.
+Template for other states: this fetcher is the model for future state
+crime fetchers. The NSW-specific parts are the two BOCSAR URLs, the
+wide-format parser with one column per month, the eight-category label
+list, and the split between files with and without population. The
+state-agnostic parts, which a new fetcher should reuse, are the output
+JSON schema (indicators[key] = {"label": ..., "values": {...}}, read
+generically by update_crime.py), the sum-not-mean annual aggregation
+and the skipping of incomplete years. A fetcher that writes the same
+JSON shape needs no change to update_crime.py.
 
-towns.toml mapping: NSW towns' existing `lga` field is reused directly
-as the BOCSAR LGA name -- confirmed exact match (Narrabri's `lga =
-"Narrabri"` matches BOCSAR's own LGA column value verbatim), no new
-towns.toml field needed.
+Geography: the existing `lga` field of NSW towns in towns.toml is used
+as the BOCSAR LGA name. It matches the BOCSAR LGA column verbatim (for
+example `lga = "Narrabri"`), so no extra towns.toml field is needed.
+
+Output: cache/crime/<slug>_crime_bocsar.json per town and
+cache/crime/nsw_crime_bocsar.json for the state.
 """
 
 from __future__ import annotations
@@ -90,20 +86,21 @@ NSW_WIDE_URL = (
 )
 LGA_URL = "https://bocsarblob.blob.core.windows.net/bocsar-open-data/RCI_offencebymonth.xlsm"
 ABS_LGA_POP_BASE = "https://www.abs.gov.au/statistics/people/population/regional-population"
-ABS_LGA_POP_RELEASE = "2024-25"   # update each cycle if auto-advance below fails
+ABS_LGA_POP_RELEASE = "2024-25"   # update each cycle if the automatic advance below fails
 ABS_LGA_POP_URL = (
     f"{ABS_LGA_POP_BASE}/{ABS_LGA_POP_RELEASE}/32180DS0004_2001-25.xlsx"
 )
-# update each cycle -- both the "/2024-25/" release folder AND the
-# "2001-25" filename suffix above advance every year ABS republishes this
-# series; the URL 404s once retired rather than silently serving stale data
+# Update each cycle: both the "/2024-25/" release folder and the
+# "2001-25" file name suffix advance each year ABS republishes this
+# series. A retired URL returns 404 rather than serving stale data.
 
 
 def _guess_next_lga_pop_release(release: str) -> tuple[str, str] | None:
-    """
-    "2024-25" -> ("2025-26", "26"). Returns (release_folder, filename_suffix)
-    or None if the shape doesn't match, so an unexpected format fails safe
-    (falls back to the hardcoded release) rather than guessing nonsense.
+    """Return (release_folder, filename_suffix) for the release after the
+    given one, for example "2024-25" -> ("2025-26", "26").
+
+    Returns None if the release does not have the "YYYY-YY" shape, so
+    that the caller falls back to the configured release.
     """
     m = re.match(r"^(\d{4})-(\d{2})$", release)
     if not m:
@@ -114,14 +111,13 @@ def _guess_next_lga_pop_release(release: str) -> tuple[str, str] | None:
 
 
 def _discover_current_lga_pop_url(log) -> str:
-    """
-    ADDED 2026-09-29, same guess-verify-fallback approach as
-    fetch_business.py's _discover_current_release(): guess next year's
-    likely release from this year's pattern, verify with a live HEAD
-    request, and only use it if confirmed. Tried live 2026-09-29: a guessed
-    "2025-26" release correctly 404s today while the hardcoded "2024-25"
-    returns 200 -- confirms the fallback path works, not just the mechanism
-    in the abstract.
+    """Return the URL of the current ABS LGA population workbook.
+
+    Uses the same guess-verify-fallback approach as
+    _discover_current_release() in fetch_business.py: the next release
+    is guessed from the configured one and checked with a HEAD request.
+    The guessed URL is used only if it returns 200; otherwise the
+    configured ABS_LGA_POP_URL is returned.
     """
     guess = _guess_next_lga_pop_release(ABS_LGA_POP_RELEASE)
     if not guess:
@@ -143,10 +139,10 @@ def _discover_current_lga_pop_url(log) -> str:
 
 NSW_WIDE_CACHE_KEY = "bocsar_nsw_wide"
 LGA_CACHE_KEY = "bocsar_lga"
-ABS_POP_CACHE_KEY = "abs_lga_population_2001_2025"   # cache filename only, cosmetic -- no need to keep in sync
+ABS_POP_CACHE_KEY = "abs_lga_population_2001_2025"   # cache file name only; need not track the release
 
-# Confirmed real, exact "Offence category" values (2026-09-24, direct
-# inspection of both BOCSAR files) -- the sheet's own row order.
+# Exact "Offence category" values in both BOCSAR files, in the row order
+# of the Crime sheet.
 CATEGORIES = [
     "Assault",
     "Drug offences",
@@ -197,10 +193,11 @@ class BOCSARCrimeFetcher(BaseFetcher):
     # ── ABS LGA population ────────────────────────────────────────────────────
 
     def _parse_abs_lga_population(self, path: Path) -> dict:
-        """Returns { "Narrabri": {2001: 14422, ..., 2025: 12797}, ... }.
-        Confirmed real structure (2026-09-24): Table 1, row 5 = year
-        headers (2001-2025), data from row 7, column A = LGA code,
-        column B = LGA name, columns C onward = one per year.
+        """Return { "Narrabri": {2001: 14422, ..., 2025: 12797}, ... }.
+
+        Workbook layout: sheet "Table 1", year headers (2001-2025) in
+        row 5, data from row 7, column A = LGA code, column B = LGA name,
+        columns C onward = one per year.
         """
         try:
             wb = openpyxl.load_workbook(path, read_only=True)
@@ -225,11 +222,13 @@ class BOCSARCrimeFetcher(BaseFetcher):
 
     def _sum_category_by_year(self, rows, geography_col_value, geography_col_idx,
                                month_cols: dict) -> dict:
-        """Shared core: given raw rows (Geography, Offence category,
-        Subcategory, ...monthly columns...), returns
-        { year: { category: raw_monthly_sum } } for one geography,
-        summing ALL subcategories within each category, only for years
-        with a complete 12 months present.
+        """Sum monthly incident counts by year and category for one
+        geography.
+
+        Takes raw rows (geography, offence category, subcategory, then
+        the monthly columns) and returns { year: { category: sum } },
+        summing all subcategories within each category. Only years with
+        a complete 12 months are returned.
         """
         monthly: dict[int, dict[str, list]] = defaultdict(lambda: defaultdict(list))
         for row in rows:
@@ -245,13 +244,10 @@ class BOCSARCrimeFetcher(BaseFetcher):
 
         result = {}
         for yr, cats in monthly.items():
-            # BUG FIXED 2026-09-28: this used to count VALUES (max list
-            # length across categories), but a category with several
-            # subcategory rows appends one value per row per month --
-            # so 3 subcategories x 6 months = 18 passed a ">= 12" test
-            # and a half-year (2026, Jan-Jun) got turned into a rate.
-            # Completeness is a property of the header's month columns,
-            # not of how many rows there happen to be.
+            # Completeness is judged from the header's month columns, not
+            # from the number of values collected: a category with several
+            # subcategory rows contributes one value per row per month, so
+            # a count of values can reach 12 for a part year.
             if len(month_cols.get(yr, [])) != 12:
                 continue
             result[yr] = {cat: sum(vals) for cat, vals in cats.items()}
@@ -283,8 +279,9 @@ class BOCSARCrimeFetcher(BaseFetcher):
 
         yearly_sums = self._sum_category_by_year(data_rows, None, None, month_cols)
 
-        # Population is per-row here; take it from any matching row (confirmed
-        # constant across rows in this file, per-state not per-category).
+        # Population is carried in every row and is the same in each (it
+        # is the state population, not a per-category figure), so any row
+        # supplies it.
         population_by_year: dict[int, int] = {}
         for row in data_rows:
             if row[3]:
@@ -292,9 +289,9 @@ class BOCSARCrimeFetcher(BaseFetcher):
             if row[4]:
                 population_by_year[2026] = row[4]
 
-        # Only 2025 has both a complete year AND a matching population
-        # figure in the current release; future years follow the same
-        # pattern automatically as the source file grows.
+        # In the current release only 2025 has both a complete year and a
+        # population figure. Later years are picked up in the same way as
+        # the source file grows.
         indicators = {}
         for cat in CATEGORIES:
             indicators[cat] = {"label": cat, "values": {}}

@@ -1,23 +1,23 @@
 """
-transform/to_csv.py
--------------------
-Converts cached indicator JSON files into the 2-row CSV format used by
-the boomtown-indicators.org website.
+regional-indicators/transform/to_csv.py
 
-CSV format (from reference files):
-  Row 1: "2000","2001","2002",...,"2024"   ← years as quoted strings
-  Row 2: "","value","value",...,""          ← values, empty string = no data
+Converts cached indicator JSON files into the two-row CSV format used
+by the boomtown-indicators.org website.
+
+CSV format (as in the website's reference files):
+  Row 1: "2000","2001","2002",...,"2024"   years, as quoted strings
+  Row 2: "","value","value",...,""         values; empty string = no data
 
 Year conventions:
-  ATO financial years map to the end calendar year:
-    2003-04 → "2004",  2022-23 → "2023"
-  All other sources use calendar year directly.
+  ATO financial years map to the calendar year in which they end:
+    2003-04 -> "2004",  2022-23 -> "2023"
+  All other sources use the calendar year directly.
 
 Usage:
   python transform/to_csv.py                     # all towns, all indicators
   python transform/to_csv.py --towns Roma Dalby  # specific towns
-  python transform/to_csv.py --only income        # specific indicator
-  python transform/to_csv.py --dry-run            # show what would be written
+  python transform/to_csv.py --only income       # specific indicator
+  python transform/to_csv.py --dry-run           # show what would be written
 """
 
 from __future__ import annotations
@@ -40,26 +40,25 @@ log = get_child_logger("regional-indicators", "to_csv")
 # ── Year range ─────────────────────────────────────────────────────────────────
 
 YEAR_START = 2000
-YEAR_END   = 2025   # update each cycle -- ALSO update the other copy of this constant
-                     # (config.py and transform/to_csv.py both define it separately;
-                     # they can silently drift out of sync -- see TODO.md 2027 date audit)
+YEAR_END   = 2025   # update each cycle, together with YEAR_END in config.py
+                     # (the two constants are defined separately and must be
+                     # kept equal; nothing checks that they agree)
 ALL_YEARS  = [str(y) for y in range(YEAR_START, YEAR_END + 1)]
 
 
-# ── ATO financial year → calendar year ─────────────────────────────────────────
+# ── ATO financial year -> calendar year ────────────────────────────────────────
 
 def fy_to_year(fy: str) -> Optional[str]:
+    """Convert "2022-23" (hyphen or en dash) to its end year, "2023".
+    Returns None if the string cannot be parsed.
     """
-    Convert "2022-23" or "2022–23" to "2023" (the end year).
-    Returns None if not parseable.
-    """
-    fy = fy.replace("\u2013", "-").strip()   # en-dash → hyphen
+    fy = fy.replace("\u2013", "-").strip()   # en dash -> hyphen
     parts = fy.split("-")
     if len(parts) == 2:
         start, end_2 = parts
         try:
             end_full = str(int(start) + 1)
-            # Sanity check: end_2 should match last 2 digits
+            # The two-digit end year must agree with start year + 1.
             if end_full[-2:] == end_2.zfill(2)[-2:]:
                 return end_full
         except ValueError:
@@ -71,8 +70,8 @@ def fy_to_year(fy: str) -> Optional[str]:
 
 def write_csv(path: Path, values: dict[str, str | float | int | None],
               dry_run: bool = False) -> None:
-    """
-    Write the 2-row CSV.  `values` maps year string → value (or None/empty).
+    """Write the two-row CSV. `values` maps a year string to a value;
+    None or an empty string gives an empty field.
     """
     row1 = ALL_YEARS
     row2 = []
@@ -81,7 +80,7 @@ def write_csv(path: Path, values: dict[str, str | float | int | None],
         if val is None or val == "":
             row2.append("")
         elif isinstance(val, float):
-            # Drop trailing .0 for whole numbers
+            # Whole-number floats are written without the trailing ".0".
             row2.append(str(int(val)) if val == int(val) else str(val))
         else:
             row2.append(str(val))
@@ -101,15 +100,14 @@ def write_csv(path: Path, values: dict[str, str | float | int | None],
 # ── Indicator transformers ──────────────────────────────────────────────────────
 
 def transform_income_table8(town: Town, dry_run: bool = False) -> bool:
-    """
-    Cache: cache/ato/{slug}_income.json
+    """Cache:    cache/ato/{slug}_income.json
     Produces: output/{town}/Income - taxable, incl. lowneg. incomes (ATO ave.).csv
 
     JSON structure:
       { "avg_taxable_income_by_year": { "2003-04": 38500.0, ..., "2022-23": 65642.0 } }
 
-    Table 8 includes ALL individuals (taxable + non-taxable), so this is the
-    "incl. lowneg. incomes" series.
+    Table 8 covers all individuals (taxable and non-taxable), so this is
+    the "incl. lowneg. incomes" series.
     """
     cache_file = CACHE_DIR / "ato" / f"{town.slug}_income.json"
     if not cache_file.exists():
@@ -136,7 +134,7 @@ def transform_income_table8(town: Town, dry_run: bool = False) -> bool:
 # ── Table 6 transformers ──────────────────────────────────────────────────────
 
 def _load_t6_series(town: Town, indicator: str) -> dict:
-    """Load all *_income_t6.json files for a town, merge across years."""
+    """Load every *_income_t6.json file for a town and merge the years."""
     cache_dir = CACHE_DIR / "ato"
     values = {}
     for pat in [f"{town.slug}_income_t6.json", f"{town.slug}_income_t6_*.json"]:
@@ -150,7 +148,7 @@ def _load_t6_series(town: Town, indicator: str) -> dict:
 
 
 def transform_income_table6_taxable(town: Town, dry_run: bool = False) -> bool:
-    """Cache: cache/ato/{slug}_income_t6.json → Income - for taxable individuals.csv"""
+    """Cache: cache/ato/{slug}_income_t6.json -> Income - for taxable individuals.csv"""
     values = _load_t6_series(town, "avg_income_taxable")
     if not values:
         log.warning(f"  [{town.name}] income_t6 taxable cache missing")
@@ -160,7 +158,7 @@ def transform_income_table6_taxable(town: Town, dry_run: bool = False) -> bool:
 
 
 def transform_earners(town: Town, dry_run: bool = False) -> bool:
-    """Cache: cache/ato/{slug}_income_t6.json → Number of earners.csv"""
+    """Cache: cache/ato/{slug}_income_t6.json -> Number of earners.csv"""
     values = _load_t6_series(town, "earners_no")
     if not values:
         log.warning(f"  [{town.name}] income_t6 earners cache missing")
@@ -170,7 +168,7 @@ def transform_earners(town: Town, dry_run: bool = False) -> bool:
 
 
 def transform_wages(town: Town, dry_run: bool = False) -> bool:
-    """Cache: cache/ato/{slug}_income_t6.json → Wage & salary earnings (town total).csv"""
+    """Cache: cache/ato/{slug}_income_t6.json -> Wage & salary earnings (town total).csv"""
     values = _load_t6_series(town, "wages_total")
     if not values:
         log.warning(f"  [{town.name}] income_t6 wages cache missing")
@@ -181,10 +179,11 @@ def transform_wages(town: Town, dry_run: bool = False) -> bool:
 
 
 def transform_population_ucl(town: Town, dry_run: bool = False) -> bool:
-    """
-    Cache: cache/population/{slug}_population_ucl.json
+    """Cache:    cache/population/{slug}_population_ucl.json
     Produces: output/{town}/Population - town.csv
-    Only applies to QLD towns with a UCL match (not Toowoomba sub-areas).
+
+    Applies only to Queensland towns with a UCL match (not the Toowoomba
+    sub-areas).
     """
     cache_file = CACHE_DIR / "population" / f"{town.slug}_population_ucl.json"
     if not cache_file.exists():
@@ -207,7 +206,7 @@ def transform_population_ucl(town: Town, dry_run: bool = False) -> bool:
 # ── Crime transformers (QPS) ──────────────────────────────────────────────────
 
 def _load_crime_series(town: Town, indicator: str) -> dict:
-    """Load cache/crime/{slug}_crime_qps.json and return {year: value} dict."""
+    """Load cache/crime/{slug}_crime_qps.json and return {year: value}."""
     cache_file = CACHE_DIR / "crime" / f"{town.slug}_crime_qps.json"
     if not cache_file.exists():
         return {}
@@ -220,7 +219,7 @@ def _load_crime_series(town: Town, indicator: str) -> dict:
 
 
 def transform_crime_all(town: Town, dry_run: bool = False) -> bool:
-    """→ Crime rate - all offences.csv"""
+    """Produces: Crime rate - all offences.csv"""
     values = _load_crime_series(town, "all")
     if not values:
         log.warning(f"  [{town.name}] crime_qps cache missing")
@@ -230,7 +229,7 @@ def transform_crime_all(town: Town, dry_run: bool = False) -> bool:
 
 
 def transform_crime_drugs(town: Town, dry_run: bool = False) -> bool:
-    """→ Drug offences.csv"""
+    """Produces: Drug offences.csv"""
     values = _load_crime_series(town, "drug")
     if not values:
         log.warning(f"  [{town.name}] crime_qps cache missing")
@@ -240,7 +239,7 @@ def transform_crime_drugs(town: Town, dry_run: bool = False) -> bool:
 
 
 def transform_crime_goodorder(town: Town, dry_run: bool = False) -> bool:
-    """→ Good order offences.csv"""
+    """Produces: Good order offences.csv"""
     values = _load_crime_series(town, "good_order")
     if not values:
         log.warning(f"  [{town.name}] crime_qps cache missing")
@@ -250,7 +249,7 @@ def transform_crime_goodorder(town: Town, dry_run: bool = False) -> bool:
 
 
 def transform_crime_theft(town: Town, dry_run: bool = False) -> bool:
-    """→ Theft.csv"""
+    """Produces: Theft.csv"""
     values = _load_crime_series(town, "theft")
     if not values:
         log.warning(f"  [{town.name}] crime_qps cache missing")
@@ -260,7 +259,7 @@ def transform_crime_theft(town: Town, dry_run: bool = False) -> bool:
 
 
 def transform_crime_traffic(town: Town, dry_run: bool = False) -> bool:
-    """→ Traffic offences.csv"""
+    """Produces: Traffic offences.csv"""
     values = _load_crime_series(town, "traffic")
     if not values:
         log.warning(f"  [{town.name}] crime_qps cache missing")
@@ -273,19 +272,20 @@ def transform_crime_traffic(town: Town, dry_run: bool = False) -> bool:
 # ── QGSO housing / unemployment / NRW / rainfall transformers ─────────────────
 
 def _load_qgso_series(town: Town, indicator: str) -> dict:
-    """
-    Load QGSO housing cache for a town.
+    """Load an indicator series from a town's QGSO housing cache.
 
-    Matches two filename patterns (both are produced by fetch_qgso_housing.py):
-      {slug}_qgso.json          ← current format (single file per town)
-      {slug}_qgso_*.json        ← legacy/split format (multiple files per town)
+    Two file name patterns are matched, both written by
+    fetch_qgso_housing.py:
+      {slug}_qgso.json      current format, one file per town
+      {slug}_qgso_*.json    older split format, several files per town
 
-    Values from all matching files are merged; later files win on key collisions.
+    Values from all matching files are merged; where a year appears in
+    more than one file, the later file (in sorted order) takes precedence.
     """
     cache_dir = CACHE_DIR / "housing"
     values = {}
 
-    # Collect all matching files, deduplicated, in sorted order
+    # All matching files, without duplicates, in sorted order.
     matched: list[Path] = []
     seen: set[Path] = set()
     for pat in [f"{town.slug}_qgso.json", f"{town.slug}_qgso_*.json"]:
@@ -306,7 +306,9 @@ def _load_qgso_series(town: Town, indicator: str) -> dict:
 
 
 def _make_housing_transformer(indicator: str, filename: str):
-    """Factory for housing/NRW/rainfall transformer functions."""
+    """Return a transformer that writes one QGSO housing cache indicator
+    to `filename`.
+    """
     def transformer(town: Town, dry_run: bool = False) -> bool:
         values = _load_qgso_series(town, indicator)
         if not values:
@@ -336,10 +338,13 @@ transform_approvals = _make_housing_transformer(
 )
 
 
-# Unemployment comes from SALM cache (not QGSO housing cache)
+# Unemployment is read from the SALM cache, with the QGSO housing cache
+# as the fallback.
 def transform_unemployment(town: Town, dry_run: bool = False) -> bool:
-    """→ Unemployment rate.csv  (source: SALM or QGSO housing cache)"""
-    # Try SALM cache first (automated, national)
+    """Produces: Unemployment rate.csv (source: SALM cache, else the QGSO
+    housing cache).
+    """
+    # SALM cache first (automated, national coverage).
     salm_file = CACHE_DIR / "unemployment" / f"{town.slug}_salm.json"
     if salm_file.exists():
         with open(salm_file) as f:
@@ -349,7 +354,7 @@ def transform_unemployment(town: Town, dry_run: bool = False) -> bool:
         if values:
             write_csv(town.output_dir / "Unemployment rate.csv", values, dry_run=dry_run)
             return True
-    # Fallback: QGSO housing cache (manual)
+    # Fallback: QGSO housing cache (manually sourced).
     return _make_housing_transformer("unemployment", "Unemployment rate.csv")(town, dry_run)
 
 
@@ -357,9 +362,12 @@ transform_nrw_town = _make_housing_transformer("nrw_town", "Non-resident workers
 transform_nrw_lga  = _make_housing_transformer("nrw_lga",  "Non-resident workers in local govt area.csv")
 
 
-# Rainfall comes from BOM/SILO cache (not QGSO housing cache)
+# Rainfall is read from the BOM/SILO cache, with the QGSO housing cache
+# as the fallback.
 def transform_rainfall(town: Town, dry_run: bool = False) -> bool:
-    """→ Environment - total rainfall.csv  (source: BOM/SILO or QGSO housing cache)"""
+    """Produces: Environment - total rainfall.csv (source: BOM/SILO cache,
+    else the QGSO housing cache).
+    """
     bom_file = CACHE_DIR / "rainfall" / f"{town.slug}_bom_rainfall.json"
     if bom_file.exists():
         with open(bom_file) as f:
@@ -369,13 +377,13 @@ def transform_rainfall(town: Town, dry_run: bool = False) -> bool:
         if values:
             write_csv(town.output_dir / "Environment - total rainfall.csv", values, dry_run=dry_run)
             return True
-    # Fallback: QGSO housing cache (manual)
+    # Fallback: QGSO housing cache (manually sourced).
     return _make_housing_transformer("rainfall", "Environment - total rainfall.csv")(town, dry_run)
 
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
-# Maps indicator key → transform function signature: fn(town, dry_run) -> bool
+# Indicator key -> transformer, called as fn(town, dry_run) -> bool.
 TRANSFORMERS: dict[str, callable] = {
     "income":              transform_income_table8,
     "income_taxable":      transform_income_table6_taxable,

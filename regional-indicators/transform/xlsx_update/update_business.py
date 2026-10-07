@@ -1,61 +1,44 @@
 """
 regional-indicators/transform/xlsx_update/update_business.py
------------------------------------------------------------------------
-Writes fetch_business.py's cached output (NPP/PP business counts by
-turnover band) into the Business sheet's two parallel sections.
 
-CONFIRMED REAL STRUCTURE (2026-09-23/24 inspection of the reference
-workbook):
-  Row 1: fiscal-year strings ("2008/09", ...) starting at column B.
-  Row 2: "Non-primary production" section header.
-  Then repeating 5-row region blocks: name row, then "0k-50k",
-    "50k-200k", "200k-2m", "2m+" in that fixed order.
-  Later: "Primary production" section header, then the SAME 12 regions
-    in the SAME order, same 5-row block shape.
-  Some region-name rows carry a live SUM formula (e.g. "=SUM(Q4:Q7)")
-    totalling the 4 bands below them -- never written to directly,
-    only the 4 band rows are write targets.
+Writes business counts by turnover band into the Business sheet.
 
-YEAR-COLUMN FINDING -- the tricky part, confirmed real and deliberately
-designed around, not guessed at:
-  Row 1 has fiscal-year-LOOKING labels in TWO places: the real data
-  range (B onward) and a later range of growth-rate/working-out
-  columns Steve confirmed are "on the fly working-out... the sort of
-  thing that is problematic with this approach" -- ad hoc analysis
-  cells that happen to have year labels above them too, not real data.
-  There's a genuine BLANK GAP in row 1 between the two. This finder
-  stops at the FIRST gap (a None value) when scanning row 1 rightward
-  from column B -- never continues scanning past it, so it can never
-  latch onto a lookalike label in the working-out zone, and never
-  accidentally creates a new column IN that zone either. Matches
-  Steve's own description of how he'd do this by eye: "run my eye down
-  the data and see that Q is complete... start recording into R".
+Input:  cache/business/<region>_business.json, produced by
+        fetchers/fetch_business.py.
+Target: the Business sheet.
 
-VALUE SANITY CHECK, per Steve's own heuristic (worth restating
-exactly, since it's a genuinely good one): "a value in R... clearly
-not a positive, integer/float in the order of tens to hundreds" is
-"growth/decay working or some other data discovery", not real data.
-Reused rather than reinvented -- this is exactly what audit_cell's
-existing UNEXPECTED_CONTENT/FORMULA detection already catches (a
-formula, or an existing value that doesn't match what's expected), so
-this script goes through the same audit_cell/audit_series/
-WriteAuditReport pipeline as every other indicator rather than adding
-a separate, parallel check.
+Sheet layout:
+  Row 1  fiscal-year labels ("2008/09", ...) from column B.
+  Section "Non-primary production", then section "Primary production".
+  Each section lists the same regions in the same order. A region is a
+  block of five rows: a name row, then the turnover bands "0k-50k",
+  "50k-200k", "200k-2m" and "2m+".
+  The name row holds a SUM formula over the four band rows for each
+  year. Only band rows receive values; when a new year column is
+  created the SUM formula is added to the name row for that column.
 
-Toowoomba composite: 3 SA2s (Central/Harlaxton/West), NOT 4 -- Steve's
-explicit call: "we're not tracking Toowoomba - East because there are
-no FIFO workers living there and it is not affected by the boom-town
-dynamics". Matches fetch_business.py's SA2_REGIONS exactly already;
-nothing to reconcile here, just documenting why.
+Year columns: to the right of the data, after a blank column, row 1
+carries a second run of year-like labels above derived (growth-rate)
+columns. The year finder therefore scans row 1 from column B and stops
+at the first blank cell. It never matches a label in the derived area
+and always places a new column directly after the last data column.
 
-*** NOT YET TESTED against a live Excel instance. *** Row/column
-finding logic is tested against a mock built to match the real
-structure, but the actual write against the real workbook hasn't run
-yet -- test against a throwaway copy first, same as every other
-wiring script's first live test.
+Every write goes through the cell and series audits in audit.py. A
+series-level concern does not block the write: the value is written and
+marked bold red for review. A cell-level block (a formula or unexpected
+content) prevents the write.
+
+The Toowoomba composite region is the sum of the Toowoomba - Central,
+North Toowoomba - Harlaxton and Toowoomba - West SA2s, as defined in
+fetch_business.py. Toowoomba - East is outside the study area.
+
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_business.py <path-to-Indicators_Data-Charts.xlsx> <cache/business dir> [--visible]
+    python update_business.py <workbook.xlsx> <cache/business dir> <year> [--visible]
+
+<year> is the calendar year in which the financial year ends (2025 for
+2024/25).
 """
 
 from __future__ import annotations
@@ -71,9 +54,9 @@ from audit import audit_cell, audit_series, WriteAuditReport, apply_write_format
 from base import _fiscal_label
 
 SHEET_NAME = "Business"
-FIRST_YEAR_COLUMN = 2   # column B -- confirmed
+FIRST_YEAR_COLUMN = 2   # column B
 YEAR_HEADER_ROW = 1
-REGION_BLOCK_SIZE = 5   # name row + 4 turnover-band rows, confirmed
+REGION_BLOCK_SIZE = 5   # name row + 4 turnover-band rows
 
 SECTION_HEADERS = {
     "NPP": "Non-primary production",
@@ -83,14 +66,11 @@ BAND_LABELS = ["0k-50k", "50k-200k", "200k-2m", "2m+"]
 
 
 def _find_year_column(sheet, year: int) -> int:
-    """Scans row 1 rightward from column B, stopping at the FIRST gap
-    (a None value) -- never continues past it into the growth-rate
-    working-out zone confirmed to sit further right with its own
-    lookalike year labels. If `year` is found before the gap, returns
-    its column. Otherwise creates a new column immediately after the
-    last real one (immediately before the gap), matching exactly how
-    Steve described doing this by eye: find the last complete year,
-    the next column is where new data goes.
+    """Return the column for `year` in row 1, appending one if needed.
+
+    Scans from column B and stops at the first blank header cell, which
+    marks the end of the data columns. A new column is created directly
+    after the last data column.
     """
     used = sheet.used_range
     max_col = used.last_cell.column
@@ -103,7 +83,7 @@ def _find_year_column(sheet, year: int) -> int:
     for offset, label in enumerate(header_row):
         col = FIRST_YEAR_COLUMN + offset
         if label is None:
-            break  # the real data range ends here -- stop, don't scan further
+            break  # end of the data columns
         if isinstance(label, str) and "/" in label:
             start_year = int(label.split("/")[0])
             end_year = start_year + 1
@@ -141,8 +121,8 @@ def _find_section_row(sheet, section_label: str) -> int:
 
 
 def _find_region_row(sheet, section_row: int, region_name: str, next_section_row: int | None) -> int:
-    """Search within one section (between its header and the next
-    section's header, or the sheet end) for region_name's own row.
+    """Return the row of `region_name` within one section (from its heading
+    to the next section heading or the end of the sheet).
     """
     used = sheet.used_range
     max_row = next_section_row - 1 if next_section_row else used.last_cell.row
@@ -177,9 +157,7 @@ def _find_band_row(sheet, region_row: int, band_label: str) -> int:
 
 
 def _col_letter(col: int) -> str:
-    """1 -> 'A', 26 -> 'Z', 27 -> 'AA', etc. -- correct for any column,
-    not just the single-letter range every other column reference in
-    this project has stayed within so far."""
+    """Convert a 1-based column number to its letter: 1 -> 'A', 27 -> 'AA'."""
     letters = ""
     while col > 0:
         col, remainder = divmod(col - 1, 26)
@@ -188,23 +166,16 @@ def _col_letter(col: int) -> str:
 
 
 def _write_region_total_formula(sheet, region_row: int, col: int) -> str | None:
-    """Confirmed real pattern (2026-09-24, all 12 regions checked): the
-    region-header row carries a live =SUM(<col><first band row>:<col>
-    <last band row>) formula in every existing year column -- never
-    written to directly (it's the total, not a data cell), but a
-    genuinely NEW column starts empty and needs this formula extended
-    into it too, or the total for the new year would silently be
-    missing even though all 4 band values are there. Different from
-    every other write in this project: this DELIBERATELY writes a
-    formula, not a value -- safe here specifically because the target
-    cell is confirmed empty (a brand new column), never overwriting an
-    existing formula or value. Returns the formula written, or None if
-    the cell wasn't empty (left untouched rather than guessing whether
-    it's safe to overwrite).
+    """Add the region total formula for a new year column.
+
+    The region name row holds =SUM(<first band>:<last band>) in every
+    year column. A newly created column needs the same formula. It is
+    written only if the cell is empty; an occupied cell is left
+    unchanged. Returns the formula written, or None.
     """
     cell = sheet.cells(region_row, col)
     if cell.value is not None or (cell.formula and str(cell.formula).startswith("=")):
-        return None  # not empty -- don't guess, leave it alone
+        return None  # occupied: leave unchanged
 
     col_letter = _col_letter(col)
     first_band_row = region_row + 1
@@ -229,7 +200,7 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
         if col == exclude_col:
             continue
         if label is None:
-            break  # stop at the same gap the year-finder stops at
+            break  # end of the data columns
         if isinstance(label, str) and "/" in label and isinstance(val, (int, float)):
             year = int(label.split("/")[0]) + 1
             series[year] = val
@@ -319,9 +290,8 @@ def update_business(xlsx_path: Path, cache_dir: Path, year: int, visible: bool =
                             results.append(f"{region} {production} {band_label}: SKIPPED (row-finding) — {exc}")
                             flagged_count += 1
 
-                    # Region-header row's live SUM formula -- extend it into
-                    # the new year's column too (see _write_region_total_formula's
-                    # docstring), confirmed only into a genuinely empty cell.
+                    # Extend the region name row's SUM formula into the new year column
+                    # (only if that cell is empty).
                     year_col = _find_year_column(sheet, year)
                     total_formula = _write_region_total_formula(sheet, region_row, year_col)
                     if total_formula:

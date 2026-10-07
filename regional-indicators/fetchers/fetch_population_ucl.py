@@ -1,31 +1,32 @@
 """
-fetchers/fetch_population_ucl.py
----------------------------------
-Fetches QGSO Estimated Resident Population (ERP) by Urban Centre and
-Locality (UCL) for Queensland towns, 2001-2025p.
+regional-indicators/fetchers/fetch_population_ucl.py
 
-Source: QGSO Regional Statistics
-URL: https://www.qgso.qld.gov.au/issues/5496/
-     estimated-resident-population-urban-centre-locality-qld-2001-2025p.csv
+Fetches estimated resident population (ERP) by Urban Centre and Locality
+(UCL) for Queensland towns, 2001 to the latest release.
 
-URL pattern: the issue number (5496) increments with each release.
-If the direct URL fails, the fetcher scrapes the QGSO statistics page
-to find the current link.
+Source: Queensland Government Statistician's Office (QGSO)
+    https://www.qgso.qld.gov.au/issues/<n>/
+        estimated-resident-population-urban-centre-locality-qld-2001-<year>p.csv
 
-File structure (confirmed):
-  Row 1 : title
-  Row 4 : year headers — "2001", "2002", ... "2025p"  (suffix p=provisional, r=revised)
-  Row 5 : "— persons —" label
-  Row 6+: data — UCL name | values (comma-formatted, e.g. "6,310")
+The issue number <n> and the year in the file name change with each
+release. The configured URL is tried first; if it fails, the QGSO
+regional population page is searched for the current link.
 
-UCL name quirks:
-  Small localities: "Tara (L)", "Wallumbilla (L)", "Wandoan (L)"
-  Matching strips the "(L)" suffix.
+File layout:
+    Row 1   title
+    Row 4   year headers: "2001", "2002", ... "2025p"
+            (suffix p = provisional, r = revised)
+    Row 5   "- persons -" label
+    Row 6+  UCL name | values, comma-formatted (e.g. "6,310")
 
-Encoding: latin-1 (file uses Windows-1252 em-dash character 0x97)
+Small localities are published with an "(L)" suffix ("Tara (L)",
+"Wallumbilla (L)", "Wandoan (L)"); the suffix is ignored when matching
+town names.
 
-Website CSV produced:
-  Population - town.csv   (QLD towns only)
+Encoding: latin-1 (the file contains the Windows-1252 em dash, 0x97).
+
+Output: cache/population/<slug>_population_ucl.json
+Website CSV: "Population - town.csv" (Queensland towns only)
 """
 
 from __future__ import annotations
@@ -49,25 +50,21 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-# update each cycle -- update issue number when new year published
+# Update each cycle: the issue number and end year change with each release.
 # Pattern: https://www.qgso.qld.gov.au/issues/{N}/estimated-resident-population-urban-centre-locality-qld-2001-{year}p.csv
 UCL_URL = (
     "https://www.qgso.qld.gov.au/issues/5496/"
     "estimated-resident-population-urban-centre-locality-qld-2001-2025p.csv"
 )
 
-# QGSO statistics page — scraped as fallback when direct URL 404s
-# FIXED 2026-09-29: this was "population-estimates/state-regions", which
-# 404s -- confirmed live. Correct current page found via search and
-# verified live: "population-estimates/regions" (200, lists "Urban centre
-# and locality, Queensland, 2001 to 2025p" as a current release).
+# QGSO page listing the current release; searched when UCL_URL fails.
 QGSO_STATS_URL = (
     "https://www.qgso.qld.gov.au/statistics/theme/population/"
     "population-estimates/regions"
 )
 
 CACHE_KEY = "qgso_ucl_erp"
-FILE_ENC  = "latin-1"   # file uses Windows cp1252 em-dash (0x97)
+FILE_ENC  = "latin-1"   # the file contains the Windows-1252 em dash (0x97)
 
 
 class QGSOPopulationUCLFetcher(BaseFetcher):
@@ -76,10 +73,10 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
     SUPPORTED_STATES = ["QLD"]
 
     def fetch_all(self):
-        # ── Try direct URL first ──────────────────────────────────────────────
+        # ── Configured URL ────────────────────────────────────────────────────
         path = self.download(UCL_URL, CACHE_KEY, suffix=".csv")
 
-        # ── Fallback: scrape QGSO page for current URL ────────────────────────
+        # ── Fallback: find the current URL on the QGSO page ───────────────────
         if not path:
             self.log.info("  Direct URL failed — scraping QGSO page for current link")
             url = self._find_current_url()
@@ -108,25 +105,22 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
             self._extract_town(town, ucl_data)
 
     def _find_current_url(self) -> str | None:
-        """Scrape QGSO statistics page to find the current CSV download URL.
+        """Return the current CSV download URL from the QGSO statistics page.
 
-        BUG FOUND AND FIXED 2026-09-29, same class as fetch_population_nrw.py's
-        _scrape_for_url: both regexes here required an absolute
-        "https?://www.qgso.qld.gov.au/..." URL, but the real page only has
-        relative hrefs ("/issues/5496/...csv"). QGSO_STATS_URL itself was
-        ALSO wrong (see its definition above). Both confirmed and fixed live.
+        The page uses relative hrefs ("/issues/<n>/...csv"), so both patterns
+        match the relative form and the host is prepended to the result.
         """
         try:
             resp = requests.get(QGSO_STATS_URL, timeout=30)
             resp.raise_for_status()
-            # Look for CSV link matching the UCL population pattern
+            # CSV link matching the UCL population file name
             pattern = r'/[^\s"\']*urban-centre-locality-qld[^\s"\']*\.csv'
             paths = re.findall(pattern, resp.text)
             if paths:
                 url = f"https://www.qgso.qld.gov.au{paths[0]}"
                 self.log.info(f"  Found URL on page: {url}")
                 return url
-            # Also try issues URL pattern
+            # Any CSV under /issues/ with "ucl" in its name
             issue_pat = r'/issues/\d+/[^\s"\']*ucl[^\s"\']*\.csv'
             paths = re.findall(issue_pat, resp.text, re.IGNORECASE)
             if paths:
@@ -140,18 +134,17 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
     # ── Parser ─────────────────────────────────────────────────────────────────
 
     def _parse_ucl_csv(self, path: Path) -> dict:
-        """
-        Parse the UCL CSV and return:
+        """Parse the UCL CSV and return, for example:
           { "Roma": {"2001": 6310, ..., "2025": 6757} }
 
-        Year keys strip trailing "p" (provisional) and "r" (revised).
-        Values strip commas from formatted numbers like "6,310".
+        Year keys have the trailing "p" (provisional) or "r" (revised)
+        removed. Values have thousands separators removed.
         """
         try:
             with open(path, encoding=FILE_ENC) as f:
                 rows = list(csv.reader(f))
 
-            # Find header row — contains year integers in columns 1+
+            # The header row is the first row with years in columns 1 onwards
             header_idx = None
             for i, row in enumerate(rows):
                 if len(row) > 1 and str(row[1]).strip().rstrip('rp').isdigit():
@@ -163,7 +156,7 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
                 return {}
 
             header = rows[header_idx]
-            year_map = {}  # col_index → clean year string
+            year_map = {}  # column index -> year string
             for i, v in enumerate(header[1:], start=1):
                 yr = str(v).strip().rstrip('rp')
                 if yr.isdigit() and 1990 <= int(yr) <= 2030:
@@ -196,7 +189,7 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
                 if year_vals:
                     result[ucl_clean] = year_vals
                     if ucl_raw != ucl_clean:
-                        result[ucl_raw] = year_vals   # also store with (L)
+                        result[ucl_raw] = year_vals   # also keyed with the "(L)" suffix
 
             self.log.info(f"  Parsed {len(result)} UCL entries")
             return result
@@ -208,7 +201,7 @@ class QGSOPopulationUCLFetcher(BaseFetcher):
     # ── Per-town extraction ────────────────────────────────────────────────────
 
     def _extract_town(self, town, ucl_data: dict):
-        """Match town name to UCL entry and write cache JSON."""
+        """Match the town name to a UCL entry and write its cache JSON."""
         candidates = [town.name, town.sa2_name, town.name.title()]
 
         year_vals  = None

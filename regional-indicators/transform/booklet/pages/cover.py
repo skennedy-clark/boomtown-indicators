@@ -1,9 +1,9 @@
 """
-transform/booklet/pages/cover.py
----------------------------------
-Page 1: Cover page (Portrait A4).
+regional-indicators/transform/booklet/pages/cover.py
 
-Standalone test:
+Builds page 1 of the booklet: the cover page (portrait A4).
+
+Standalone use:
     python transform/booklet/pages/cover.py --town Chinchilla
 """
 from __future__ import annotations
@@ -16,10 +16,10 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-# ── Path setup: must happen before any local imports ──────────────────────────
-# cover.py lives at: booklet/pages/cover.py
-# common.py lives at: booklet/common.py
-# So we add booklet/ (parent of pages/) to sys.path
+# ── Path setup: must run before any local imports ─────────────────────────────
+# This module is booklet/pages/cover.py and common.py is
+# booklet/common.py, so booklet/ (the parent of pages/) is added to
+# sys.path.
 _PAGES_DIR   = Path(__file__).resolve().parent
 _BOOKLET_DIR = _PAGES_DIR.parent
 _REPO_ROOT   = _BOOKLET_DIR.parent.parent
@@ -39,7 +39,7 @@ from common import (
     set_run_font, no_borders, set_col_width, set_table_width,
 )
 
-# A4 portrait in twips
+# A4 portrait, in twips.
 A4_W_TW = int(210 / 25.4 * 1440)
 A4_H_TW = int(297 / 25.4 * 1440)
 MARGIN_TW = int(MARGIN_MM / 25.4 * 1440)
@@ -48,7 +48,10 @@ MARGIN_TW = int(MARGIN_MM / 25.4 * 1440)
 # ── Image preparation ─────────────────────────────────────────────────────────
 
 def _prepare_images(town_slug: str, cover_file: str):
-    """Ensure composite images exist, generating from source files if needed."""
+    """Return the paths of the logo and cover composite images,
+    generating them from the source files if they do not yet exist.
+    Either path is None if the image is unavailable.
+    """
     try:
         from PIL import Image
         import numpy as np
@@ -62,7 +65,7 @@ def _prepare_images(town_slug: str, cover_file: str):
     logo_out     = SHARED_IMG / "uq_logo.png"
     flourish_out = SHARED_IMG / "flourish_photo_masked.png"
 
-    # Convert CMYK logo to RGB PNG
+    # Convert the CMYK logo to an RGB PNG.
     if not logo_out.exists():
         if logo_src.exists():
             Image.open(logo_src).convert("RGB").save(str(logo_out))
@@ -71,14 +74,14 @@ def _prepare_images(town_slug: str, cover_file: str):
             print(f"    WARNING: Logo not found at {logo_src}")
             logo_out = None
 
-    # Composite: photo masked by flourish wave shape
+    # Composite: the cover photo masked by the flourish wave shape.
     if not flourish_out.exists():
         if flourish_src.exists() and cover_path.exists():
             mask  = Image.open(flourish_src).convert("L")
             photo = Image.open(cover_path).convert("RGB")
             fw, fh = mask.size
 
-            # Fit photo to flourish dimensions, crop centre
+            # Scale the photo to cover the flourish dimensions, then crop.
             pa = photo.width / photo.height
             ta = fw / fh
             if pa > ta:
@@ -101,7 +104,7 @@ def _prepare_images(town_slug: str, cover_file: str):
             data  = np.array(rgba)
             data[:, :, 3] = alpha
             result = Image.fromarray(data)
-            # Downscale to 1800px wide
+            # Downscale to 1800 px wide.
             if result.width > 1800:
                 scale  = 1800 / result.width
                 result = result.resize(
@@ -126,7 +129,9 @@ def _prepare_images(town_slug: str, cover_file: str):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _p(doc, space_before=0, space_after=0, line_pts=14, align=WD_ALIGN_PARAGRAPH.LEFT):
-    """Add a paragraph with exact line spacing to prevent Word inflation."""
+    """Add a paragraph with exact line spacing, so that Word does not
+    increase its height.
+    """
     p  = doc.add_paragraph()
     pf = p.paragraph_format
     pf.space_before      = Pt(space_before)
@@ -138,7 +143,7 @@ def _p(doc, space_before=0, space_after=0, line_pts=14, align=WD_ALIGN_PARAGRAPH
 
 
 def _gap(doc, pts):
-    """Fixed-height blank line."""
+    """Add a blank line of fixed height."""
     p  = doc.add_paragraph()
     pf = p.paragraph_format
     pf.space_before      = Pt(0)
@@ -149,9 +154,9 @@ def _gap(doc, pts):
 
 # ── Page builder ──────────────────────────────────────────────────────────────
 
-# update each cycle -- the date_str default below is dead in the normal CLI
-# path (make_booklet.py always computes and passes a real date_str); only
-# matters if this is called directly
+# The date_str default applies only when this function is called
+# directly; make_booklet.py always computes and passes date_str.
+# Update the default each cycle.
 def build_cover_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"):
     town_name  = town_cfg["name"]
     town_slug  = town_cfg["slug"]
@@ -159,7 +164,7 @@ def build_cover_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
 
     logo_path, flourish_path = _prepare_images(town_slug, cover_file)
 
-    # ── TOP BAR: 2-col table ──────────────────────────────────────────────────
+    # ── Top bar: two-column table ─────────────────────────────────────────────
     tbl = doc.add_table(rows=1, cols=2)
     set_table_width(tbl, Inches(CONTENT_W_MM / 25.4))
 
@@ -200,7 +205,7 @@ def build_cover_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
     no_borders(lc)
     no_borders(rc)
 
-    # ── TITLE ─────────────────────────────────────────────────────────────────
+    # ── Title ─────────────────────────────────────────────────────────────────
     _gap(doc, 16)
 
     for line in [
@@ -211,7 +216,7 @@ def build_cover_page(doc: Document, town_cfg: dict, date_str: str = "April 2026"
         tp = _p(doc, space_before=0, space_after=2, line_pts=28)
         set_run_font(tp.add_run(line), 22, bold=True, colour=PURPLE)
 
-    # ── COVER IMAGE ───────────────────────────────────────────────────────────
+    # ── Cover image ───────────────────────────────────────────────────────────
     _gap(doc, 10)
 
     ip = _p(doc, space_before=0, space_after=0, line_pts=14)
@@ -248,7 +253,7 @@ def _load_town(town_name: str) -> dict:
 
 
 def _set_portrait(doc):
-    """Set document to A4 portrait."""
+    """Set every section of the document to A4 portrait."""
     for section in doc.sections:
         section.page_width    = int(210 / 25.4 * 914400)
         section.page_height   = int(297 / 25.4 * 914400)

@@ -1,59 +1,41 @@
 """
 regional-indicators/transform/xlsx_update/update_crime.py
------------------------------------------------------------------------
-Writes fetch_crime_qps.py's cached output into the Crime sheet, for the
-11 confirmed QLD towns this fetcher covers.
 
-NOT IN SCOPE FOR THIS SCRIPT, confirmed real and deliberately excluded,
-not overlooked:
-  - Narrabri / NSW: confirmed via direct inspection that Narrabri and
-    the NSW benchmark use a COMPLETELY DIFFERENT 5-category structure
-    (Assault, Malicious damage to property, Other offences, Other
-    offences against the person, Robbery) from the 12-category QLD
-    structure -- consistent with Narrabri needing a genuinely different
-    data source (NSW BOCSAR, not QPS) that hasn't been built yet.
-    fetch_crime_qps.py is already correctly QLD-only
-    (SUPPORTED_STATES = ["QLD"]).
-  - The Queensland state benchmark row (confirmed same 12-category
-    structure as individual towns, but QPS's own data has no native
-    statewide division to read directly -- would need its own
-    aggregation across all QLD divisions, similar to Income's QLD/NSW
-    benchmark work). Real, separate piece of work, not built here.
+Writes reported-offence rates into the Crime sheet.
 
-CONFIRMED REAL STRUCTURE (2026-09-24, direct inspection of the
-reference workbook):
-  Row 1: plain calendar-year integers (2001, 2002, ...) starting at
-    column C -- NOT fiscal-year strings like Income, NOT the two-row
-    fiscal+calendar convention like Population. Row 2: "QPS Division"/
-    "Chart label" column headers, not data.
-  Each town: a 13-row block -- name row, then 12 indicator rows in a
-    FIXED order, confirmed identical across every QLD town checked
-    (Chinchilla vs Dalby, row-by-row):
-      Breach Domestic Violence Protection Order, Drug Offences,
-      Good Order Offences, Offences Against Property,
-      Offences Against the Person, Other Offences,
-      Other Theft (excl. Unlawful Entry), Prostitution Offences,
-      Traffic and Related Offences, Unlawful Entry,
-      Weapons Act Offences, Total offences (person, property, other)
-  Column B repeats column A for every row except Total, where it's a
-    town-specific chart label ("{Town} total crime rate") -- not
-    needed for row-finding, column A alone is unique within each
-    town's block.
+Input:  cache/crime/<slug>_crime_<source>.json, one file per town or
+        benchmark, produced by fetch_crime_qps.py (Queensland) and
+        fetch_crime_bocsar.py (New South Wales).
+Target: the Crime sheet.
 
-Reuses audit.py's shared write-with-flag mechanism (same as Income and
-Business) -- a shape-based series concern still writes the value, just
-visually flagged (bold red), never silently withheld; only a genuine
-cell-level block (a formula, unexpected existing content) prevents a
-write outright.
+Sheet layout:
+  Row 1  calendar years from column C.
+  Row 2  column headings ("QPS Division", "Chart label").
+  Queensland towns and the Queensland benchmark: a 13-row block -- a
+  name row followed by twelve offence-category rows, ending with "Total
+  offences (person, property, other)". Column A is unique within a
+  block and is used to find rows.
+  Narrabri and the NSW benchmark: a separate block lower on the sheet
+  with its own copy of the year header row (BOCSAR_YEAR_HEADER_ROW) and
+  BOCSAR's offence categories. The aggregate rate sits on the name row
+  itself, not on a separate total row.
 
-*** NOT YET TESTED against a live Excel instance. *** Row/column
-finding logic is tested against a mock built to match the real
-structure, but the actual write against the real workbook hasn't run
-yet -- test against a throwaway copy first, same as every other wiring
-script's first live test.
+The writer is source-agnostic. Each cache file carries, for every
+indicator, the row label to write to and its values, so a fetcher for
+another state needs no change here provided it writes the same schema.
+
+A series-level audit concern does not block the write: the value is
+written and marked bold red for review. A cell-level block (a formula
+or unexpected content) prevents the write.
+
+_find_year_column, _read_existing_series and _write_crime_row are also
+used by the Employment and Housing writers, whose sheets share this
+header layout.
+
+The workbook is edited through Excel (xlwings); see base.py.
 
 Usage:
-    python update_crime.py <path-to-Indicators_Data-Charts.xlsx> <cache/crime dir> [--visible]
+    python update_crime.py <workbook.xlsx> <cache/crime dir> [--visible]
 """
 
 from __future__ import annotations
@@ -68,39 +50,28 @@ sys.path.insert(0, str(Path(__file__).parent))
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport, apply_write_formatting, describe_write_outcome
 
 SHEET_NAME = "Crime"
-FIRST_YEAR_COLUMN = 3   # column C -- confirmed
+FIRST_YEAR_COLUMN = 3   # column C
 YEAR_HEADER_ROW = 1
-# BUG FOUND 2026-09-30, real run against the real 2025-origional file: row
-# 162 is an EXACT mirror of row 1's year headers (2001-2024, same columns),
-# sitting immediately above the Narrabri/BOCSAR block (which starts row
-# 163). Confirmed by direct inspection, not assumed -- this is a
-# section-local year header for the BOCSAR block specifically, distinct
-# from the sheet-wide row 1 header the rest of Crime uses. Kept as a
-# SEPARATE constant, and mirrored via its own small function below, rather
-# than folded into _find_year_column -- that function is SHARED (Employment
-# and Housing both import it), and row 162 in those sheets is an unrelated
-# cell; this must never run for anything but Crime.
+# The Narrabri/NSW block has its own copy of the year header row,
+# immediately above it. It is kept in step with row 1 by
+# _mirror_bocsar_year_header. This is specific to the Crime sheet and is
+# deliberately not part of _find_year_column, which other sheets share.
 BOCSAR_YEAR_HEADER_ROW = 162
-TOWN_BLOCK_SIZE = 13    # name row + 12 indicator rows, confirmed
+TOWN_BLOCK_SIZE = 13    # name row + 12 offence-category rows
 
-# GENERALIZED 2026-09-24, per Steve's explicit direction ("knowing
-# there will be a fetch victoria, tasmania, nt, wa at some point"):
-# this used to be a hardcoded QLD-specific label dict. Now each
-# fetcher's own JSON output carries its own label alongside every
-# indicator (indicators[key] = {"label": ..., "values": {...}}), so
-# this script is state-agnostic -- it works for QLD's 12 categories,
-# NSW's different 8, and whatever future states turn out to use,
-# without ever needing a per-state dict here. See
-# fetch_crime_qps.py and fetch_crime_bocsar.py for the schema both
-# fetchers (and any future state fetcher) must produce.
+# Row labels are not defined here. Each fetcher's output carries the
+# label for every indicator (indicators[key] = {"label": ..., "values":
+# {...}}), so the writer handles any state's category set. See
+# fetch_crime_qps.py and fetch_crime_bocsar.py for the schema.
 
 
 def _find_year_column(sheet, year: int) -> int:
-    """Plain calendar-year integers in row 1, starting column C.
-    Searches for a real gap the same defensive way update_rainfall.py's
-    and update_business.py's finders do -- stop at the first None
-    rather than trusting the sheet-wide used_range, and never scan past
-    it when creating a new column.
+    """Return the column for `year` in row 1, appending one if needed.
+
+    Scans from column C and stops at the first empty header cell, so
+    that content further right on the sheet is never mistaken for a
+    year column and a new column is always placed directly after the
+    last year.
     """
     used = sheet.used_range
     max_col = used.last_cell.column
@@ -114,13 +85,8 @@ def _find_year_column(sheet, year: int) -> int:
         col = FIRST_YEAR_COLUMN + offset
         if label is None:
             break
-        # BUG FIXED 2026-09-24: xlwings returns whole-number cells as
-        # floats (2001.0) via Excel's COM interface, confirmed real on
-        # a live run -- isinstance(label, int) alone silently rejected
-        # every real year value, since openpyxl (used only for
-        # inspection, not the live write path) happens to preserve int
-        # type but xlwings doesn't. Broadened to (int, float), compared
-        # via int() conversion.
+        # xlwings returns whole numbers as floats (2001.0), so both int and
+        # float are accepted and compared as int.
         if isinstance(label, (int, float)) and int(label) == year:
             return col
         if isinstance(label, (int, float)):
@@ -140,16 +106,13 @@ def _find_year_column(sheet, year: int) -> int:
 
 
 def _mirror_bocsar_year_header(sheet, year: int) -> bool:
-    """Keep row 162 (the BOCSAR block's own local year-header row) in sync
-    with row 1 whenever a year column exists/gets created. Idempotent --
-    safe to call every run; only writes if row 162's copy is missing or
-    wrong for that column. See BOCSAR_YEAR_HEADER_ROW's definition for why
-    this exists and why it's Crime-specific, not part of the shared
-    _find_year_column. Returns True if it actually wrote something, so the
-    caller can fold this into any_written -- otherwise, on a hypothetical
-    run where every other write gets flagged rather than written, this
-    change would silently never reach wb.save()."""
-    col = _find_year_column(sheet, year)  # never creates a second time; row 1 already has it by this point
+    """Copy the year in row 1 into the Narrabri/NSW block's header row.
+
+    Idempotent: writes only when the block's header cell for that column
+    is missing or different. Returns True if a cell was written, so the
+    caller knows the workbook needs saving.
+    """
+    col = _find_year_column(sheet, year)  # the column already exists by this point; nothing is created here
     existing = sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).value
     if existing != year:
         sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).value = year
@@ -207,26 +170,21 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
     return series
 
 
-# ADDED 2026-09-30, per Steve's explicit direction: Crime data displays to
-# 1 decimal place, and the BOCSAR aggregate rows (163 Narrabri, 172 NSW --
-# see BOCSAR_YEAR_HEADER_ROW above for why these two are special) are
-# bold+underlined regardless of flag status, as a structural marker for
-# "this is a name-row aggregate", not a review flag. Both are applied
-# AFTER apply_write_formatting() below, never before -- that function
-# unconditionally sets number_format/bold/color based on flag status, so
-# anything set earlier would just get overwritten.
+# Display conventions for this sheet, applied after
+# apply_write_formatting() (which sets number format and font from the
+# audit result and would otherwise overwrite them): rates are shown to
+# one decimal place, and the aggregate on a name row is bold and
+# underlined.
 CRIME_NUMBER_FORMAT = "0.0"
-BOCSAR_TOTAL_ROWS = {163, 172}  # Narrabri, NSW -- the name rows holding the aggregate, see the fix above
+BOCSAR_TOTAL_ROWS = {163, 172}  # name rows that hold an aggregate rate
 
 
 def _apply_crime_specific_formatting(cell, row: int) -> None:
     cell.number_format = CRIME_NUMBER_FORMAT
     if row in BOCSAR_TOTAL_ROWS:
         cell.font.bold = True
-        # NOT YET CONFIRMED against real Excel -- .bold and .color are
-        # already proven in this project's real runs, .underline is not.
-        # If this errors, tell me the exact message; same fix pattern as
-        # the earlier Font.color-cannot-be-None crash.
+        # Font.underline is set through the same xlwings Font API as bold and
+        # color.
         cell.font.underline = True
 
 
@@ -253,11 +211,8 @@ def _write_crime_row(sheet, row: int, year: int, value, source_series: dict | No
 
 
 def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
-    # GENERALIZED 2026-09-24: was "*_crime_qps.json" only. Picks up
-    # any state fetcher's output now (crime_qps for QLD, crime_bocsar
-    # for NSW, and future crime_vic/crime_tas/crime_nt/crime_wa),
-    # provided each writes its cache file as <town>_crime_<source>.json
-    # in this same directory, in the shared schema.
+    # Any source's files are picked up, provided they are named
+    # <town>_crime_<source>.json and follow the shared schema.
     cache_files = sorted(cache_dir.glob("*_crime_*.json"))
     if not cache_files:
         raise FileNotFoundError(
@@ -276,10 +231,9 @@ def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> lis
             sheet = wb.sheets[SHEET_NAME]
             any_written = False
 
-            # Determine the year being written from the first cache file's
-            # latest data, and mirror row 1's header into row 162 (the
-            # BOCSAR block's own copy) BEFORE the main loop, once, rather
-            # than repeating this per indicator write.
+            # Determine the year being written from the first cache file and
+            # mirror its header into the Narrabri/NSW block once, before the main
+            # loop.
             if cache_files:
                 with open(cache_files[0], encoding="utf-8") as f:
                     _first_data = json.load(f)
@@ -307,31 +261,18 @@ def update_crime(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> lis
                     flagged_count += len(indicators)
                     continue
 
-                # BUG FIXED 2026-09-30, found via a real run against
-                # Narrabri/NSW: some sources (confirmed: BOCSAR) put their
-                # aggregate total directly ON the town's own name row,
-                # rather than as a separate labelled indicator row the way
-                # QLD's QPS fetcher does ("Total offences (person,
-                # property, other)" gets its own row below the town).
-                # Confirmed on the real 2025-origional file: row 163
-                # ("Narrabri") and row 172 ("NSW") both hold a plain
-                # aggregate NUMBER already (not a formula) -- e.g. Q163 =
-                # sum of Q164:Q171 -- so this writer needs to also update
-                # that cell, which it previously never touched at all.
-                # Detected structurally (no "total"-labelled indicator
-                # anywhere in this town's JSON), not by checking which
-                # state/source this is, so a future state fetcher
-                # (VIC/TAS/NT/WA) gets the right behaviour automatically
-                # based on whether ITS OWN json includes an explicit total.
+                # Some sources (BOCSAR) publish no separately labelled total. Their
+                # aggregate rate belongs on the block's name row. This is detected
+                # from the data -- no indicator labelled as a total -- not from the
+                # state or source, so it applies to any fetcher whose output has that
+                # shape.
                 has_own_total_row = any(
                     "total" in (entry.get("label") or "").lower()
                     for entry in indicators.values()
                 )
                 town_total_series: dict[int, float] = {}
 
-                # GENERALIZED 2026-09-24: reads label and values directly
-                # from each fetcher's own JSON, not a hardcoded per-state
-                # dict -- works for any state's indicator set.
+                # Row label and values come from the cache file.
                 for key, entry in indicators.items():
                     label = entry.get("label")
                     values_by_year = entry.get("values", {})

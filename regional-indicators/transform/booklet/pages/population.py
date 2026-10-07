@@ -1,13 +1,13 @@
 """
-transform/booklet/pages/population.py
---------------------------------------
-Page 4: Population chart.
+regional-indicators/transform/booklet/pages/population.py
 
-Renders a bar chart of UCL resident population using python-docx table bars,
-matching the visual style of the 2022 booklet.
+Builds page 4 of the booklet: the population chart.
+
+The chart is a bar chart of UCL resident population, drawn as a table
+of proportional bars to match the visual style of the 2022 booklet.
 
 Data source: cache/population/{slug}_population_ucl.json
-  key: population_by_year → {year: count}
+  key: population_by_year -> {year: count}
 """
 from pathlib import Path
 from docx import Document
@@ -30,8 +30,8 @@ from common import (
 )
 
 # ── Layout constants ───────────────────────────────────────────────────────────
-# All widths in twips (1440 twips = 1 inch = 25.4mm)
-CONTENT_TWIPS = int(CONTENT_W_MM / 25.4 * 1440)  # ~9637 twips for 170mm
+# All widths are in twips (1440 twips = 1 inch = 25.4 mm).
+CONTENT_TWIPS = int(CONTENT_W_MM / 25.4 * 1440)  # ~9637 twips for 170 mm
 YEAR_COL_W    = 480    # year label column
 VAL_COL_W     = 700    # value label column
 BAR_AREA_W    = CONTENT_TWIPS - YEAR_COL_W - VAL_COL_W
@@ -55,7 +55,7 @@ def _bar_row(table, year: str, value: int, max_val: int,
     """Add one data row to the chart table."""
     row = table.add_row()
 
-    # Scale bar width to available space
+    # Bar width is proportional to the value, within the bar area.
     bar_w   = max(1, int((value / max_val) * BAR_AREA_W))
     empty_w = BAR_AREA_W - bar_w
 
@@ -72,12 +72,12 @@ def _bar_row(table, year: str, value: int, max_val: int,
     yr = yp.add_run(year)
     set_run_font(yr, 7, colour=GREY_DARK)
 
-    # ── Bar cell (contains a nested 1-row table for the coloured bar) ──────────
+    # ── Bar cell (holds a nested one-row table for the coloured bar) ───────────
     bar_cell = row.cells[1]
     no_borders(bar_cell)
     bar_cell.paragraphs[0].clear()
 
-    # Build inner table: [coloured bar | empty space]
+    # Inner table: [coloured bar | empty space]
     col_widths = [bar_w, empty_w] if empty_w > 0 else [bar_w]
     inner = bar_cell.add_table(rows=1, cols=len(col_widths))
     _set_tbl_width(inner, BAR_AREA_W)
@@ -104,7 +104,6 @@ def _bar_row(table, year: str, value: int, max_val: int,
         ep.paragraph_format.space_after  = Pt(0)
         ep.add_run("")
 
-    # Set inner row height
     _set_row_height(inner.rows[0], ROW_HEIGHT_PT)
 
     # ── Value cell ─────────────────────────────────────────────────────────────
@@ -120,7 +119,6 @@ def _bar_row(table, year: str, value: int, max_val: int,
     vr = vp.add_run(f"{value:,}")
     set_run_font(vr, 7, colour=GREY_DARK)
 
-    # Set outer row height
     _set_row_height(row, ROW_HEIGHT_PT)
 
 
@@ -146,8 +144,8 @@ def _set_tbl_width(table, width_twips):
     tblW = OxmlElement("w:tblW")
     tblW.set(qn("w:w"),    str(int(width_twips)))
     tblW.set(qn("w:type"), "dxa")
-    # tblW must come after tblStyle but before jc/tblBorders in schema
-    # Insert after tblStyle if present, else at position 0
+    # tblW must follow tblStyle and precede jc/tblBorders in the tblPr
+    # schema: inserted after tblStyle if present, otherwise first.
     tbl_style = tblPr.find(qn("w:tblStyle"))
     if tbl_style is not None:
         tbl_style.addnext(tblW)
@@ -163,11 +161,11 @@ def _set_tc_width(cell, width_twips):
     tcW = OxmlElement("w:tcW")
     tcW.set(qn("w:w"),    str(int(width_twips)))
     tcW.set(qn("w:type"), "dxa")
-    tcPr.insert(0, tcW)  # tcW must be first in tcPr
+    tcPr.insert(0, tcW)  # tcW must be the first child of tcPr
 
 
 def _chart_header_row(table, y_label: str):
-    """Add a column header row above the data bars."""
+    """Add the column header row above the data bars."""
     hdr = table.add_row()
 
     yr_cell = hdr.cells[0]
@@ -201,9 +199,9 @@ def _chart_header_row(table, y_label: str):
 
 
 def build_chart_table(doc, series: dict[str, int], y_label: str, bar_hex: str):
-    """
-    Build and add a bar chart table to `doc`.
-    series: {year_str: numeric_value}
+    """Build a bar chart table and add it to `doc`.
+
+    series: {year string: numeric value}
     """
     if not series:
         p = doc.add_paragraph()
@@ -214,23 +212,21 @@ def build_chart_table(doc, series: dict[str, int], y_label: str, bar_hex: str):
     years   = sorted(series.keys())
     max_val = max(series.values()) * 1.05   # 5% headroom
 
-    # Outer 3-column table: [year | bar area | value]
+    # Outer three-column table: [year | bar area | value]
     table = doc.add_table(rows=0, cols=3)
     _set_tbl_width(table, CONTENT_TWIPS)
     _set_tc_width(table.columns[0].cells[0] if table.rows else table.add_row().cells[0],
                   YEAR_COL_W)
 
-    # Header
     _chart_header_row(table, y_label)
 
-    # Set fixed column widths on header row
+    # Fixed column widths are set on the header row.
     hdr_row = table.rows[0]
     _set_tc_width(hdr_row.cells[0], YEAR_COL_W)
     _set_tc_width(hdr_row.cells[1], BAR_AREA_W)
     _set_tc_width(hdr_row.cells[2], VAL_COL_W)
     _set_row_height(hdr_row, ROW_HEIGHT_PT + 2)
 
-    # Data rows
     for i, year in enumerate(years):
         _bar_row(table, year, int(series[year]), max_val, bar_hex, shade_row=(i % 2 == 1))
 
@@ -240,9 +236,7 @@ def build_chart_table(doc, series: dict[str, int], y_label: str, bar_hex: str):
 # ── Page builder ──────────────────────────────────────────────────────────────
 
 def build_population_page(doc: Document, town_cfg: dict):
-    """
-    Append population chart page to `doc`.
-    """
+    """Append the population chart page to `doc`."""
     town_name = town_cfg["name"]
     slug      = town_cfg["slug"]
 

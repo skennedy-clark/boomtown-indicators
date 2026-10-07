@@ -1,21 +1,24 @@
 """
-transform/booklet/pages/map.py
--------------------------------
-Page 3: SA2 boundary map page.
+regional-indicators/transform/booklet/pages/map.py
+
+Builds page 3 of the booklet: the SA2 boundary map page.
 
 Layout:
-  - Page heading (not printed — orientation context only)
-  - Map image filling content width
+  - Project heading line, centred
+  - Map image filling the content width
   - Bold caption: "{sa2_name} statistical area 2 (SA2) boundary"
   - Source URL (plain text)
   - Centred footer: "This information has been compiled for use in
     consultation with the {town} community"
 
-Map PDF source:
-  QLD towns: exact URL stored in towns.toml as sa2_map_url
-  Fetched, rasterised at 150 DPI, cropped to main map area,
-  cached as resources/images/towns/{slug}/sa2_map.png.
-  Delete the cached PNG to force a refresh.
+Map source:
+  Queensland towns: the URL of the QGSO SA2 map PDF is stored in
+  towns.toml as sa2_map_url. The PDF is fetched, rasterised at 150 DPI,
+  cropped to the main map area and cached as
+  resources/images/towns/{slug}/sa2_map.png.
+  Delete the cached PNG to force a refresh. If the map cannot be
+  fetched, a placeholder box with manual download instructions is
+  inserted instead.
 """
 from __future__ import annotations
 
@@ -43,7 +46,7 @@ from common import (
 MAP_DPI = 150
 
 
-# ── Fetch + rasterise ─────────────────────────────────────────────────────────
+# ── Fetch and rasterise ───────────────────────────────────────────────────────
 
 def _fetch_and_render(pdf_url: str, out_png: Path) -> bool:
     try:
@@ -72,9 +75,10 @@ def _fetch_and_render(pdf_url: str, out_png: Path) -> bool:
         img    = bitmap.to_pil().convert("RGB")
         w, h   = img.size
         # QGSO PDF layout (A4 landscape):
-        #   top ~8%  : title bar  → strip (heading is in the docx)
-        #   left ~65%: main map
-        #   right 35%: QLD inset + legend + credits → exclude
+        #   top ~8%:    title bar; removed, as the heading is in the docx
+        #   left ~65%:  main map
+        #   right ~35%: Queensland inset, legend and credits; excluded
+        # The crop keeps the left 67% of the width below the title bar.
         title_h  = int(h * 0.08)
         map_crop = img.crop((0, title_h, int(w * 0.67), h))
         map_crop.save(str(out_png))
