@@ -1,16 +1,18 @@
 """
-tests/test_update_rainfall.py -- the rainfall writer's block finding on
-the Exogenous sheet.
+tests/test_update_rainfall.py
 
-Builds a tiny sheet with the same shape as the real Rainfall section
-(town header row, station row, Summer, Winter, Historic Average) and
-reads it through tests/fake_xlwings_sheet.py. No network, no real
-workbook, no Excel.
+Tests for how the rainfall writer finds its blocks on the Exogenous
+sheet.
 
-The case that matters most: the file the pipeline really runs on (last
-year's delivered workbook) labels each station by NAME only
-("Harewood"); only the hand-built reference file has the station
-number in the label ("Harewood 042078"). Both must work.
+A small sheet is built with the same shape as the Rainfall section
+(town heading row, station row, Summer, Winter, Historic Average) and
+read through tests/fake_xlwings_sheet.py. No network, workbook file or
+Excel is needed.
+
+Station labels take two forms, and both must be found. The starting
+workbook (the previous year's delivered workbook) labels each station
+by name only ("Harewood"). The reference workbook includes the station
+number in the label ("Harewood 042078").
 """
 
 import json
@@ -42,7 +44,7 @@ def _rows(chinchilla_label="Harewood", dalby_label="Dalby Airport", third="Winte
     return [
         (None, 2023, 2024),
         ("Rainfall",),
-        ("Chinchilla ",),                       # trailing space, as in the real sheet
+        ("Chinchilla ",),                       # trailing space, as on the sheet
         (chinchilla_label, 441.9, 585.6),
         ("Summer (Jan-Mar, Oct-Dec)", 380.4, 396.6),
         (third, 61.5, 189.0),
@@ -54,7 +56,7 @@ def _rows(chinchilla_label="Harewood", dalby_label="Dalby Airport", third="Winte
         ("Historic Average", 587.6, 587.6),
         (None,),
         ("Education", 2023, 2024, None, "a note far to the right"),
-        ("Dalby",),                             # same town name in a LATER section
+        ("Dalby",),                             # same town name in a later section
         ("Full Time Equivalent Enrolments", 3203.6, 3200),
     ]
 
@@ -90,9 +92,13 @@ def test_finds_block_when_label_has_the_station_number(tmp_path):
 
 
 def test_replaced_station_still_writes_and_only_adds_a_note(tmp_path):
-    """The label keeps the OLD station's number; towns.toml has the new
-    one. The block is found by town, the write goes ahead, and the run
-    says the label and towns.toml differ."""
+    """A station label that carries a superseded station number does not
+    block the write.
+
+    The label has the old station's number and towns.toml has the new
+    one. The block is found by town, the value is written, and the
+    result notes that the label and towns.toml differ.
+    """
     from update_rainfall import write_rainfall
 
     sheet = _sheet(tmp_path, _rows(dalby_label="Dalby Airport 041522/ New Site (2026->)"))
@@ -150,6 +156,6 @@ def test_official_average_is_written_under_year_columns_only(tmp_path):
     sheet = _sheet(tmp_path, _rows())
     write_rainfall(sheet, [_cache(tmp_path, "Dalby", "41522", official_avg=599.1)])
     average_cells = {c: v for (r, c), v in sheet.writes.items() if r == 12}
-    # B, C and the new D hold years; E holds a stray note further down the
-    # sheet, which stretches used_range but is NOT a year column.
+    # B, C and the new D hold years. E holds a note further down the sheet,
+    # which extends used_range but is not a year column.
     assert average_cells == {2: 599.1, 3: 599.1, 4: 599.1}

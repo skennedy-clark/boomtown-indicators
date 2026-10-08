@@ -62,12 +62,13 @@ def test_steps_are_fetch_then_every_writer_then_the_website(tmp_path):
     import argparse
     import run_end_to_end as e2e
 
-    args = argparse.Namespace(skip_fetch=False, business_year=2025, visible=True,
+    args = argparse.Namespace(skip_fetch=False, business_year=2025, last_year=2025, visible=True,
                               web_out=tmp_path / "3 Web Content", previous_web=tmp_path / "old")
     steps = e2e.build_steps(args, tmp_path / "test-copy.xlsx")
     names = [name for name, _ in steps]
     assert names[0] == "Fetch everything" and names[-1] == "Website folder"
-    assert len(names) == len(e2e.WRITER_STEPS) + 2
+    assert len(names) == len(e2e.WRITER_STEPS) + 3
+    assert names[-2] == "Charts: series ranges"                        # after every writer, before the website
 
     commands = dict(steps)
     business = commands["Business"]
@@ -85,7 +86,7 @@ def test_skip_fetch_leaves_the_fetch_step_out(tmp_path):
     import argparse
     import run_end_to_end as e2e
 
-    args = argparse.Namespace(skip_fetch=True, business_year=2025, visible=False,
+    args = argparse.Namespace(skip_fetch=True, business_year=2025, last_year=2025, visible=False,
                               web_out=tmp_path / "w", previous_web=None)
     steps = e2e.build_steps(args, tmp_path / "t.xlsx")
     assert steps[0][0] != "Fetch everything"

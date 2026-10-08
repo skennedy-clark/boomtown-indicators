@@ -1,9 +1,11 @@
 """
-test_config.py -- Town/Config parsing and validation.
+tests/test_config.py
 
-These exercise config.py directly against small fixture towns.toml files
-(see conftest.py), never the real project towns.toml -- so adding or
-correcting a real town can never break this suite.
+Tests for Town and Config parsing and validation.
+
+config.py is exercised against the small fixture towns.toml files in
+conftest.py, never the project's own towns.toml, so changes to the
+town list cannot break this suite.
 """
 
 import pytest
@@ -59,8 +61,8 @@ def test_duplicate_name_raises(broken_toml):
 
 
 def test_missing_sa2_raises(broken_toml):
-    # The same fixture's second town also has no sa2_code, so this error
-    # is raised alongside the duplicate-name error above -- both land in
-    # the same ValueError message.
+    # The second town in the fixture also has no sa2_code, so this error is
+    # raised together with the duplicate-name error, in the same ValueError
+    # message.
     with pytest.raises(ValueError, match="missing sa2_code"):
         Config(broken_toml)

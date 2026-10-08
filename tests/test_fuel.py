@@ -1,11 +1,13 @@
 """
-tests/test_fuel.py -- RACQ fuel prices: parsing the Annual Fuel Price
-Report's RULP table text, and writing into the Exogenous sheet's Fuel
-section.
+tests/test_fuel.py
 
-No network, no PDF, no real workbook, no Excel. The parser is fed text
-in the shape pypdfium2 gives for the real report (one line per table
-row, single-space separated); the writer runs against a tiny sheet
+Tests for RACQ fuel prices: parsing the RULP table text of the Annual
+Fuel Price Report, and writing into the Fuel section of the Exogenous
+sheet.
+
+No network, PDF, workbook file or Excel is needed. The parser is given
+text in the form pypdfium2 produces for the report (one line per table
+row, separated by single spaces). The writer runs against a small sheet
 read through tests/fake_xlwings_sheet.py.
 """
 
@@ -44,7 +46,7 @@ def test_parse_reads_years_names_and_values():
     assert set(locations) == {"Brisbane", "Charters Towers", "Dalby", "Whitsunday"}
     assert locations["Dalby"] == {2025: 171.2, 2024: 175.6, 2023: 178.4}
     assert locations["Charters Towers"][2025] == 187.3          # two-word name
-    assert locations["Whitsunday"] == {2025: 172.1, 2024: 179.7}   # 'nd' left out
+    assert locations["Whitsunday"] == {2025: 172.1, 2024: 179.7}   # 'nd' is omitted
 
 
 def test_parse_refuses_rows_of_different_lengths():
@@ -75,12 +77,12 @@ def fuel_sheet(tmp_path):
     ws = wb.active
     ws.title = "Exogenous"
     for row in [
-        (None, 2001, 2002, 2003, 2004),                  # sheet row 1 -- NOT the Fuel header
+        (None, 2001, 2002, 2003, 2004),                  # sheet row 1, which is not the Fuel header
         ("Rainfall",),
-        ("Dalby",),                                      # a Dalby block in ANOTHER section
+        ("Dalby",),                                      # a Dalby block in another section
         ("Dalby Airport", 500.0, 600.0, 700.0, 800.0),
         (None,),
-        ("Fuel", None, 2022, 2023, 2024),                # Fuel's own header row: years start at C
+        ("Fuel", None, 2022, 2023, 2024),                # the Fuel section's own header row; years start at C
         ("Brisbane",),
         ("Average RULP Price (cents)", None, 184.9, 193.1, 194.5),
         ("Dalby ",),                                     # trailing space
@@ -111,9 +113,9 @@ def test_writes_new_year_into_each_block_of_the_fuel_section(fuel_sheet):
     results, written, flagged = write_fuel(fuel_sheet, DATA)
     assert (written, flagged) == (2, 1)
     assert fuel_sheet.writes == {
-        (6, 6): 2025,      # year appended to the FUEL header row (F6), after 2024
+        (6, 6): 2025,      # year appended to the Fuel header row (F6), after 2024
         (8, 6): 185.2,     # Brisbane
-        (10, 6): 171.2,    # Dalby -- the Fuel block, not the Rainfall one
+        (10, 6): 171.2,    # Dalby: the Fuel block, not the Rainfall one
     }
 
 
@@ -131,4 +133,4 @@ def test_earlier_year_that_differs_from_the_report_is_noted_not_changed(fuel_she
     results, _, _ = write_fuel(fuel_sheet, DATA)
     dalby = next(line for line in results if line.startswith("Dalby"))
     assert "2023 sheet 174.4 vs report 178.4" in dalby
-    assert (10, 4) not in fuel_sheet.writes            # the 2023 cell is untouched
+    assert (10, 4) not in fuel_sheet.writes            # the 2023 cell is not written

@@ -1,10 +1,11 @@
 """
-conftest.py -- shared fixtures for the boomtown-indicators test suite.
+tests/conftest.py
 
-Deliberately builds small, self-contained towns.toml fixtures rather than
-loading the real one: real fetchers/config tests should never depend on the
-current state of the actual town list, or they'll break every time a town
-is added or a field is corrected.
+Shared fixtures for the test suite.
+
+The fixtures build small, self-contained towns.toml files instead of
+loading the project's own. Tests therefore do not depend on the current
+town list and are unaffected when a town is added or a field corrected.
 """
 
 import sys
@@ -12,9 +13,10 @@ from pathlib import Path
 
 import pytest
 
-# Belt-and-braces alongside pyproject.toml's [tool.pytest.ini_options]
-# pythonpath setting, so `pytest` run from anywhere still finds config.py,
-# fetchers/, etc. the same way the fetchers themselves import them.
+# Adds regional-indicators/ to sys.path so that config.py, fetchers/ and
+# the other packages import as they do for the fetchers themselves,
+# whichever directory pytest is run from. This duplicates the pythonpath
+# setting under [tool.pytest.ini_options] in pyproject.toml.
 ROOT = Path(__file__).parent.parent / "regional-indicators"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -22,7 +24,7 @@ if str(ROOT) not in sys.path:
 
 @pytest.fixture
 def sample_toml(tmp_path) -> Path:
-    """A minimal, valid towns.toml: one study town, one benchmark town."""
+    """A minimal, valid towns.toml: one study town and one benchmark town."""
     content = """
 [settings]
 output_dir = "output"
@@ -52,8 +54,9 @@ benchmark  = true
 
 @pytest.fixture
 def broken_toml(tmp_path) -> Path:
-    """A towns.toml with two validation problems at once: a duplicate town
-    name, and a non-benchmark town missing its sa2_code."""
+    """A towns.toml with two validation problems: a duplicate town name,
+    and a non-benchmark town with no sa2_code.
+    """
     content = """
 [towns.a]
 name       = "Duplicate"

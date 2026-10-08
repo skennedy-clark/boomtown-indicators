@@ -1,18 +1,21 @@
 """
-tests/fake_xlwings_sheet.py -- a stand-in for an xlwings Sheet, backed by
-openpyxl, for exercising the xlsx_update writers' row-finding and audit
-logic where real Excel isn't available (Linux, CI).
+tests/fake_xlwings_sheet.py
 
-READ-ONLY IN SPIRIT: writes go to an in-memory dict (`.writes`) and are
-NEVER saved back to the workbook -- openpyxl must not be used to save
-the real indicators workbook (see transform/xlsx_update/base.py).
+Stand-in for an xlwings Sheet, backed by openpyxl.
 
-Mimics only the xlwings behaviour the writers rely on:
+Allows the row-finding and audit logic of the xlsx_update writers to be
+exercised where Excel is not available (Linux, CI).
+
+Writes are held in an in-memory dict (`.writes`) and are never saved to
+the workbook. openpyxl must not be used to save the indicators workbook
+(see transform/xlsx_update/base.py).
+
+Only the xlwings behaviour the writers rely on is provided:
   sheet.name
   sheet.used_range.last_cell.row / .column
   sheet.range((r1, c1), (r2, c2)).value   scalar / flat list / list of lists
   sheet.cells(r, c).value / .formula / .address / .number_format / .font
-Numbers come back as float, as xlwings returns them.
+Numbers are returned as float, as xlwings returns them.
 """
 from __future__ import annotations
 

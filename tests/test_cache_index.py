@@ -1,6 +1,8 @@
 """
-test_cache_index.py -- CacheIndex behaviour, isolated from the real
-cache/index.json via tmp_path.
+tests/test_cache_index.py
+
+Tests for CacheIndex, using an index file under tmp_path in place of
+cache/index.json.
 """
 
 from config import CacheIndex
@@ -23,7 +25,7 @@ def test_checksum_recorded(tmp_path):
     data_file.write_text("hello")
 
     cache.register("k", data_file)
-    assert cache.list_entries()["k"]["checksum"]  # non-empty md5 hex string
+    assert cache.list_entries()["k"]["checksum"]  # non-empty MD5 hex string
 
 
 def test_invalidate_removes_entry(tmp_path):
@@ -38,9 +40,10 @@ def test_invalidate_removes_entry(tmp_path):
 
 
 def test_has_false_if_file_deleted_after_registration(tmp_path):
-    """A cache entry pointing at a file that's since been deleted (e.g. the
-    user manually cleared cache/ without going through --force) should read
-    as not-cached, not crash."""
+    """An entry whose file has since been deleted (for example, cache/
+    cleared by hand instead of with --force) reads as not cached and
+    does not raise.
+    """
     cache = CacheIndex(tmp_path / "index.json")
     data_file = tmp_path / "data.csv"
     data_file.write_text("hello")
@@ -51,9 +54,10 @@ def test_has_false_if_file_deleted_after_registration(tmp_path):
 
 
 def test_persists_across_instances(tmp_path):
-    """The index is a JSON file on disk -- a fresh CacheIndex pointed at the
-    same path should see what an earlier instance registered, which is the
-    whole point of caching across separate `python run_update.py` runs."""
+    """The index is a JSON file on disk: a new CacheIndex opened on the
+    same path sees entries registered by an earlier instance, as needed
+    for caching across separate `python run_update.py` runs.
+    """
     index_path = tmp_path / "index.json"
     data_file = tmp_path / "data.csv"
     data_file.write_text("hello")

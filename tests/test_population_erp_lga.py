@@ -1,12 +1,15 @@
 """
-tests/test_population_erp_lga.py -- LGA-level Population (ERP): config loading,
-ABS CSV parsing, and the section-aware row finding the writer depends on.
+tests/test_population_erp_lga.py
 
-No network and no real workbook: the sheet tests build a tiny workbook
-with the same shape as the real Population sheet (an "LGA" section
-header in ROW 2, sharing the row with the year headers, then an "SA2"
-section further down, with the same block name and indicator name in
-both) and read it through tests/fake_xlwings_sheet.py.
+Tests for LGA-level Population (ERP): config loading, ABS CSV parsing,
+and the section-aware row finding that the writer depends on.
+
+No network or workbook file is needed. The sheet tests build a small
+workbook with the same shape as the Population sheet and read it
+through tests/fake_xlwings_sheet.py. In that shape the "LGA" section
+header is in row 2, sharing the row with the year headers, and an "SA2"
+section follows further down; the same block name and indicator name
+occur in both sections.
 """
 
 import sys
@@ -69,8 +72,8 @@ def test_lgas_derived_once_each_including_benchmarks(tmp_path):
     config = Config(_write(tmp_path, LGA_TOML))
     assert config.lgas() == [
         ("Western Downs", "37310", "QLD"),   # shared by two towns, listed once
-        ("Brisbane", "31000", "QLD"),        # benchmark town still contributes its LGA
-        ("Narrabri", "15750", "NSW"),        # no qgso_lga -- uses lga_code
+        ("Brisbane", "31000", "QLD"),        # a benchmark town still contributes its LGA
+        ("Narrabri", "15750", "NSW"),        # no qgso_lga, so lga_code is used
     ]
 
 
@@ -126,7 +129,7 @@ def population_like_sheet(tmp_path):
     ws.title = "Population"
     rows = [
         (None, None, "2022/23", "2023/24", "2024/25"),
-        ("LGA", None, 2023, 2024, 2025),                       # section header IN ROW 2
+        ("LGA", None, 2023, 2024, 2025),                       # section header in row 2
         ("Goondiwindi", None),
         ("Population (ERP)", "Residents (LGA)", 10452, 10495, None),
         ("SA2", None),
@@ -146,7 +149,7 @@ def test_lga_section_header_in_row_2_is_seen(population_like_sheet):
     find = lambda section: _find_town_indicator_row(
         population_like_sheet, "Goondiwindi", "Population (ERP)", None, section=section
     )
-    assert find("LGA") == 4     # failed with "Could not find" before the 2026-10-06 fix
+    assert find("LGA") == 4     # a section header in row 2 must be recognised
     assert find("SA2") == 7
 
 
@@ -168,4 +171,4 @@ def test_writer_lands_in_lga_row_only(population_like_sheet, tmp_path):
     }))
     results, written, flagged = write_lga_erp(population_like_sheet, [cache])
     assert (written, flagged) == (1, 0)
-    assert population_like_sheet.writes == {(4, 5): 10438}   # E4, the LGA row -- not E7
+    assert population_like_sheet.writes == {(4, 5): 10438}   # E4, the LGA row, not E7

@@ -1,11 +1,13 @@
 """
-tests/test_schools.py -- ACARA School Profile: summing schools by
-postcode, choosing the file to download, and writing into the
-Exogenous sheet's Education section.
+tests/test_schools.py
 
-No network, no real ACARA file, no real workbook, no Excel. The
-aggregation runs on a small workbook built here with ACARA's real
-column headers; the writer runs against a tiny sheet read through
+Tests for the ACARA School Profile: summing schools by postcode,
+choosing the file to download, and writing into the Education section
+of the Exogenous sheet.
+
+No network, ACARA download, workbook file or Excel is needed. The
+aggregation runs on a small workbook built here with ACARA's column
+headers. The writer runs against a small sheet read through
 tests/fake_xlwings_sheet.py.
 """
 
@@ -31,7 +33,7 @@ def acara_file(tmp_path):
     wb = openpyxl.Workbook()
     wb.active.title = "DataDictionary"
     ws = wb.create_sheet("SchoolProfile 2008-2025")
-    ws.append(["Calendar Year", "School Name", "State", "Postcode", STAFF, ENROL])   # order differs on purpose
+    ws.append(["Calendar Year", "School Name", "State", "Postcode", STAFF, ENROL])   # column order differs from the reading order on purpose
     ws.append([2024, "Dalby State School",      "QLD", "4405", 30.0, 400.0])
     ws.append([2025, "Dalby State School",      "QLD", "4405", 31.5, 410.4])
     ws.append([2025, "Dalby State High School", "QLD", "4405", 60.2, 900.0])
@@ -47,10 +49,10 @@ def test_sums_schools_by_text_postcode_per_year(acara_file):
     from fetchers.fetch_schools import aggregate_by_postcode
 
     data = aggregate_by_postcode(acara_file, {"4405", "2390"})
-    assert set(data) == {"4405", "2390"}                      # 4406 not asked for
-    assert round(data["4405"][2025]["enrol"], 1) == 1310.4    # 410.4 + 900.0 (+ nothing)
+    assert set(data) == {"4405", "2390"}                      # 4406 was not requested
+    assert round(data["4405"][2025]["enrol"], 1) == 1310.4    # 410.4 + 900.0; the third school reports none
     assert round(data["4405"][2025]["staff"], 1) == 91.7
-    assert len(data["4405"][2025]["schools"]) == 3            # the no-figures school still counts as a school
+    assert len(data["4405"][2025]["schools"]) == 3            # a school with no figures still counts as a school
     assert data["4405"][2024]["enrol"] == 400.0
     assert data["2390"][2025]["enrol"] == 300.0
 
@@ -93,18 +95,18 @@ def _sheet(tmp_path, second_label=STAFF):
     ws = wb.active
     ws.title = "Exogenous"
     for row in [
-        (None, 2001, 2002, 2003),                    # sheet row 1 -- NOT the Education header
+        (None, 2001, 2002, 2003),                    # sheet row 1, which is not the Education header
         ("Rainfall",),
         ("Dalby",),                                  # same town name in another section
         ("Dalby Airport", 500.0, 600.0, 700.0),
         (None,),
-        ("Education", None, 2023, 2024),             # Education's own header row
+        ("Education", None, 2023, 2024),             # the Education section's own header row
         ("Dalby",),
         (ENROL, "FTE Enrolments", 3203.6, 3200.0),
         (second_label, "FTE Teaching Staff", 237.7, 235.7),
         (None,),
         ("Fuel", None, 2023, 2024),
-        ("Dalby",),                                  # and again in the section after
+        ("Dalby",),                                  # and again in the following section
         ("Average RULP Price (cents)", None, 174.4, 175.6),
     ]:
         ws.append(row)
@@ -134,7 +136,7 @@ def test_writes_both_measures_into_the_education_block_only(tmp_path):
     )
     assert (written, flagged) == (2, 0)
     assert sheet.writes == {
-        (6, 5): 2025,       # year appended to the EDUCATION header row (E6)
+        (6, 5): 2025,       # year appended to the Education header row (E6)
         (8, 5): 3181.4,     # enrolments
         (9, 5): 236.0,      # teaching staff
     }
