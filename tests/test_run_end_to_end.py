@@ -145,3 +145,26 @@ def test_the_working_copy_is_a_fresh_copy_of_the_starting_workbook(tmp_path):
     working.write_bytes(b"old contents")
     assert e2e.copy_starting_workbook(original, working) is None
     assert working.read_bytes() == b"PK-new"
+
+
+def test_a_step_that_hangs_is_stopped_and_reported(tmp_path, log):
+    import run_end_to_end as e2e
+
+    script = _script(tmp_path, "hang.py", 'import time\nprint("Opening workbook", flush=True)\ntime.sleep(60)\n')
+    result = e2e.run_step("Population: town (UCL)", [sys.executable, script], log, timeout_s=1)
+    assert not result["ok"] and result["timed_out"]
+    assert result["summary"].startswith("stopped after")
+    assert result["seconds"] < 30
+
+
+@pytest.mark.parametrize("path, synced", [
+    ("C:/Users/me/OneDrive - The University of Queensland/Desktop/test-copy.xlsx", True),
+    ("C:/Users/me/OneDrive/test-copy.xlsx", True),
+    ("C:/Temp/test-copy.xlsx", False),
+])
+def test_a_working_copy_in_a_onedrive_folder_is_recognised(path, synced, monkeypatch):
+    import run_end_to_end as e2e
+
+    for name in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
+        monkeypatch.delenv(name, raising=False)
+    assert e2e.in_synced_folder(Path(path)) is synced

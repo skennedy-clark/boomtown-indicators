@@ -44,6 +44,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import threading
 import sys
 import time
 from datetime import datetime
@@ -56,6 +57,8 @@ CACHE     = HERE / "cache"
 LOG_DIR   = HERE / "logs"
 RETRY_AFTER_EXCEL_ERROR_S = 15
 PAUSE_BETWEEN_EXCEL_STEPS_S = 3     # pause for Excel and file-sync clients to release the file
+SETTLE_AFTER_COPY_S = 10            # let a file-sync client finish with the new copy before Excel opens it
+STEP_TIMEOUT_MIN = {"fetch": 30, "excel": 15, "other": 10}
 
 # (step name, writer script, cache folder), in sheet order.
 WRITER_STEPS = [
@@ -96,10 +99,13 @@ class Log:
         self._file.close()
 
 
-def run_step(name: str, command: list[str], log: Log) -> dict:
+def run_step(name: str, command: list[str], log: Log, timeout_s: float | None = None) -> dict:
     """Run one command, echoing its output as it is produced.
 
-    Never raises: a failure is reported in the returned result.
+    A step still running after `timeout_s` seconds is stopped; an Excel
+    step usually hangs only when Excel is waiting on a dialog that no
+    one can see. Never raises: a failure is reported in the returned
+    result.
     """
     log("")
     log("=" * 78)
@@ -110,6 +116,7 @@ def run_step(name: str, command: list[str], log: Log) -> dict:
     summary = ""
     crashed = False
     excel_error = False
+    timed_out = threading.Event()
     # Child processes write to a pipe, where Python on Windows defaults to
     # the ANSI code page and fails on characters outside it. Force UTF-8 to
     # match the decoding below.
@@ -119,6 +126,14 @@ def run_step(name: str, command: list[str], log: Log) -> dict:
             command, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", env=env,
         )
+        timer = None
+        if timeout_s:
+            def stop():
+                timed_out.set()
+                process.kill()
+            timer = threading.Timer(timeout_s, stop)
+            timer.daemon = True
+            timer.start()
         for line in process.stdout:
             line = line.rstrip("\n")
             log(line)
@@ -133,8 +148,15 @@ def run_step(name: str, command: list[str], log: Log) -> dict:
             if "pywintypes.com_error" in line:
                 excel_error = True
         code = process.wait()
+        if timer is not None:
+            timer.cancel()
         if crashed and code != 0:
             summary = "crashed (see the traceback above)"
+        if timed_out.is_set():
+            minutes = timeout_s / 60
+            log(f"Stopped after {minutes:.0f} minutes without finishing.")
+            code = code if code else -1
+            summary = f"stopped after {minutes:.0f} minutes (see the note at the end of the log)"
     except OSError as exc:
         log(f"Could not start: {exc}")
         code, summary = -1, f"could not start: {exc}"
@@ -142,7 +164,18 @@ def run_step(name: str, command: list[str], log: Log) -> dict:
         "name": name, "ok": code == 0, "code": code,
         "summary": summary, "seconds": time.time() - started,
         "excel_error": excel_error and code != 0,
+        "timed_out": timed_out.is_set(),
     }
+
+
+def in_synced_folder(path: Path) -> bool:
+    """True if `path` is inside a OneDrive folder (or one whose name
+    says it is synchronised by OneDrive)."""
+    roots = [os.environ.get(name) for name in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer")]
+    resolved = str(path.resolve()).lower()
+    if any(root and resolved.startswith(str(Path(root).resolve()).lower()) for root in roots):
+        return True
+    return any(part.lower().startswith("onedrive") for part in path.resolve().parts)
 
 
 def copy_starting_workbook(original: Path, test_copy: Path) -> str | None:
@@ -234,11 +267,20 @@ def main(argv: list[str] | None = None) -> int:
         log.close()
         return 2
     log(f"Copied the starting workbook to {test_copy.name} (fresh copy).")
+    if in_synced_folder(test_copy):
+        log("")
+        log("NOTE: the working copy is in a OneDrive folder. OneDrive uploads the new copy while")
+        log("Excel is opening it, which can make Excel lose the workbook part-way through a step")
+        log("('The object invoked has disconnected from its clients'). If that happens, put the")
+        log("working copy in a local folder, for example:  --test-copy C:\\Temp\\test-copy.xlsx")
+    time.sleep(SETTLE_AFTER_COPY_S)
 
     results = []
     for name, command in build_steps(args, test_copy):
         is_writer = "xlsx_update" in " ".join(command)
-        result = run_step(name, command, log)
+        kind = "excel" if is_writer else ("fetch" if name == "Fetch everything" else "other")
+        timeout_s = STEP_TIMEOUT_MIN[kind] * 60
+        result = run_step(name, command, log, timeout_s)
         if is_writer and result["excel_error"]:
             # Excel automation errors are usually transient (the workbook
             # is still held by a file-sync client or a closing Excel
@@ -248,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"in {RETRY_AFTER_EXCEL_ERROR_S} seconds.")
             time.sleep(RETRY_AFTER_EXCEL_ERROR_S)
             first_seconds = result["seconds"]
-            result = run_step(name + " (retry)", command, log)
+            result = run_step(name + " (retry)", command, log, timeout_s)
             result["name"] = name
             result["seconds"] += first_seconds
             if result["ok"]:
@@ -268,6 +310,11 @@ def main(argv: list[str] | None = None) -> int:
     log("")
     log(f"{len(results) - len(failed)} of {len(results)} steps finished without an error code.")
     log("('OK' means the step ran to the end -- read its summary for what was written or flagged.)")
+    if any(r.get("timed_out") or r.get("excel_error") for r in results):
+        log("")
+        log("Excel did not finish one or more steps. Before running again, close Excel and end any")
+        log("EXCEL.EXE processes left in Task Manager (Details tab): a hidden Excel from a failed")
+        log("step keeps the working copy open, and the next step then waits on it.")
     log(f"Log saved to {log.path}")
     log.close()
     return 1 if failed else 0
