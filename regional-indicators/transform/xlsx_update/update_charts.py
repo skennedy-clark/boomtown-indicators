@@ -1,44 +1,48 @@
 """
 regional-indicators/transform/xlsx_update/update_charts.py
 
-Extends the data ranges of the workbook's chart series to cover the
-latest year.
+Brings the workbook's charts up to date so that each shows every year
+for which its data rows have figures.
 
-The ranges to change are taken from the chart audit
-(transform/chart_audit.py), which is run on the workbook first:
+What needs doing is taken from the chart audit (transform/chart_audit.py),
+which is run on the workbook first. Most charts use Excel's chart
+filters: a series has a full range, and some of its years (categories)
+are filtered out. Two kinds of change follow:
 
-  - EXTEND      the row has data beyond the end of the series' range;
-                the range is extended to the last year of the
-                continuous run of data, and the category (axis label)
-                range with it.
-  - MULTI_AREA  the series is made of several separate areas on one
-                row; it is replaced by a single range from the start of
-                the first area to the end of the data.
+  - UNHIDE   the full range already covers the new year, but the year is
+             filtered out. The year is shown again by clearing the
+             filter on that category (ChartGroup.FullCategoryCollection,
+             IsFiltered = False). Category filters apply to the whole
+             chart, so a year is shown for every series in the chart.
+  - EXTEND   the data runs past the end of the full range. The series
+             formula is rewritten with a longer range, and the category
+             (axis label) range with it where it ends on the same
+             column; any of the new years that are filtered out are
+             then shown as above.
 
-Series with any other status are left as they are. Nothing but the
-ranges of a series is changed: chart type, formatting, titles, axes and
-series names are not touched, and no chart is added or removed.
+Series with any other status are left as they are, and years with no
+figures stay hidden. Nothing else is changed: chart type, formatting,
+titles, axes and series names are not touched, and no chart is added or
+removed.
 
 How a series in Excel is matched to the audit, in order of preference:
 by its current values and category references, read from the series
-formula (=SERIES(name, categories, values, order)); by its values
-reference alone; and by the position of its chart on the page together
-with the series name. A match is used only where it identifies exactly
-one planned change. Charts inside grouped shapes are included.
+formula (=SERIES(name, categories, values, order)), which reports the
+full ranges; by its values reference alone; and by the position of its
+chart on the page together with the series name. A match is used only
+where it identifies exactly one planned change. Charts are identified by
+the cell under their top-left corner; charts inside grouped shapes are
+included.
 
-The new range is set by rewriting the series formula. If the formula
-cannot be read or Excel rejects it, the Values and XValues properties
-are assigned directly.
+If a series formula cannot be read or Excel rejects the new one, the
+Values and XValues properties are assigned directly.
 
-A planned change that matches no series in Excel is reported together
-with the series formulas Excel returns for the chart at that position.
-
-After saving, the audit is run again and the number of series still
-needing a change is reported; it should be zero for the pages updated.
+After saving, the audit is run again and any series that still needs a
+change is listed; there should be none for the pages updated.
 
 The workbook is edited through Excel (xlwings); see base.py. This step
-uses the Excel object model directly and has been written for Excel on
-Windows.
+uses the Excel object model directly (chart filters require Excel 2013
+or later) and has been written for Excel on Windows.
 
 Usage:
     python update_charts.py <workbook.xlsx> [--page Chinchilla ...]
@@ -58,9 +62,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from chart_audit import audit, parse_reference                     # noqa: E402
-
-STATUSES_CHANGED = ("EXTEND", "MULTI_AREA")
+from chart_audit import CHANGE_STATUSES, as_year, audit, parse_reference      # noqa: E402
 
 
 # ── Series formulas ────────────────────────────────────────────────────────────
@@ -129,12 +131,11 @@ def rebuild_series_formula(parts: list[str], values: str, categories: str | None
 
 @dataclass(frozen=True)
 class Change:
-    """One series whose range is to be replaced."""
+    """One series whose full range is to be extended."""
     page: str
     chart_at: str
     series_no: int
     series_name: str
-    status: str
     old_values: str
     old_categories: str
     values: str                     # new values reference
@@ -145,30 +146,55 @@ class Change:
         return f"{self.page} {self.chart_at} [{self.series_name or self.series_no}]"
 
 
-def build_plan(series_list, pages: set[str] | None = None) -> list[Change]:
-    """Return a Change for every audited series that has a proposed
-    range, optionally limited to the given pages."""
-    plan = []
+@dataclass
+class Plan:
+    changes: list[Change]
+    unhide: dict[tuple[str, str], set[int]]          # (page, chart position) -> years to show
+
+    @property
+    def pages(self) -> set[str]:
+        return {c.page for c in self.changes} | {page for page, _ in self.unhide}
+
+    def __bool__(self) -> bool:
+        return bool(self.changes or self.unhide)
+
+
+def build_plan(series_list, pages: set[str] | None = None) -> Plan:
+    """Collect the range extensions and the years to show, optionally
+    limited to the given pages."""
+    changes: list[Change] = []
+    unhide: dict[tuple[str, str], set[int]] = {}
     for series in series_list:
-        if series.status not in STATUSES_CHANGED or not series.proposed_values:
+        if series.status not in CHANGE_STATUSES:
             continue
         if pages is not None and series.page not in pages:
             continue
-        plan.append(Change(
-            page=series.page, chart_at=series.chart_at, series_no=series.series_no,
-            series_name=series.series_name or "", status=series.status,
-            old_values=series.values, old_categories=series.categories or "",
-            values=series.proposed_values, categories=series.proposed_categories or None,
-        ))
-    return plan
+        if series.status == "EXTEND" and series.proposed_values:
+            changes.append(Change(
+                page=series.page, chart_at=series.chart_at, series_no=series.series_no,
+                series_name=series.series_name or "",
+                old_values=series.values, old_categories=series.categories or "",
+                values=series.proposed_values, categories=series.proposed_categories or None,
+            ))
+        years = {y for y in (series.unhide_years or []) if y is not None}
+        if years:
+            unhide.setdefault((series.page, series.chart_at), set()).update(years)
+    return Plan(changes, unhide)
 
 
-def plan_lines(plan: list[Change]) -> list[str]:
-    return [
-        f"{change.label} {change.status}: {change.old_values} -> {change.values}"
-        + (f"   axis: {change.old_categories} -> {change.categories}" if change.categories else "")
-        for change in plan
-    ]
+def plan_lines(plan: Plan) -> list[str]:
+    lines = []
+    charts = sorted({(c.page, c.chart_at) for c in plan.changes} | set(plan.unhide))
+    for page, chart_at in charts:
+        years = sorted(plan.unhide.get((page, chart_at), ()))
+        if years:
+            lines.append(f"{page} {chart_at}: show {', '.join(str(y) for y in years)}")
+        for change in (c for c in plan.changes if (c.page, c.chart_at) == (page, chart_at)):
+            lines.append(
+                f"{change.label}: extend {change.old_values} -> {change.values}"
+                + (f"   axis: {change.old_categories} -> {change.categories}" if change.categories else "")
+            )
+    return lines
 
 
 class PageIndex:
@@ -176,13 +202,12 @@ class PageIndex:
 
     Three keys are tried in turn: the values and category references
     together; the values reference alone; and the chart's position with
-    the series name (or, where names repeat within a chart, the series'
-    position in the chart). A key is used only if it identifies exactly
-    one change.
+    the series name (or, for an unnamed series, its position in the
+    chart). A key is used only if it identifies exactly one change.
     """
 
-    def __init__(self, page: str, plan: list[Change]):
-        self.changes = [c for c in plan if c.page == page]
+    def __init__(self, page: str, changes: list[Change]):
+        self.changes = [c for c in changes if c.page == page]
         self._by_refs = self._unique((normalise(c.old_values), normalise(c.old_categories)) for c in self.changes)
         self._by_values = self._unique(normalise(c.old_values) for c in self.changes)
         self._by_name = self._unique((c.chart_at, c.series_name.strip()) for c in self.changes)
@@ -208,6 +233,17 @@ class PageIndex:
         return None, ""
 
 
+def category_year(name) -> int | None:
+    """The year a category label stands for: 2025, "2025" or "2024/25"."""
+    year = as_year(name)
+    if year is None and isinstance(name, str):
+        try:
+            year = as_year(float(name.strip()))
+        except ValueError:
+            year = None
+    return year
+
+
 # ── Excel ──────────────────────────────────────────────────────────────────────
 
 MSO_GROUP = 6          # MsoShapeType.msoGroup
@@ -221,9 +257,8 @@ def _items(collection):
 
 def page_charts(sheet_api) -> list:
     """Return every chart-bearing shape on a sheet, including charts
-    inside grouped shapes, which the ChartObjects collection does not
-    list. Falls back to ChartObjects if the sheet's shapes cannot be
-    read."""
+    inside grouped shapes. Falls back to the ChartObjects collection if
+    the sheet's shapes cannot be read."""
     found = []
 
     def visit(shape):
@@ -261,12 +296,7 @@ def _where(chart_object) -> str:
 
 def _set_range(series, parts: list[str] | None, change: Change, resolve) -> str:
     """Give a series its new range. Returns "" on success, or the reason
-    it could not be set.
-
-    The series formula is rewritten where it can be read. Otherwise, or
-    if Excel rejects the formula, the Values and XValues properties are
-    assigned from range objects supplied by `resolve`.
-    """
+    it could not be set."""
     reason = "the series formula could not be read"
     if parts is not None:
         try:
@@ -285,25 +315,42 @@ def _set_range(series, parts: list[str] | None, change: Change, resolve) -> str:
         return f"{reason}; assigning the ranges directly also failed ({exc})"
 
 
-def update_page(page: str, chart_objects, plan: list[Change], resolve=None) -> tuple[list[str], Counter]:
+def show_years(chart, years: set[int]) -> tuple[set[int], str]:
+    """Clear the chart filter on the categories for `years`. Returns
+    (years found among the chart's categories, problem or "")."""
+    found: set[int] = set()
+    try:
+        for group in _items(chart.ChartGroups()):
+            for category in _items(group.FullCategoryCollection()):
+                year = category_year(_read(lambda: category.Name, ""))
+                if year in years:
+                    found.add(year)
+                    if category.IsFiltered:
+                        category.IsFiltered = False
+    except Exception as exc:
+        return found, f"the chart's category filter could not be changed ({exc})"
+    return found, ""
+
+
+def update_page(page: str, chart_objects, plan: Plan, resolve=None) -> tuple[list[str], Counter]:
     """Apply the plan to the charts of one page.
 
-    `chart_objects` is an iterable of Excel chart shapes (or of objects
-    with the same Chart.SeriesCollection()/Formula interface; see
-    tests/test_update_charts.py). `resolve` turns a reference into an
-    Excel range object and is used only when a series formula cannot be
-    rewritten. Returns (result lines, counts).
+    `chart_objects` is an iterable of Excel chart shapes (or objects with
+    the same interface; see tests/test_update_charts.py). `resolve` turns
+    a reference into an Excel range object and is used only when a
+    series formula cannot be rewritten. Returns (result lines, counts).
     """
     results: list[str] = []
     counts: Counter = Counter()
-    index = PageIndex(page, plan)
+    index = PageIndex(page, plan.changes)
     applied: set[Change] = set()
     seen: dict[str, list[str]] = {}
 
     for chart_object in chart_objects:
         where = _where(chart_object)
         counts["charts"] += 1
-        for position, series in enumerate(_items(chart_object.Chart.SeriesCollection()), start=1):
+        chart = chart_object.Chart
+        for position, series in enumerate(_items(chart.SeriesCollection()), start=1):
             counts["series"] += 1
             formula = _read(lambda: series.Formula, None)
             name = str(_read(lambda: series.Name, ""))
@@ -312,11 +359,9 @@ def update_page(page: str, chart_objects, plan: list[Change], resolve=None) -> t
 
             change, matched_by = index.find(parts, where, name, position)
             if change is None or change in applied:
-                counts["unchanged"] += 1
                 continue
             if parts is not None and normalise(parts[2]) == normalise(change.values):
                 applied.add(change)                           # already has the new range
-                counts["unchanged"] += 1
                 continue
             problem = _set_range(series, parts, change, resolve)
             if problem:
@@ -324,35 +369,50 @@ def update_page(page: str, chart_objects, plan: list[Change], resolve=None) -> t
                 results.append(f"{change.label}: FAILED, {problem}")
                 continue
             applied.add(change)
-            counts["changed"] += 1
+            counts["extended"] += 1
             note = "" if matched_by == "references" else f"   (matched by {matched_by})"
-            results.append(f"{change.label}: {change.old_values} -> {change.values}{note}")
+            results.append(f"{change.label}: extended {change.old_values} -> {change.values}{note}")
+
+        years = plan.unhide.get((page, where))
+        if years:
+            found, problem = show_years(chart, years)
+            if problem:
+                counts["failed"] += 1
+                results.append(f"{page} {where}: FAILED, {problem}")
+            elif found:
+                counts["charts_shown"] += 1
+                results.append(f"{page} {where}: showing {', '.join(str(y) for y in sorted(found))}")
+            missing_years = sorted(years - found)
+            if missing_years and not problem:
+                counts["years_not_on_axis"] += 1
+                results.append(
+                    f"{page} {where}: no category for {', '.join(str(y) for y in missing_years)} "
+                    f"on the chart's axis"
+                )
 
     missed = [c for c in index.changes if c not in applied]
     counts["not_found"] = len(missed)
-    if missed:
+    unseen_charts = sorted(chart_at for (p, chart_at) in plan.unhide if p == page and chart_at not in seen)
+    counts["not_found"] += len(unseen_charts)
+    if missed or unseen_charts:
         results.append(
-            f"{page}: {len(missed)} planned change(s) matched no series in Excel "
+            f"{page}: planned changes matched nothing in Excel "
             f"({counts['charts']} charts and {counts['series']} series were read on this page)."
         )
-        for chart_at in sorted({c.chart_at for c in missed}):
-            for change in (c for c in missed if c.chart_at == chart_at):
-                results.append(f"  NOT FOUND {change.label}: expected {change.old_values}")
-            if chart_at in seen:
-                results.append(f"    series Excel reports for the chart at {chart_at}:")
-                results += [f"      {formula}" for formula in seen[chart_at]]
-            else:
-                results.append(
-                    f"    Excel reports no chart at {chart_at}; charts were read at: "
-                    f"{', '.join(sorted(seen)) or 'none'}"
-                )
+        for chart_at in unseen_charts:
+            results.append(f"  NOT FOUND {page} {chart_at}: no chart at this position "
+                           f"(charts were read at: {', '.join(sorted(seen)) or 'none'})")
+        for change in missed:
+            results.append(f"  NOT FOUND {change.label}: expected {change.old_values}")
+            for formula in seen.get(change.chart_at, []):
+                results.append(f"      Excel has: {formula}")
     return results, counts
 
 
 def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
                   dry_run: bool = False, visible: bool = False) -> tuple[list[str], int]:
-    """Audit the workbook, apply the proposed ranges and audit again.
-    Returns (result lines, number of series that could not be changed)."""
+    """Audit the workbook, apply the changes and audit again.
+    Returns (result lines, number of problems)."""
     series_list = audit(xlsx_path, last_year)
     known_pages = {s.page for s in series_list}
     if pages is not None:
@@ -364,26 +424,23 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
             )
     plan = build_plan(series_list, pages)
     in_scope = [s for s in series_list if pages is None or s.page in pages]
-
+    statuses = Counter(s.status for s in in_scope)
     results = [
-        f"{len(in_scope)} series on {len({s.page for s in in_scope})} page(s); "
-        f"{len(plan)} to change "
-        f"({sum(1 for c in plan if c.status == 'EXTEND')} extended, "
-        f"{sum(1 for c in plan if c.status == 'MULTI_AREA')} joined into one range)."
+        f"{len(in_scope)} series in {len({(s.page, s.chart_at) for s in in_scope})} charts on "
+        f"{len({s.page for s in in_scope})} page(s): "
+        f"{statuses.get('UNHIDE', 0)} need filtered years shown, {statuses.get('EXTEND', 0)} need a longer range; "
+        f"{len(plan.unhide)} charts to change."
     ]
-    left_alone = Counter(
-        s.status for s in in_scope
-        if s.status != "OK" and not (s.status in STATUSES_CHANGED and s.proposed_values)
-    )
+    left_alone = {k: v for k, v in statuses.items() if k not in CHANGE_STATUSES and k != "OK"}
     if left_alone:
         results.append("Left as they are: " + ", ".join(f"{n} {status}" for status, n in sorted(left_alone.items())))
 
     if dry_run:
         results += plan_lines(plan)
-        results += ["", f"Summary: {len(plan)} would be changed (dry run, nothing written)."]
+        results += ["", f"Summary: {len(plan.unhide)} charts would be changed (dry run, nothing written)."]
         return results, 0
     if not plan:
-        results += ["", "Summary: 0 changed, 0 flagged for review."]
+        results += ["", "Summary: 0 charts changed, 0 flagged for review."]
         return results, 0
 
     import xlwings as xw
@@ -401,35 +458,41 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
                 area = areas[0]
                 return wb.sheets[area.sheet].range((area.row1, area.col1), (area.row2, area.col2)).api
 
-            for page in sorted({change.page for change in plan}):
+            for page in sorted(plan.pages):
                 lines, counts = update_page(page, page_charts(wb.sheets[page].api), plan, resolve)
                 results += lines
                 totals += counts
-            if totals["changed"]:
+            if totals["extended"] or totals["charts_shown"]:
                 wb.save()
         finally:
             wb.close()
     finally:
         app.quit()
 
-    remaining = 0
-    if totals["changed"]:
-        after = build_plan(audit(xlsx_path, last_year), pages)
-        remaining = len(after)
-        if remaining and remaining != totals["failed"] + totals["not_found"]:
-            results += [f"STILL OUT OF DATE after saving: {change.label} {change.old_values}" for change in after]
-    flagged = max(totals["failed"] + totals["not_found"], remaining)
+    remaining = []
+    if totals["extended"] or totals["charts_shown"]:
+        remaining = [
+            s for s in audit(xlsx_path, last_year)
+            if (pages is None or s.page in pages) and s.status in CHANGE_STATUSES
+        ]
+        for s in remaining:
+            results.append(
+                f"STILL OUT OF DATE after saving: {s.page} {s.chart_at} [{s.series_name or s.series_no}] "
+                f"{s.status}: shows {s.shown_values}, data to {s.data_to_year}"
+            )
+    flagged = totals["failed"] + totals["not_found"] + len(remaining)
     results += [
         "",
-        f"Summary: {totals['changed']} changed, {flagged} flagged for review "
-        f"({totals['failed']} could not be set, {totals['not_found']} not found in Excel, "
-        f"{remaining} out of date after saving).",
+        f"Summary: {totals['charts_shown']} charts now show the new year(s), "
+        f"{totals['extended']} series ranges extended; {flagged} flagged for review "
+        f"({totals['failed']} could not be changed, {totals['not_found']} not found in Excel, "
+        f"{len(remaining)} series still out of date after saving).",
     ]
     return results, flagged
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Extend chart series ranges to the latest year.")
+    parser = argparse.ArgumentParser(description="Bring chart series up to date: show filtered years and extend ranges.")
     parser.add_argument("workbook", type=Path, help="the indicators workbook (.xlsx)")
     parser.add_argument("--page", nargs="+", default=None, metavar="PAGE",
                         help="only these pages (sheet names); default: every page with charts")

@@ -11,8 +11,8 @@ Steps, in order:
      reuses the existing cache.
   3. Run every writer in transform/xlsx_update/ against the working
      copy, one sheet at a time, each in its own Excel session.
-  4. Extend the chart series ranges to the new year
-     (transform/xlsx_update/update_charts.py).
+  4. Bring the charts up to date: show the new year in every chart
+     whose data has it (transform/xlsx_update/update_charts.py).
   5. Build the website folder from the working copy
      (transform/web_export.py), compared with an earlier export if
      --previous-web is given.
@@ -183,7 +183,7 @@ def build_steps(args, test_copy: Path) -> list[tuple[str, list[str]]]:
     charts = [py, str(WRITERS / "update_charts.py"), str(test_copy), "--last-year", str(args.last_year)]
     if args.visible:
         charts.append("--visible")
-    steps.append(("Charts: series ranges", charts))
+    steps.append(("Charts", charts))
     web = [py, str(HERE / "transform" / "web_export.py"), str(test_copy), "--out", str(args.web_out)]
     if args.previous_web:
         web += ["--compare-with", str(args.previous_web)]

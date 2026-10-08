@@ -119,7 +119,7 @@ python regional-indicators/run_end_to_end.py "Indicators Data-Charts 2025.xlsx" 
 ```
 
 This copies the starting workbook to the working copy, runs every fetcher,
-runs every writer against the working copy, extends the chart ranges, and
+runs every writer against the working copy, brings the charts up to date, and
 builds the website folder
 `3 Web Content`. Each step's command line is printed before it runs, so any
 step can be repeated on its own.
@@ -130,7 +130,7 @@ step can be repeated on its own.
 | `--previous-web <folder>` | an earlier website folder; differences from it are reported |
 | `--web-out <folder>` | where to build the website folder (default `3 Web Content`) |
 | `--business-year <year>` | year for the Business sheet: the calendar year in which the financial year ends (default: last calendar year) |
-| `--last-year <year>` | latest data year, used when extending chart ranges (default: last calendar year) |
+| `--last-year <year>` | latest data year, used when updating the charts (default: last calendar year) |
 | `--skip-fetch` | reuse the existing cache; do not download |
 | `--visible` | show Excel while the writers run |
 
@@ -248,15 +248,15 @@ python regional-indicators/transform/chart_audit.py "Indicators Data-Charts 2026
     --out chart_audit.csv --last-year 2025
 ```
 
-Lists every chart series in the workbook with the years its range covers
-and the years its row has data for, and writes one line per series to a
-CSV file. A series whose row has data beyond the end of its range is
-marked `EXTEND` with the range it should have. The workbook is only read,
-so Excel is not needed. `--reference <workbook>` adds the range each series
-has in a second workbook. The statuses are described in the module
-docstring.
+Lists every chart series in the workbook with the years it shows and the
+years its row has data for, and writes one line per series to a CSV file.
+Most charts use Excel chart filters, so a year can be missing from a chart
+either because it is filtered out (`UNHIDE`) or because it lies beyond the
+series' range (`EXTEND`). The workbook is only read, so Excel is not needed.
+`--reference <workbook>` adds the columns each series shows in a second
+workbook. The statuses are described in the module docstring.
 
-### Extend the chart ranges
+### Bring the charts up to date
 
 ```bash
 python regional-indicators/transform/xlsx_update/update_charts.py "Indicators Data-Charts 2026.xlsx" \
@@ -267,13 +267,14 @@ python regional-indicators/transform/xlsx_update/update_charts.py "Indicators Da
     --last-year 2025                                # every page
 ```
 
-Runs the audit and applies its proposed ranges through Excel: series
-marked `EXTEND` are extended to the latest year, and series made of several
-separate areas are replaced by a single range. Only the ranges change;
-chart formatting is not touched. The audit is run again after saving, and
-any series still out of date is listed. This step is part of
-`run_end_to_end.py`, after the writers. It uses the Excel object model and
-has been written for Excel on Windows.
+Runs the audit and applies it through Excel: years with data that are
+filtered out of a chart are shown again, and series whose data runs past
+their range get a longer range. Years without data stay hidden, and chart
+formatting is not touched. The audit is run again after saving, and any
+series still out of date is listed. This step is part of
+`run_end_to_end.py`, after the writers. It uses the Excel object model
+(chart filters need Excel 2013 or later) and has been written for Excel on
+Windows.
 
 ### Build a booklet
 
@@ -365,9 +366,9 @@ regional-indicators/
         xlsx_update/           one writer per sheet section
             base.py            locating rows and columns; writing through Excel
             audit.py           checks applied before each write
-            update_charts.py   extends chart series ranges to the latest year
+            update_charts.py   brings chart series up to the latest year
         web_export.py          website CSV folder from the workbook
-        chart_audit.py         lists chart series whose ranges need extending
+        chart_audit.py         lists chart series that do not show the latest year
         to_csv.py              website CSVs from the cache (earlier approach; web_export.py is the current export)
         booklet/               booklet generation (Word)
     cache/                     downloads and fetched JSON (not in version control)

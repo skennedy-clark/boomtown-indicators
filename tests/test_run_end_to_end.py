@@ -68,7 +68,7 @@ def test_steps_are_fetch_then_every_writer_then_the_website(tmp_path):
     names = [name for name, _ in steps]
     assert names[0] == "Fetch everything" and names[-1] == "Website folder"
     assert len(names) == len(e2e.WRITER_STEPS) + 3
-    assert names[-2] == "Charts: series ranges"                        # after every writer, before the website
+    assert names[-2] == "Charts"                        # after every writer, before the website
 
     commands = dict(steps)
     business = commands["Business"]

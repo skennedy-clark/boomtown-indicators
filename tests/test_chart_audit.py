@@ -7,8 +7,9 @@ Tests for the chart series audit
 The workbook is built here with openpyxl: a data sheet with a calendar
 year header, a second data sheet with financial-year labels and a
 section that has its own header, and a page of charts whose series
-cover each situation the audit classifies. No project workbook and no
-Excel are needed.
+cover each situation the audit classifies. Two charts are then given
+Excel chart filters by adding a full range (c15:fullRef) to their XML,
+as Excel does. No project workbook and no Excel are needed.
 """
 
 import csv
@@ -33,6 +34,29 @@ def _chart(page, anchor, series):
             ser.cat = AxDataSource(strRef=StrRef(f=categories))
         chart.series.append(ser)
     page.add_chart(chart, anchor)
+
+
+FULL_REF = (
+    '<extLst><ext uri="{02D57815-91ED-43cb-92C2-25804820EDAC}" '
+    'xmlns:c15="http://schemas.microsoft.com/office/drawing/2012/chart">'
+    "<c15:fullRef><c15:sqref>%s</c15:sqref></c15:fullRef></ext></extLst>"
+)
+
+
+def _add_chart_filter(path, chart_part, shown, full):
+    """Give the series whose values are `shown` the full range `full`,
+    the way Excel records a chart filter."""
+    import zipfile
+
+    with zipfile.ZipFile(path) as package:
+        parts = {name: package.read(name) for name in package.namelist()}
+    xml = parts[chart_part].decode()
+    old = f"<val><numRef><f>{shown}</f>"
+    assert old in xml
+    parts[chart_part] = xml.replace(old, f"<val><numRef>{FULL_REF % full}<f>{shown}</f>").encode()
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
+        for name, data in parts.items():
+            package.writestr(name, data)
 
 
 @pytest.fixture
@@ -63,25 +87,30 @@ def workbook(tmp_path):
     biz.append(["Average price"] + [150 + i for i in range(7)])
 
     page = wb.create_sheet("Roma")
-    _chart(page, "B2", [
-        ("Residents", "Population!$C$4:$K$4", "Population!$C$1:$K$1"),          # data continues to 2025
-        ("Projection", "Population!$H$5:$L$5", "Population!$H$1:$L$1"),         # continues past the cut-off
+    _chart(page, "B2", [                                                          # chart1
+        ("Residents", "Population!$C$4:$K$4", "Population!$C$1:$K$1"),           # data continues to 2025
+        ("Projection", "Population!$H$5:$Q$5", "Population!$H$1:$Q$1"),          # already shows 2030
     ])
-    _chart(page, "B20", [
-        ("Miles", "Population!$C$7:$K$7", "Population!$C$1:$K$1"),              # up to date
-        ("Miles UCL", "Population!$C$8:$K$8", "Population!$C$1:$Q$1"),          # last cells empty
+    _chart(page, "B20", [                                                         # chart2
+        ("Miles", "Population!$C$7:$K$7", "Population!$C$1:$K$1"),               # up to date
+        ("Miles UCL", "Population!$C$8:$K$8", "Population!$C$1:$K$1"),           # last year shown is empty
     ])
-    _chart(page, "K2", [
-        ("0k-50k", "Business!$B$3:$I$3", "Business!$B$1:$I$1"),                 # financial-year header
-        ("Fuel", "Business!$B$7:$G$7", "Business!$B$5:$G$5"),                   # own section header
+    _chart(page, "K2", [                                                          # chart3
+        ("0k-50k", "Business!$B$3:$I$3", "Business!$B$1:$I$1"),                  # financial-year header
+        ("Fuel", "Business!$B$7:$G$7", "Business!$B$5:$G$5"),                    # own section header
     ])
-    _chart(page, "K20", [
-        ("Stitched", "(Population!$C$4:$J$4,Population!$N$4)", "(Population!$C$1:$J$1,Population!$N$1)"),
+    _chart(page, "K20", [                                                         # chart4
         ("Elsewhere", "Missing!$A$1:$C$1", None),
+        ("Two rows", "(Population!$C$4:$K$4,Population!$C$7:$K$7)", None),
     ])
+    _chart(page, "T2", [("Filtered", "Population!$C$4:$K$4", "Population!$C$1:$K$1")])          # chart5
+    _chart(page, "T20", [("Stitched", "(Population!$C$4:$J$4,Population!$N$4)",
+                          "(Population!$C$1:$J$1,Population!$N$1)")])                          # chart6
 
     path = tmp_path / "book.xlsx"
     wb.save(path)
+    _add_chart_filter(path, "xl/charts/chart5.xml", "Population!$C$4:$K$4", "Population!$C$4:$N$4")
+    _add_chart_filter(path, "xl/charts/chart6.xml", "(Population!$C$4:$J$4,Population!$N$4)", "Population!$C$4:$N$4")
     return path
 
 
@@ -96,7 +125,7 @@ def test_every_series_is_listed_with_its_page_and_position(workbook):
     from chart_audit import audit
 
     series = audit(workbook, last_year=2025)
-    assert len(series) == 8
+    assert len(series) == 10
     assert {s.page for s in series} == {"Roma"}
     assert [s.chart_at for s in series][:2] == ["B2", "B2"]
     assert [s.series_no for s in series if s.chart_at == "B2"] == [1, 2]
@@ -108,26 +137,43 @@ def test_a_range_that_stops_before_the_new_year_is_extended(audited):
     assert (s.range_from_year, s.range_to_year, s.data_to_year) == (2016, 2024, 2025)
     assert s.proposed_values == "Population!$C$4:$L$4"
     assert s.proposed_categories == "Population!$C$1:$L$1"
+    assert s.unhide_years == [2025]
     assert (s.row_label, s.sub_label, s.block) == ("Population (ERP)", "Residents (SA2)", "Roma")
+
+
+def test_a_filtered_out_year_inside_the_full_range_is_to_be_shown(audited):
+    s = audited["Filtered"]
+    assert s.status == "UNHIDE"
+    assert s.values == "Population!$C$4:$N$4" and s.shown_values == "Population!$C$4:$K$4"
+    assert s.unhide_years == [2025] and s.proposed_values == ""
+    assert (s.range_to_year, s.data_to_year) == (2024, 2025)
+
+
+def test_a_filter_with_a_gap_shows_the_years_missing_from_the_middle(audited):
+    """The shown reference is a list of areas when a middle year is
+    filtered out; the empty year shown at the end is not data."""
+    s = audited["Stitched"]
+    assert s.status == "UNHIDE"
+    assert s.unhide_years == [2024, 2025]
+    assert "shows C-J, N of C-N" in "; ".join(s.notes)
 
 
 def test_an_up_to_date_range_is_left_alone(audited):
     s = audited["Miles"]
-    assert s.status == "OK" and s.proposed_values == ""
+    assert s.status == "OK" and s.proposed_values == "" and s.unhide_years == []
     assert s.block == "Miles"
 
 
-def test_projection_rows_are_not_extended_past_the_cut_off(audited):
+def test_a_chart_already_showing_projection_years_is_left_alone(audited):
     s = audited["Projection"]
     assert s.status == "PROJECTION" and s.proposed_values == ""
-    assert s.data_to_year == 2030
+    assert (s.range_to_year, s.data_to_year) == (2030, 2030)
 
 
-def test_a_range_ending_on_empty_cells_is_reported(audited):
+def test_a_last_year_shown_without_a_figure_is_reported(audited):
     s = audited["Miles UCL"]
     assert s.status == "ENDS_PAST_DATA"
-    assert s.data_to_year == 2023
-    assert "2026" in "; ".join(s.notes)                 # the figure after the gap is mentioned
+    assert (s.range_to_year, s.data_to_year) == (2024, 2023)
 
 
 def test_financial_year_labels_are_read_as_the_year_they_end_in(audited):
@@ -146,11 +192,9 @@ def test_a_section_is_read_against_its_own_year_header(audited):
     assert s.proposed_categories == "Business!$B$5:$H$5"
 
 
-def test_separate_areas_on_one_row_get_a_single_range_proposed(audited):
-    s = audited["Stitched"]
-    assert s.status == "MULTI_AREA"
-    assert s.proposed_values == "Population!$C$4:$L$4"
-    assert s.proposed_categories == "Population!$C$1:$L$1"
+def test_a_full_range_of_several_areas_is_not_changed(audited):
+    s = audited["Two rows"]
+    assert s.status == "MULTI_AREA" and s.proposed_values == ""
 
 
 def test_a_range_on_a_missing_sheet_is_unresolved(audited):
@@ -183,8 +227,10 @@ def test_the_csv_has_one_line_per_series_and_the_workbook_is_unchanged(workbook,
     assert main([str(workbook), "--out", str(out), "--last-year", "2025", "--reference", str(workbook)]) == 0
     with open(out, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
-    assert len(rows) == 8
-    assert {r["status"] for r in rows} == {"OK", "EXTEND", "PROJECTION", "ENDS_PAST_DATA", "MULTI_AREA", "UNRESOLVED"}
-    assert all(r["reference_values"] == r["values"] for r in rows)
+    assert len(rows) == 10
+    assert {r["status"] for r in rows} == {
+        "OK", "EXTEND", "UNHIDE", "PROJECTION", "ENDS_PAST_DATA", "MULTI_AREA", "UNRESOLVED"}
+    assert all(r["reference_values"] == r["shown_values"] for r in rows)
+    assert next(r for r in rows if r["series_name"] == "Stitched")["unhide_years"] == "2024 2025"
     assert workbook.read_bytes() == before
-    assert "8 of 8 series paired" in capsys.readouterr().out
+    assert "10 of 10 series paired" in capsys.readouterr().out

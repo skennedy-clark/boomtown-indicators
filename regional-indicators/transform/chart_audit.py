@@ -5,27 +5,38 @@ Audits the data ranges of every chart series in the indicators workbook.
 
 Each chart series plots one row of a data sheet (Population, Employment,
 Housing, Income, Business, Crime, Exogenous) across a range of year
-columns. After the annual update a series needs its range extended when
-the row holds a figure for a year beyond the end of the range. This
-script lists every series, the years its range covers and the years the
-row has data for, and classifies it. It changes nothing.
+columns. After the annual update a series is out of date when the row
+holds a figure for a year that the chart does not show. This script
+lists every series, the years it shows and the years its row has data
+for, and classifies it. It changes nothing.
 
 The workbook is read directly (chart definitions from the .xlsx package,
 cell values with openpyxl), so Excel is not required.
 
+Chart filters: most charts in the workbook use Excel's chart filters.
+A series then has a full range (for example Housing!C51:AE51) and shows
+only the columns whose categories are not filtered out (for example
+C51:AA51). The full range is stored in the chart as c15:fullRef and is
+what Excel reports as the series formula; the shown columns are stored
+as the ordinary reference (c:f), which becomes a list of separate areas
+when a column in the middle is filtered out. A year can therefore be
+missing from a chart because it lies beyond the full range, or because
+it lies inside the full range but is filtered out.
+
 Status of a series:
-    OK              the range ends at the last year of the row's
-                    continuous run of data
-    EXTEND          the columns immediately after the range hold data;
-                    a new range is proposed
-    PROJECTION      as EXTEND, but the range already ends after the
-                    cut-off year, or the proposed range would (a row of
-                    projections); listed for review, no change proposed
-    ENDS_PAST_DATA  the last cell of the range is empty
-    MULTI_AREA      the range is made of several separate areas. When
-                    all of them lie on one row, a single range is
-                    proposed: from the start of the first area to the
-                    end of the continuous run of data that begins there
+    OK              the chart shows every year up to the last year of
+                    the row's data
+    EXTEND          the row has data beyond the end of the full range; a
+                    longer range is proposed (and any filtered-out years
+                    with data are listed to be shown)
+    UNHIDE          the full range already covers the new data, but the
+                    years are filtered out; the years to show are listed
+    PROJECTION      the chart already shows figures for years after the
+                    cut-off year; listed for review, no change proposed
+    ENDS_PAST_DATA  no year with data is missing, but the last year
+                    shown has no figure
+    MULTI_AREA      the full range itself is made of several separate
+                    areas; no change is proposed
     UNRESOLVED      the range could not be interpreted (not a single
                     row, no year header found above it, or a sheet that
                     is not in the workbook)
@@ -37,14 +48,16 @@ calendar years (2025) or as financial-year labels ("2024/25", read as
 Education on the Exogenous sheet) are therefore read against that header
 and not against the top of the sheet.
 
-How the proposed range is found: from the last cell of the range, the
-run of numeric cells continues to the right until the first empty cell.
-Data that resumes after a gap is mentioned in the note and is not
-included. The category (axis label) range, when it lies on the same
-columns as the values, is moved to the same end column.
+Which years are missing: starting from the last shown column that has a
+figure, the run of numeric cells is followed to the right until the
+first empty cell or the cut-off year. The years in that run that the
+chart does not show are missing. Data that resumes after a gap is
+mentioned in the note and is not included. When the full range is
+extended, the category (axis label) range is extended with it if it
+ends on the same column.
 
 With --reference <workbook>, the same audit is run on a second workbook
-and each series is shown with the range it has there. Series are paired
+and each series is listed with the columns it shows there. Series are paired
 by page, chart position on the page and series order.
 
 Output: a CSV file (default chart_audit.csv), one line per series, and
@@ -79,6 +92,7 @@ NS = {
     "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
     "r":   "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
     "m":   "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "c15": "http://schemas.microsoft.com/office/drawing/2012/chart",
     "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
 }
 CHART_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
@@ -87,14 +101,15 @@ DRAWING_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationshi
 MIN_YEARS_IN_HEADER = 5
 HEADER_SEARCH_ROWS = 400
 
-STATUSES = ("OK", "EXTEND", "PROJECTION", "ENDS_PAST_DATA", "MULTI_AREA", "UNRESOLVED")
+STATUSES = ("OK", "EXTEND", "UNHIDE", "PROJECTION", "ENDS_PAST_DATA", "MULTI_AREA", "UNRESOLVED")
+CHANGE_STATUSES = ("EXTEND", "UNHIDE")
 
 CSV_COLUMNS = [
     "page", "chart_at", "chart_title", "series_no", "series_name",
     "data_sheet", "row", "row_label", "sub_label", "block",
-    "values", "categories", "range_from_year", "range_to_year",
+    "values", "categories", "shown_values", "range_from_year", "range_to_year",
     "data_to_year", "status", "proposed_values", "proposed_categories",
-    "reference_values", "note",
+    "unhide_years", "reference_values", "note",
 ]
 
 
@@ -125,8 +140,10 @@ class Series:
     chart_title: str
     series_no: int
     series_name: str
-    values: str                 # reference as stored in the chart
-    categories: str
+    values: str                 # full range (what Excel reports in the series formula)
+    categories: str             # full category range
+    shown_values: str = ""      # the columns the chart shows (differs when a chart filter is set)
+    shown_categories: str = ""
     # filled in by assess()
     data_sheet: str = ""
     row: int | None = None
@@ -139,12 +156,14 @@ class Series:
     status: str = ""
     proposed_values: str = ""
     proposed_categories: str = ""
+    unhide_years: list[int] = field(default_factory=list)
     reference_values: str = ""
     notes: list[str] = field(default_factory=list)
 
     def as_row(self) -> dict:
         row = {name: getattr(self, name, "") for name in CSV_COLUMNS if name != "note"}
         row["note"] = "; ".join(self.notes)
+        row["unhide_years"] = " ".join(str(y) for y in self.unhide_years)
         return {k: ("" if v is None else v) for k, v in row.items()}
 
 
@@ -178,6 +197,25 @@ def _reference(series_element, *paths: str) -> str:
     return ""
 
 
+VALUE_PATHS = ("c:val/c:numRef", "c:yVal/c:numRef")
+CATEGORY_PATHS = ("c:cat/c:numRef", "c:cat/c:strRef", "c:cat/c:multiLvlStrRef",
+                  "c:xVal/c:numRef", "c:xVal/c:strRef")
+
+
+def _ranges(series_element, paths) -> tuple[str, str]:
+    """Return (shown reference, full reference) for the values or the
+    categories of a series. Without a chart filter the two are equal."""
+    for path in paths:
+        node = series_element.find(path, NS)
+        if node is None:
+            continue
+        shown = (node.findtext("c:f", "", NS) or "").strip()
+        full = (node.findtext("c:extLst/c:ext/c15:fullRef/c15:sqref", "", NS) or "").strip()
+        if shown or full:
+            return shown or full, full or shown
+    return "", ""
+
+
 def read_chart_series(workbook_path: Path) -> list[Series]:
     """Return every chart series in the workbook, in page and chart order."""
     series_list: list[Series] = []
@@ -209,6 +247,8 @@ def read_chart_series(workbook_path: Path) -> list[Series]:
                     title = _text(chart.find("c:chart/c:title", NS), ".//a:t")
                     for number, ser in enumerate(chart.findall(".//c:ser", NS), start=1):
                         name = _text(ser.find("c:tx", NS), ".//c:v")
+                        shown_values, full_values = _ranges(ser, VALUE_PATHS)
+                        shown_categories, full_categories = _ranges(ser, CATEGORY_PATHS)
                         series_list.append(Series(
                             page=page,
                             chart_at=f"{get_column_letter(col)}{row}",
@@ -216,11 +256,10 @@ def read_chart_series(workbook_path: Path) -> list[Series]:
                             chart_title=title,
                             series_no=number,
                             series_name=name,
-                            values=_reference(ser, "c:val/c:numRef/c:f", "c:yVal/c:numRef/c:f"),
-                            categories=_reference(
-                                ser, "c:cat/c:numRef/c:f", "c:cat/c:strRef/c:f",
-                                "c:cat/c:multiLvlStrRef/c:f", "c:xVal/c:numRef/c:f", "c:xVal/c:strRef/c:f",
-                            ),
+                            values=full_values,
+                            categories=full_categories,
+                            shown_values=shown_values,
+                            shown_categories=shown_categories,
                         ))
     return series_list
 
@@ -391,12 +430,15 @@ def assess(series: Series, cells: Cells, last_year: int) -> None:
         series.status = "UNRESOLVED"
         series.notes.append("values reference is not a sheet range")
         return
-
-    area = areas[-1]
+    area = areas[0]
     series.data_sheet = area.sheet
     if not cells.has(area.sheet):
         series.status = "UNRESOLVED"
         series.notes.append(f"sheet '{area.sheet}' is not in the workbook")
+        return
+    if len(areas) > 1:
+        series.status = "MULTI_AREA"
+        series.notes.append(f"the full range has {len(areas)} separate areas")
         return
     if not area.single_row:
         series.status = "UNRESOLVED"
@@ -417,112 +459,122 @@ def assess(series: Series, cells: Cells, last_year: int) -> None:
         series.notes.append("no year header found above the row")
         return
 
-    same_row = all(a.sheet == area.sheet and a.single_row and a.row1 == row for a in areas)
-    multi = len(areas) > 1
-    if multi and not same_row:
-        series.status = "MULTI_AREA"
-        series.notes.append(f"{len(areas)} separate areas on different rows or sheets")
-        return
-    if multi:
-        # Assess the first area: the proposal is one range running from
-        # its start to the end of the data that continues from its end.
-        areas = sorted(areas, key=lambda a: a.col1)
-        area = areas[0]
-
     def year_at(col: int) -> int | None:
         return as_year(cells.value(area.sheet, header, col))
 
-    series.range_from_year = year_at(area.col1)
-    series.range_to_year = year_at(areas[-1].col2)
+    def has_data(col: int) -> bool:
+        return is_number(cells.value(area.sheet, row, col))
 
-    # Continuous run of data to the right of the range.
-    end = area.col2
+    shown = _shown_columns(series.shown_values, area)
+    if series.shown_values and normalise_reference(series.shown_values) != normalise_reference(series.values):
+        series.notes.append("chart filter: " + describe_columns(sorted(shown), area.col1, area.col2))
+    shown_end = max(shown)
+    shown_years = [year_at(c) for c in sorted(shown) if year_at(c) is not None]
+    series.range_from_year = shown_years[0] if shown_years else None
+    series.range_to_year = shown_years[-1] if shown_years else None
+
+    shown_with_data = [c for c in sorted(shown) if has_data(c)]
+    if shown_with_data and (year_at(shown_with_data[-1]) or 0) > last_year:
+        series.status = "PROJECTION"
+        series.data_to_year = year_at(shown_with_data[-1])
+        series.notes.append(f"the chart already shows figures for years after the cut-off year {last_year}")
+        return
+
+    # The run of data that continues from the last shown column with a figure.
+    start = _last_data_column(has_data, area.col1, shown_end, shown)
+    if start is None:
+        series.status = "ENDS_PAST_DATA"
+        series.notes.append("the row has no figures in the years shown")
+        return
     width = max(cells.width(area.sheet, row), cells.width(area.sheet, header))
-    run_end = end
-    while run_end + 1 <= width and is_number(cells.value(area.sheet, row, run_end + 1)) \
-            and year_at(run_end + 1) is not None:
+    run_end = start
+    while run_end + 1 <= width and has_data(run_end + 1) and year_at(run_end + 1) is not None \
+            and year_at(run_end + 1) <= last_year:
         run_end += 1
-    later = [
-        col for col in range(run_end + 2, width + 1)
-        if is_number(cells.value(area.sheet, row, col)) and year_at(col) is not None
-    ]
+    series.data_to_year = year_at(run_end)
+    if run_end + 1 <= width and has_data(run_end + 1) and (year_at(run_end + 1) or 0) > last_year:
+        series.notes.append(f"the row continues after the cut-off year {last_year} (projections), not included")
+    later = [c for c in range(run_end + 2, width + 1) if has_data(c) and (year_at(c) or 0) and year_at(c) <= last_year]
     if later:
         series.notes.append(
             f"more data after a gap, from {year_at(later[0])} "
             f"({get_column_letter(later[0])}{row}), not included"
         )
 
-    end_has_data = is_number(cells.value(area.sheet, row, end))
-    if not end_has_data:
-        last_filled = next(
-            (col for col in range(end, area.col1 - 1, -1) if is_number(cells.value(area.sheet, row, col))), None
-        )
-        series.data_to_year = year_at(last_filled) if last_filled else None
-        status = "ENDS_PAST_DATA"
-        if last_filled:
+    missing = [c for c in range(start + 1, run_end + 1) if c not in shown]
+    if not missing:
+        if not has_data(shown_end):
+            series.status = "ENDS_PAST_DATA"
             series.notes.append(
-                f"range runs to {year_at(end)}; the row's last figure in the range is "
-                f"{series.data_to_year} ({get_column_letter(last_filled)}{row})"
+                f"the last year shown, {series.range_to_year}, has no figure; "
+                f"the row's last figure is for {series.data_to_year}"
             )
         else:
-            series.notes.append("the row has no figures in the range")
-    else:
-        series.data_to_year = year_at(run_end)
-        if run_end == end:
-            status = "OK"
-        elif (year_at(end) or 0) > last_year or (series.data_to_year or 0) > last_year:
-            status = "PROJECTION"
-            series.notes.append(
-                f"data continues to {series.data_to_year}, beyond the cut-off year {last_year}"
-            )
-        else:
-            status = "EXTEND"
-
-    if multi:
-        series.status = "MULTI_AREA"
-        described = ", ".join(
-            f"{get_column_letter(a.col1)}-{get_column_letter(a.col2)}" if a.col1 != a.col2 else get_column_letter(a.col1)
-            for a in areas
-        )
-        series.notes.insert(0, f"{len(areas)} separate areas (columns {described})")
-        if status in ("OK", "EXTEND"):
-            series.proposed_values = area.with_end_column(run_end)
-            series.proposed_categories = _single_category_range(series, area, run_end)
-            outside = [
-                a for a in areas[1:]
-                if a.col1 > run_end and any(is_number(cells.value(a.sheet, row, c)) for c in range(a.col1, a.col2 + 1))
-            ]
-            if outside:
-                series.notes.append("an area beyond the proposed range holds data")
+            series.status = "OK"
         return
 
-    series.status = status
-    category_note = _check_categories(series, area, header, run_end, status == "EXTEND", cells)
-    if status == "EXTEND":
+    series.unhide_years = [year_at(c) for c in missing if c <= area.col2]
+    if run_end > area.col2:
+        series.status = "EXTEND"
         series.proposed_values = area.with_end_column(run_end)
-    if category_note:
-        series.notes.append(category_note)
+        series.unhide_years = [year_at(c) for c in missing]
+        note = _check_categories(series, area, header, run_end, cells)
+        if note:
+            series.notes.append(note)
+    else:
+        series.status = "UNHIDE"
 
 
-def _single_category_range(series: Series, area: Area, run_end: int) -> str:
-    """For a multi-area series: the category range rebuilt as one range
-    over the proposed value columns, when its first area starts on the
-    same column as the values."""
-    cat_areas = parse_reference(series.categories) if series.categories else None
-    if not cat_areas:
-        return ""
-    cat_areas.sort(key=lambda a: a.col1)
-    first = cat_areas[0]
-    if not first.single_row or first.col1 != area.col1:
-        return ""
-    if any(a.sheet != first.sheet or a.row1 != first.row1 or not a.single_row for a in cat_areas):
-        return ""
-    return first.with_end_column(run_end)
+def _shown_columns(shown_reference: str, area: Area) -> set[int]:
+    """Columns of the full range that the chart shows."""
+    shown_areas = parse_reference(shown_reference) if shown_reference else None
+    columns = set()
+    for part in shown_areas or []:
+        if part.sheet == area.sheet and part.row1 == area.row1 and part.single_row:
+            columns.update(range(part.col1, part.col2 + 1))
+    return columns or set(range(area.col1, area.col2 + 1))
 
 
-def _check_categories(series: Series, area: Area, header: int, run_end: int, propose: bool, cells: Cells) -> str:
-    """Compare the category range with the values range, and propose a
-    new category range when the values range is being extended."""
+def _last_data_column(has_data, first: int, last: int, allowed: set[int] | None = None) -> int | None:
+    for col in range(last, first - 1, -1):
+        if (allowed is None or col in allowed) and has_data(col):
+            return col
+    return None
+
+
+def describe_columns(columns: list[int], first: int, last: int) -> str:
+    """Describe which columns of first..last are shown, e.g. 'shows C-Z, AB of C-AE'."""
+    runs, start, previous = [], None, None
+    for col in columns:
+        if start is None:
+            start = previous = col
+        elif col == previous + 1:
+            previous = col
+        else:
+            runs.append((start, previous))
+            start = previous = col
+    if start is not None:
+        runs.append((start, previous))
+    shown = ", ".join(
+        get_column_letter(a) if a == b else f"{get_column_letter(a)}-{get_column_letter(b)}" for a, b in runs
+    )
+    return f"shows {shown} of {get_column_letter(first)}-{get_column_letter(last)}"
+
+
+def normalise_reference(reference: str) -> str:
+    text = (reference or "").strip()
+    if text.startswith("(") and text.endswith(")"):
+        text = text[1:-1]
+    return text.replace("$", "").replace("'", "").replace(" ", "").upper()
+
+
+def _check_categories(series: Series, area: Area, header: int, run_end: int, cells: Cells) -> str:
+    """Propose a category range to go with an extended values range.
+
+    The category range is extended when it covers the same columns as
+    the values. A category range that is already wider (room left for
+    projections) is kept unless the values would run past it.
+    """
     if not series.categories:
         return "no category range"
     cat_areas = parse_reference(series.categories)
@@ -532,21 +584,17 @@ def _check_categories(series: Series, area: Area, header: int, run_end: int, pro
         return "category range has several areas"
     cat = cat_areas[0]
     if cat.col1 != area.col1 or cat.col2 < area.col2:
+        if cat.col2 < run_end:
+            series.proposed_categories = cat.with_end_column(run_end)
         return (
             f"category range covers columns {get_column_letter(cat.col1)}-{get_column_letter(cat.col2)}, "
             f"values cover {get_column_letter(area.col1)}-{get_column_letter(area.col2)}"
         )
     if cat.col2 > area.col2:
-        # A wider axis is deliberate (room for projections): keep it,
-        # unless the extended values would run past it.
-        if propose and run_end > cat.col2:
+        if run_end > cat.col2:
             series.proposed_categories = cat.with_end_column(run_end)
         return f"axis runs to column {get_column_letter(cat.col2)}, beyond the values"
-    if propose:
-        series.proposed_categories = cat.with_end_column(run_end)
-    if cells.has(cat.sheet) and cat.single_row and not is_year_row(
-            cells, cat.sheet, cat.row1, range(cat.col1, cat.col2 + 1)):
-        return f"category row {cat.row1} does not hold years"
+    series.proposed_categories = cat.with_end_column(run_end)
     return ""
 
 
@@ -565,14 +613,14 @@ def audit(workbook_path: Path, last_year: int) -> list[Series]:
 
 
 def add_reference(series_list: list[Series], reference_list: list[Series]) -> int:
-    """Record, for each series, the values range of the series in the
+    """Record, for each series, the columns shown by the series in the
     same position in the reference workbook. Returns the number paired."""
     by_position = {(s.page, s.chart_at, s.series_no): s for s in reference_list}
     paired = 0
     for series in series_list:
         other = by_position.get((series.page, series.chart_at, series.series_no))
         if other is not None:
-            series.reference_values = other.values
+            series.reference_values = other.shown_values
             paired += 1
     return paired
 
@@ -604,12 +652,13 @@ def summary_lines(series_list: list[Series], last_year: int) -> list[str]:
         counts = Counter(s.status for s in series_list if s.page == page)
         lines.append("  " + f"{page[:13]:<14}" + "".join(f"{counts.get(status, 0):>16}" for status in STATUSES))
 
-    extend = [s for s in series_list if s.status == "EXTEND"]
-    if extend:
-        moves = Counter((s.data_sheet, s.range_to_year, s.data_to_year) for s in extend)
-        lines += ["", "Extensions proposed (data sheet: range ends -> data ends):"]
-        for (sheet, to_year, data_year), count in sorted(moves.items(), key=lambda kv: (kv[0][0], -kv[1])):
-            lines.append(f"  {sheet:<12}{to_year} -> {data_year}   {count} series")
+    changes = [s for s in series_list if s.status in CHANGE_STATUSES]
+    if changes:
+        moves = Counter((s.data_sheet, s.status, s.range_to_year, s.data_to_year) for s in changes)
+        lines += ["", "Changes proposed (data sheet, change: last year shown -> last year of data):"]
+        for (sheet, status, to_year, data_year), count in sorted(moves.items(), key=lambda kv: (kv[0][0], kv[0][1], -kv[1])):
+            action = "extend range" if status == "EXTEND" else "show filtered years"
+            lines.append(f"  {sheet:<12}{action:<20}{to_year} -> {data_year}   {count} series")
     return lines
 
 
@@ -648,13 +697,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         reference_list = audit(args.reference, args.last_year)
         paired = add_reference(series_list, reference_list)
-        same = sum(1 for s in series_list if s.reference_values and s.reference_values == s.values)
-        proposed = sum(1 for s in series_list if s.proposed_values and s.proposed_values == s.reference_values)
+        same = sum(1 for s in series_list
+                   if s.reference_values and normalise_reference(s.reference_values) == normalise_reference(s.shown_values))
         print("")
         print(f"Reference: {args.reference}")
         print(f"  {paired} of {len(series_list)} series paired by page, chart position and series order")
-        print(f"  {same} have the same range in both workbooks")
-        print(f"  {proposed} proposed ranges equal the reference workbook's range")
+        print(f"  {same} show the same columns in both workbooks")
 
     write_csv(series_list, args.out)
     print("")
