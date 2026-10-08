@@ -22,10 +22,10 @@
 # millimetres.
 #
 # [[month]]
-# town          = "Dalby"
+# town          = "Moranbah"
 # year          = 2025
 # month         = 1
 # value_mm      = 123.4
 # entered_by    = "<name>"
 # entered_date  = "<YYYY-MM-DD>"
-# source_note   = "BOM Climate Data Online, station 041522 (Dalby Airport)"
+# source_note   = "BOM Climate Data Online, station 034035 (Moranbah Airport)"

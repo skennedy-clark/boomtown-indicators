@@ -358,7 +358,10 @@ def update_income(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> li
     towns_toml_path = Path(__file__).parent.parent.parent / "towns.toml"
     with open(towns_toml_path, "rb") as f:
         towns_data = tomllib.load(f)
-    postcode_by_name = {t["name"]: t["postcode"] for t in towns_data["towns"].values()}
+    # Regions with no postcode (LGA-level benchmarks) have no Income block.
+    postcode_by_name = {
+        t["name"]: t["postcode"] for t in towns_data["towns"].values() if t.get("postcode")
+    }
 
     results = []
     written_count = 0

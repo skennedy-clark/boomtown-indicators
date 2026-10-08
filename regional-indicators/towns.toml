@@ -93,7 +93,7 @@ benchmark        = false
 district         = "Dalby and District"
 cover_photo      = "cover.jpg"
 sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-wambo.pdf"
-notes            = "No SA2-level SALM entry; Wambo (307021183) is used as a proxy. Rainfall: station 41522 (Dalby Airport) is the published station and is not in the SILO dataset, so monthly figures come from manual_rainfall_data.toml."
+notes            = "No SA2-level SALM entry; Wambo (307021183) is used as a proxy. Rainfall: station 41522 (Dalby Airport) is the published station."
 
 [towns.miles]
 name             = "Miles"

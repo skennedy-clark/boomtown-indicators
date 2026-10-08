@@ -38,6 +38,7 @@ Usage (from the repository root):
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,7 @@ REPO_ROOT = HERE.parent
 WRITERS   = HERE / "transform" / "xlsx_update"
 CACHE     = HERE / "cache"
 LOG_DIR   = HERE / "logs"
+RETRY_AFTER_EXCEL_ERROR_S = 15
 PAUSE_BETWEEN_EXCEL_STEPS_S = 3     # pause for Excel and file-sync clients to release the file
 
 # (step name, writer script, cache folder), in sheet order.
@@ -79,7 +81,11 @@ class Log:
         self._file = open(path, "w", encoding="utf-8")
 
     def __call__(self, text: str = "") -> None:
-        print(text, flush=True)
+        try:
+            print(text, flush=True)
+        except UnicodeEncodeError:      # console or redirect that is not UTF-8
+            encoding = sys.stdout.encoding or "ascii"
+            print(text.encode(encoding, "replace").decode(encoding), flush=True)
         self._file.write(text + "\n")
         self._file.flush()
 
@@ -100,10 +106,15 @@ def run_step(name: str, command: list[str], log: Log) -> dict:
     started = time.time()
     summary = ""
     crashed = False
+    excel_error = False
+    # Child processes write to a pipe, where Python on Windows defaults to
+    # the ANSI code page and fails on characters outside it. Force UTF-8 to
+    # match the decoding below.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     try:
         process = subprocess.Popen(
             command, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace", env=env,
         )
         for line in process.stdout:
             line = line.rstrip("\n")
@@ -116,6 +127,8 @@ def run_step(name: str, command: list[str], log: Log) -> dict:
                 summary = (summary + ", " if summary else "") + stripped[2:].replace(" :", ":").lower()
             if "Traceback (most recent call last)" in line:
                 crashed = True
+            if "pywintypes.com_error" in line:
+                excel_error = True
         code = process.wait()
         if crashed and code != 0:
             summary = "crashed (see the traceback above)"
@@ -125,7 +138,31 @@ def run_step(name: str, command: list[str], log: Log) -> dict:
     return {
         "name": name, "ok": code == 0, "code": code,
         "summary": summary, "seconds": time.time() - started,
+        "excel_error": excel_error and code != 0,
     }
+
+
+def copy_starting_workbook(original: Path, test_copy: Path) -> str | None:
+    """Copy the starting workbook over the working copy.
+
+    Returns None on success, or a message explaining why the working
+    copy could not be created. Nothing else runs in that case: every
+    later step depends on being able to write this file.
+    """
+    lock_file = test_copy.with_name("~$" + test_copy.name)     # created by Excel while a workbook is open
+    try:
+        shutil.copyfile(original, test_copy)
+    except PermissionError:
+        reason = (
+            "It is open in Excel; close it and run again."
+            if lock_file.exists() else
+            "It is probably open in Excel, or held by a file-sync client "
+            "(OneDrive); close it, or pause syncing, and run again."
+        )
+        return f"Cannot write the working copy {test_copy}.\n{reason}"
+    except OSError as exc:
+        return f"Cannot create the working copy {test_copy}: {exc}"
+    return None
 
 
 def build_steps(args, test_copy: Path) -> list[tuple[str, list[str]]]:
@@ -179,14 +216,35 @@ def main(argv: list[str] | None = None) -> int:
     log(f"Website folder    : {args.web_out}")
     log(f"Python            : {sys.version.split()[0]} ({sys.executable})")
 
-    shutil.copyfile(original, test_copy)
+    problem = copy_starting_workbook(original, test_copy)
+    if problem:
+        log("")
+        log(problem)
+        log("Nothing was run.")
+        log.close()
+        return 2
     log(f"Copied the starting workbook to {test_copy.name} (fresh copy).")
 
     results = []
     for name, command in build_steps(args, test_copy):
+        is_writer = "xlsx_update" in " ".join(command)
         result = run_step(name, command, log)
+        if is_writer and result["excel_error"]:
+            # Excel automation errors are usually transient (the workbook
+            # is still held by a file-sync client or a closing Excel
+            # process). A writer saves only after all of its writes, so a
+            # failed attempt leaves the workbook unchanged.
+            log(f"Excel reported an automation error; retrying '{name}' once "
+                f"in {RETRY_AFTER_EXCEL_ERROR_S} seconds.")
+            time.sleep(RETRY_AFTER_EXCEL_ERROR_S)
+            first_seconds = result["seconds"]
+            result = run_step(name + " (retry)", command, log)
+            result["name"] = name
+            result["seconds"] += first_seconds
+            if result["ok"]:
+                result["summary"] += "  [succeeded on retry]"
         results.append(result)
-        if "xlsx_update" in " ".join(command):
+        if is_writer:
             time.sleep(PAUSE_BETWEEN_EXCEL_STEPS_S)
 
     log("")

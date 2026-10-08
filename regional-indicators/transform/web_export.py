@@ -417,6 +417,10 @@ def export(workbook_path: Path, out_dir: Path, map_path: Path = DEFAULT_MAP,
     years = list(range(FIRST_YEAR, last_year + 1))
     report.append(f"Years    : {FIRST_YEAR}-{last_year} in every file")
 
+    # The comparison is made before any file is written: the earlier
+    # export may be the folder that is about to be overwritten.
+    comparison = compare(series, compare_with) if compare_with is not None else []
+
     written = 0
     for e, values in series.items():
         if not dry_run:
@@ -444,8 +448,8 @@ def export(workbook_path: Path, out_dir: Path, map_path: Path = DEFAULT_MAP,
         report += ["", f"PROBLEMS ({len(problems)}) -- these files were NOT written:"]
         report += [f"  {p}" for p in problems]
 
-    if compare_with is not None:
-        report += [""] + compare(series, compare_with)
+    if comparison:
+        report += [""] + comparison
 
     return report, len(problems)
 

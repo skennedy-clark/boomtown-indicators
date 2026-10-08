@@ -1,11 +1,12 @@
 """
-tests/test_run_end_to_end.py -- the end-to-end runner
-(regional-indicators/run_end_to_end.py).
+tests/test_run_end_to_end.py
 
-Tests the runner itself, with tiny stand-in scripts: that it copies the
-starting workbook, runs the steps in order with the right arguments,
-keeps going when a step fails, and reports each step's own summary.
-No fetching, no Excel.
+Tests for the end-to-end runner (regional-indicators/run_end_to_end.py).
+
+The runner is tested with small stand-in scripts: that it does not
+overwrite the starting workbook, builds the steps in order with the
+right arguments, continues when a step fails, and reports each step's
+own summary. No fetching and no Excel.
 """
 
 import sys
@@ -70,12 +71,12 @@ def test_steps_are_fetch_then_every_writer_then_the_website(tmp_path):
 
     commands = dict(steps)
     business = commands["Business"]
-    assert business[-2:] == ["2025", "--visible"]                      # the one writer that takes a year
+    assert business[-2:] == ["2025", "--visible"]                      # the only writer that takes a year
     assert Path(commands["Income"][3]).name == "ato"                   # Income reads cache/ato, not cache/income
     assert Path(commands["Population: LGA"][3]).name == "population"
     assert "--compare-with" in commands["Website folder"]
 
-    # every writer named here exists
+    # every writer script listed in WRITER_STEPS exists
     for _, script, _ in e2e.WRITER_STEPS:
         assert (e2e.WRITERS / script).exists(), script
 
@@ -98,3 +99,48 @@ def test_refuses_to_overwrite_the_starting_workbook(tmp_path, capsys):
     book.write_bytes(b"PK")
     assert e2e.main([str(book), "--test-copy", str(book)]) == 2
     assert book.read_bytes() == b"PK"
+
+
+def test_an_excel_automation_error_is_reported_for_retry(tmp_path, log):
+    import run_end_to_end as e2e
+
+    script = _script(tmp_path, "writer.py",
+                     'import sys\nprint("Traceback (most recent call last):")\n'
+                     'print("pywintypes.com_error: (-2146827864, \'OLE error 0x800a01a8\', None, None)")\n'
+                     'sys.exit(1)\n')
+    result = e2e.run_step("Population: town (UCL)", [sys.executable, script], log)
+    assert not result["ok"] and result["excel_error"]
+
+    other = _script(tmp_path, "other.py", 'import sys\nprint("Traceback (most recent call last):")\nsys.exit(1)\n')
+    assert not e2e.run_step("Income", [sys.executable, other], log)["excel_error"]
+
+
+def test_a_working_copy_that_cannot_be_written_stops_the_run(tmp_path, monkeypatch):
+    import run_end_to_end as e2e
+
+    original = tmp_path / "original.xlsx"
+    original.write_bytes(b"PK")
+    working = tmp_path / "test-copy.xlsx"
+    (tmp_path / "~$test-copy.xlsx").write_bytes(b"")          # Excel's lock file
+
+    def locked(src, dst):
+        raise PermissionError(13, "Permission denied", str(dst))
+
+    monkeypatch.setattr(e2e.shutil, "copyfile", locked)
+    message = e2e.copy_starting_workbook(original, working)
+    assert "open in Excel" in message and "test-copy.xlsx" in message
+
+    monkeypatch.setattr(e2e, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(e2e, "build_steps", lambda *a: pytest.fail("no step may run"))
+    assert e2e.main([str(original), "--test-copy", str(working)]) == 2
+
+
+def test_the_working_copy_is_a_fresh_copy_of_the_starting_workbook(tmp_path):
+    import run_end_to_end as e2e
+
+    original = tmp_path / "original.xlsx"
+    original.write_bytes(b"PK-new")
+    working = tmp_path / "test-copy.xlsx"
+    working.write_bytes(b"old contents")
+    assert e2e.copy_starting_workbook(original, working) is None
+    assert working.read_bytes() == b"PK-new"
