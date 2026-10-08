@@ -164,6 +164,19 @@ def test_a_range_is_extended_and_its_new_years_shown():
     assert (counts["extended"], counts["charts_shown"]) == (1, 1)
 
 
+def test_an_axis_that_stops_short_is_extended_without_changing_the_values():
+    from update_charts import build_plan, update_page
+
+    plan = build_plan([audited("Roma", "Housing!$C$51:$AE$51", "Housing!$C$1:$Y$1", "EXTEND",
+                               "Housing!$C$51:$AE$51", "Housing!$C$1:$AE$1", unhide=[2025])])
+    series = FakeSeries("=SERIES(Housing!$B$51,Housing!$C$1:$Y$1,Housing!$C$51:$AE$51,1)")
+    cats = categories("2024", "2025", filtered=("2025",))
+    results, counts = update_page("Roma", [fake_chart("$B$2", series, cats=cats)], plan)
+    assert series.Formula == "=SERIES(Housing!$B$51,Housing!$C$1:$AE$1,Housing!$C$51:$AE$51,1)"
+    assert cats[1].IsFiltered is False
+    assert counts["extended"] == 1 and "axis extended" in results[0]
+
+
 def test_a_series_is_matched_on_its_values_when_excel_reports_other_categories():
     from update_charts import build_plan, update_page
 

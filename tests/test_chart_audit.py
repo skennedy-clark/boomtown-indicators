@@ -43,9 +43,10 @@ FULL_REF = (
 )
 
 
-def _add_chart_filter(path, chart_part, shown, full):
+def _add_chart_filter(path, chart_part, shown, full, categories=None):
     """Give the series whose values are `shown` the full range `full`,
-    the way Excel records a chart filter."""
+    the way Excel records a chart filter; `categories` is an optional
+    (shown, full) pair for its category range."""
     import zipfile
 
     with zipfile.ZipFile(path) as package:
@@ -53,7 +54,13 @@ def _add_chart_filter(path, chart_part, shown, full):
     xml = parts[chart_part].decode()
     old = f"<val><numRef><f>{shown}</f>"
     assert old in xml
-    parts[chart_part] = xml.replace(old, f"<val><numRef>{FULL_REF % full}<f>{shown}</f>").encode()
+    xml = xml.replace(old, f"<val><numRef>{FULL_REF % full}<f>{shown}</f>")
+    if categories:
+        cat_shown, cat_full = categories
+        old = f"<cat><strRef><f>{cat_shown}</f>"
+        assert old in xml
+        xml = xml.replace(old, f"<cat><strRef>{FULL_REF % cat_full}<f>{cat_shown}</f>")
+    parts[chart_part] = xml.encode()
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
         for name, data in parts.items():
             package.writestr(name, data)
@@ -106,11 +113,14 @@ def workbook(tmp_path):
     _chart(page, "T2", [("Filtered", "Population!$C$4:$K$4", "Population!$C$1:$K$1")])          # chart5
     _chart(page, "T20", [("Stitched", "(Population!$C$4:$J$4,Population!$N$4)",
                           "(Population!$C$1:$J$1,Population!$N$1)")])                          # chart6
+    _chart(page, "AC2", [("Short axis", "Population!$C$4:$K$4", "Population!$C$1:$K$1")])      # chart7
 
     path = tmp_path / "book.xlsx"
     wb.save(path)
-    _add_chart_filter(path, "xl/charts/chart5.xml", "Population!$C$4:$K$4", "Population!$C$4:$N$4")
+    _add_chart_filter(path, "xl/charts/chart5.xml", "Population!$C$4:$K$4", "Population!$C$4:$N$4",
+                      ("Population!$C$1:$K$1", "Population!$C$1:$N$1"))
     _add_chart_filter(path, "xl/charts/chart6.xml", "(Population!$C$4:$J$4,Population!$N$4)", "Population!$C$4:$N$4")
+    _add_chart_filter(path, "xl/charts/chart7.xml", "Population!$C$4:$K$4", "Population!$C$4:$N$4")
     return path
 
 
@@ -125,7 +135,7 @@ def test_every_series_is_listed_with_its_page_and_position(workbook):
     from chart_audit import audit
 
     series = audit(workbook, last_year=2025)
-    assert len(series) == 10
+    assert len(series) == 11
     assert {s.page for s in series} == {"Roma"}
     assert [s.chart_at for s in series][:2] == ["B2", "B2"]
     assert [s.series_no for s in series if s.chart_at == "B2"] == [1, 2]
@@ -156,6 +166,16 @@ def test_a_filter_with_a_gap_shows_the_years_missing_from_the_middle(audited):
     assert s.status == "UNHIDE"
     assert s.unhide_years == [2024, 2025]
     assert "shows C-J, N of C-N" in "; ".join(s.notes)
+
+
+def test_a_category_range_that_stops_short_of_the_data_is_extended(audited):
+    """The values already reach the new year, but the axis labels do not,
+    so the year cannot be shown until the category range is longer."""
+    s = audited["Short axis"]
+    assert s.status == "EXTEND"
+    assert s.proposed_values == s.values == "Population!$C$4:$N$4"
+    assert s.proposed_categories == "Population!$C$1:$N$1"
+    assert s.unhide_years == [2025]
 
 
 def test_an_up_to_date_range_is_left_alone(audited):
@@ -227,10 +247,10 @@ def test_the_csv_has_one_line_per_series_and_the_workbook_is_unchanged(workbook,
     assert main([str(workbook), "--out", str(out), "--last-year", "2025", "--reference", str(workbook)]) == 0
     with open(out, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
-    assert len(rows) == 10
+    assert len(rows) == 11
     assert {r["status"] for r in rows} == {
         "OK", "EXTEND", "UNHIDE", "PROJECTION", "ENDS_PAST_DATA", "MULTI_AREA", "UNRESOLVED"}
     assert all(r["reference_values"] == r["shown_values"] for r in rows)
     assert next(r for r in rows if r["series_name"] == "Stitched")["unhide_years"] == "2024 2025"
     assert workbook.read_bytes() == before
-    assert "10 of 10 series paired" in capsys.readouterr().out
+    assert "11 of 11 series paired" in capsys.readouterr().out

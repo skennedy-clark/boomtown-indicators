@@ -14,11 +14,13 @@ are filtered out. Two kinds of change follow:
              filter on that category (ChartGroup.FullCategoryCollection,
              IsFiltered = False). Category filters apply to the whole
              chart, so a year is shown for every series in the chart.
-  - EXTEND   the data runs past the end of the full range. The series
-             formula is rewritten with a longer range, and the category
-             (axis label) range with it where it ends on the same
-             column; any of the new years that are filtered out are
-             then shown as above.
+  - EXTEND   the data runs past the end of the full range, or the
+             series' category (axis label) range stops before the data.
+             The series formula is rewritten with the longer range(s);
+             any of the new years that are filtered out are then shown
+             as above. (In a chart with column and line groups, each
+             group takes its axis labels from its own series, so a short
+             category range keeps the new year off that group's axis.)
 
 Series with any other status are left as they are, and years with no
 figures stay hidden. Nothing else is changed: chart type, formatting,
@@ -360,8 +362,9 @@ def update_page(page: str, chart_objects, plan: Plan, resolve=None) -> tuple[lis
             change, matched_by = index.find(parts, where, name, position)
             if change is None or change in applied:
                 continue
-            if parts is not None and normalise(parts[2]) == normalise(change.values):
-                applied.add(change)                           # already has the new range
+            if parts is not None and normalise(parts[2]) == normalise(change.values) and (
+                    not change.categories or normalise(parts[1]) == normalise(change.categories)):
+                applied.add(change)                           # already has the new ranges
                 continue
             problem = _set_range(series, parts, change, resolve)
             if problem:
@@ -371,7 +374,10 @@ def update_page(page: str, chart_objects, plan: Plan, resolve=None) -> tuple[lis
             applied.add(change)
             counts["extended"] += 1
             note = "" if matched_by == "references" else f"   (matched by {matched_by})"
-            results.append(f"{change.label}: extended {change.old_values} -> {change.values}{note}")
+            if normalise(change.old_values) == normalise(change.values):
+                results.append(f"{change.label}: axis extended {change.old_categories} -> {change.categories}{note}")
+            else:
+                results.append(f"{change.label}: extended {change.old_values} -> {change.values}{note}")
 
         years = plan.unhide.get((page, where))
         if years:

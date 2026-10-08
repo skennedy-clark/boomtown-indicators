@@ -26,9 +26,10 @@ it lies inside the full range but is filtered out.
 Status of a series:
     OK              the chart shows every year up to the last year of
                     the row's data
-    EXTEND          the row has data beyond the end of the full range; a
-                    longer range is proposed (and any filtered-out years
-                    with data are listed to be shown)
+    EXTEND          the row has data beyond the end of the full range, or
+                    the series' category (axis label) range stops short of
+                    the data; a longer range is proposed (and any
+                    filtered-out years with data are listed to be shown)
     UNHIDE          the full range already covers the new data, but the
                     years are filtered out; the years to show are listed
     PROJECTION      the chart already shows figures for years after the
@@ -523,6 +524,19 @@ def assess(series: Series, cells: Cells, last_year: int) -> None:
             series.notes.append(note)
     else:
         series.status = "UNHIDE"
+        # The years can only be shown if the series' category range
+        # reaches them: in a chart with two chart groups (columns and
+        # lines) each group takes its axis labels from its own series.
+        cat_areas = parse_reference(series.categories) if series.categories else None
+        if cat_areas and len(cat_areas) == 1 and cat_areas[0].single_row and cat_areas[0].col2 < run_end:
+            cat = cat_areas[0]
+            series.status = "EXTEND"
+            series.proposed_values = series.values
+            series.proposed_categories = cat.with_end_column(area.col2)
+            series.notes.append(
+                f"category range ends at column {get_column_letter(cat.col2)}, before the data; "
+                f"extended to {get_column_letter(area.col2)} to match the values"
+            )
 
 
 def _shown_columns(shown_reference: str, area: Area) -> set[int]:
