@@ -1,41 +1,31 @@
 """
-regional-indicators/transform/xlsx_update/base.py -- generic engine for
-idempotently writing indicator values into Indicators_Data-Charts.xlsx,
-driving Excel itself via COM automation (xlwings) rather than
-reconstructing the file with a third-party library.
+regional-indicators/transform/xlsx_update/base.py
 
-WHY THIS, NOT openpyxl:
-openpyxl was confirmed to corrupt this specific workbook on save badly
-enough that even Excel's own "recover as much as we can" repair could
-not open the result. Diffing the raw OOXML parts (every xlsx is a zip of
-XML files) showed openpyxl silently drops, on every save: every chart's
-style/colour XML (all 231 charts), external links, threaded comments and
-their author metadata (downgraded to legacy comments instead), custom
-XML parts, an embedded image, and printer settings. This is a documented
-category of openpyxl limitation, not a bug specific to this file, and
-isn't fixable by patching around each dropped part individually. The old
-version is kept as base_openpyxl_DEPRECATED.py for reference only -- do
-not use it against the real workbook.
+Shared engine for writing indicator values into the indicators workbook.
 
-The only way to guarantee zero data loss is to have Excel itself do the
-reading and writing -- the file is then never "reconstructed" by
-anything other than the same program that always produces it.
+The workbook is edited through Excel itself (xlwings, COM automation on
+Windows / AppleScript on macOS) rather than rebuilt with a file-level
+library. openpyxl cannot round-trip this workbook: on save it drops chart
+style parts, external links, threaded comments, custom XML parts,
+embedded images and printer settings, and the result does not reopen in
+Excel. Letting Excel perform every read and write guarantees the file is
+only ever produced by the application that owns the format.
 
-REQUIRES a real Excel installation on the machine running this (Windows
-or Mac with Excel). Will NOT work in a headless Linux environment -- an
-inherent trade-off of this fix, not an oversight.
+Requirements: a local Microsoft Excel installation (Windows or macOS).
+The writers cannot run headless or on Linux.
 
-Sheet layout assumed (confirmed against the real workbook): row 1 =
-fiscal-year labels from column C, row 2 = plain calendar years from
-column C, then repeating <town name row> / <indicator rows> blocks down
-column A. A town name can legitimately repeat across separate
-geography-level sections (LGA / SA2 / UCL) on the same sheet --
-ambiguous (town, indicator) matches raise rather than guess.
+Sheet layout assumed by the helpers in this module:
+  row 1      fiscal-year labels, from column C
+  row 2      calendar years, from column C
+  row 3+     repeating blocks in column A: a region heading row followed
+             by its indicator rows
+A sheet may be divided into geography sections (LGA / SA2 / UCL), each
+introduced by a row whose column A holds the section name. The same
+region and indicator names can occur in more than one section, so
+lookups that match more than one row raise instead of choosing.
 
-Performance note: cell-by-cell reads over COM are slow (each .value
-access is a round-trip to the Excel process). The row/column finder
-functions below do ONE bulk range read each rather than looping
-cell-by-cell, which matters at this sheet's real size (~170 rows).
+Performance: each cell access over COM is a round trip to the Excel
+process, so the finder functions read whole ranges in one call.
 """
 
 from __future__ import annotations
@@ -44,39 +34,40 @@ from pathlib import Path
 
 import xlwings as xw
 
-YEAR_HEADER_ROW = 2          # plain calendar year, e.g. 2001
-FISCAL_HEADER_ROW = 1        # fiscal-year string, e.g. "2000/01"
+YEAR_HEADER_ROW = 2          # calendar-year header row, e.g. 2001
+FISCAL_HEADER_ROW = 1        # fiscal-year header row, e.g. "2000/01"
 FIRST_YEAR_COLUMN = 3         # column C
-FIRST_DATA_ROW = 3            # rows 1-2 are headers; town blocks start row 3
+FIRST_DATA_ROW = 3            # rows 1-2 are headers; region blocks start at row 3
 
 
 def _fiscal_label(calendar_year: int) -> str:
-    """2025 -> '2024/25', matching the existing header convention (fiscal
-    year ending in the given calendar year)."""
+    """Return the fiscal-year label ending in `calendar_year`: 2025 -> '2024/25'."""
     start = calendar_year - 1
     end_short = str(calendar_year)[-2:]
     return f"{start}/{end_short}"
 
 
 def _find_year_column(sheet: "xw.Sheet", year: int) -> int:
-    """Return the column index for `year`, creating a new column with both
-    header rows filled in if it doesn't exist yet. Reads row 2's header
-    values in a single bulk range read, not cell-by-cell. Explicitly sets
-    number_format="General" on any newly-created header cells -- Excel
-    was confirmed to silently inherit a percentage format from an
-    adjacent cell on real data."""
+    """Return the column index for `year`, appending a new column if needed.
+
+    A new column is placed immediately after the last used column and
+    both header rows are filled in. The header cells are set to the
+    "General" number format explicitly, because Excel otherwise copies
+    the format of the neighbouring cell (which may be a percentage).
+    The header row is read in a single range call.
+    """
     used = sheet.used_range
     max_col = used.last_cell.column
 
     header_row = sheet.range((YEAR_HEADER_ROW, FIRST_YEAR_COLUMN), (YEAR_HEADER_ROW, max_col)).value
     if not isinstance(header_row, list):
-        header_row = [header_row]  # a single-cell range returns a scalar, not a list
+        header_row = [header_row]  # a single-cell range returns a scalar
 
     for offset, cell_year in enumerate(header_row):
         if cell_year == year:
             return FIRST_YEAR_COLUMN + offset
 
-    # Not found -- append a new column right after the last one in use.
+    # Year not present: append a column after the last one in use.
     new_col = max_col + 1
     fiscal_cell = sheet.cells(FISCAL_HEADER_ROW, new_col)
     year_cell = sheet.cells(YEAR_HEADER_ROW, new_col)
@@ -94,45 +85,34 @@ def _find_town_indicator_row(
     sheet: "xw.Sheet", town: str, indicator: str, sub_label: str | None,
     section: str | None = None,
 ) -> int:
-    """Locate the row for `indicator` (optionally disambiguated by
-    `sub_label`) inside `town`'s block, scanning the WHOLE sheet and
-    raising if more than one match is found (this sheet genuinely has
-    same-name, same-indicator collisions across its LGA/SA2/UCL sections
-    -- confirmed on real data: Goondiwindi's 'Population (ERP)' differs
-    by 42% between its LGA and SA2 rows). Reads columns A:B in a single
-    bulk range read.
+    """Return the row of `indicator` within `town`'s block.
 
-    section: optional disambiguator, one of "LGA"/"SA2"/"UCL", for
-    sheets with multiple parallel geography-level sections. The sheet
-    marks each section with its own header row (column A = exactly
-    "LGA", "SA2", or "UCL", column B empty) -- this scan tracks which
-    section it's currently inside as it goes, and when `section` is
-    given, only counts a match if it's in that section. When section is
-    omitted, behaviour is unchanged from before: scans every section,
-    and still raises AMBIGUOUS rather than guessing if more than one
-    genuinely matches -- section is how you resolve that once you've
-    hit it, not a requirement for every call.
+    Scans the whole sheet and raises ValueError if no row, or more than
+    one row, matches. Columns A:B are read in a single range call.
+
+    sub_label: column B text, used to distinguish rows that share an
+        indicator name within one block.
+    section: "LGA", "SA2" or "UCL". Restricts the match to that
+        geography section. Sections are delimited by rows whose column
+        A holds the section name and whose column B is empty. When
+        omitted, every section is searched and an ambiguous match
+        raises.
     """
     used = sheet.used_range
     max_row = used.last_cell.row
 
     ab_values = sheet.range((FIRST_DATA_ROW, 1), (max_row, 2)).value
     if ab_values and not isinstance(ab_values[0], list):
-        ab_values = [ab_values]  # a single-row range returns a flat list, not nested
+        ab_values = [ab_values]  # a single-row range returns a flat list
 
     matches: list[int] = []
     in_town_block = False
     current_section: str | None = None
 
-    # BUG FIXED 2026-10-06: the FIRST section header can sit in the
-    # header rows ABOVE FIRST_DATA_ROW, where the scan below never looks.
-    # Confirmed on the real Population sheet: A2 = "LGA" (sharing the row
-    # with the calendar-year headers), so every row in the LGA section
-    # was scanned with current_section still None, and any call passing
-    # section="LGA" found nothing. Never hit before because no writer
-    # had asked for section="LGA" -- the first to need it is
-    # update_population_erp_lga.py. Seed the starting section from the
-    # header rows; calls that don't pass `section` are unaffected.
+    # The first section heading can sit in the header rows above
+    # FIRST_DATA_ROW (the Population sheet has "LGA" in A2, alongside the
+    # year headers), where the scan below does not look. Seed the current
+    # section from those rows.
     header_a = sheet.range((1, 1), (FIRST_DATA_ROW - 1, 1)).value
     if not isinstance(header_a, list):
         header_a = [header_a]
@@ -146,7 +126,7 @@ def _find_town_indicator_row(
         if col_a and col_b is None:
             if col_a in SECTION_LABELS:
                 current_section = col_a
-                in_town_block = False  # a section header is never itself a town row
+                in_town_block = False  # a section heading is never a region row
                 continue
             in_town_block = col_a == town
             continue
@@ -181,12 +161,10 @@ def _find_town_indicator_row(
 
 
 def read_existing_series(sheet: "xw.Sheet", row: int, exclude_col: int | None = None) -> dict[int, float]:
-    """Read every existing (year -> value) pair in `row`, using row 2's
-    headers to identify the year for each populated column. Skips
-    exclude_col (the target column being written to -- irrelevant to
-    "existing" history) and any column that isn't a plain number
-    (blank cells, or a stray note/formula result that isn't numeric --
-    those aren't part of a usable series for statistical comparison).
+    """Return the existing {year: value} pairs in `row`.
+
+    Years come from the calendar-year header row. `exclude_col` (the
+    column about to be written) and non-numeric cells are skipped.
     """
     used = sheet.used_range
     max_col = used.last_cell.column
@@ -211,11 +189,11 @@ _overrides_cache: list[dict] | None = None
 
 
 def _load_overrides() -> list[dict]:
-    """Load and cache regional-indicators/verified_overrides.toml --
-    specific (town, indicator, year, value) combinations independently
-    confirmed correct despite an audit flag. Cached at module level
-    since this is read on every write_one() call within a run; a
-    missing file just means no overrides are configured, not an error.
+    """Load and cache verified_overrides.toml.
+
+    Each entry records a (town, indicator, sub_label, year, value)
+    combination that has been verified independently and may be written
+    even though an audit flags it. A missing file means no overrides.
     """
     global _overrides_cache
     if _overrides_cache is not None:
@@ -233,12 +211,11 @@ def _load_overrides() -> list[dict]:
 
 
 def _check_override(town: str, indicator: str, sub_label: str | None, year: int, value) -> str | None:
-    """Returns the override's `reason` string if this exact
-    (town, indicator, sub_label, year, value) combination is a
-    confirmed override, else None. The value must match EXACTLY -- an
-    override doesn't apply just because the town/indicator/year line up;
-    if the fetched value changes, the override silently stops applying
-    and the flag returns, rather than trusting a stale confirmation.
+    """Return the override reason for an exact match, else None.
+
+    All of town, indicator, sub_label, year and value must match. If the
+    fetched value changes, the override no longer applies and the audit
+    flag is reported again.
     """
     for entry in _load_overrides():
         if (
@@ -256,40 +233,16 @@ def write_one(
     sheet, town: str, indicator: str, sub_label: str | None, year: int, value,
     source_series: dict | None = None, section: str | None = None,
 ):
-    """Shared audited-write helper: run both pre-write audits, write
-    only if clean. Returns (WriteAuditReport, cell_address).
+    """Audit and write one value. Returns (WriteAuditReport, cell_address).
 
-    source_series, when provided (a full freshly re-fetched history for
-    this town/indicator), enables the ground-truth historical
-    cross-check in audit.py's audit_historical_series -- comparing
-    every existing year against the real source value, rather than
-    guessing from the existing series' shape alone. Confirmed on real
-    data: this clears a false positive the shape-based check alone
-    produced (Isaac's 2012 NRW figure looked like an isolated miscopy
-    from its shape, but exactly matches the real source).
+    The value is written only when the audits pass, or when an exact
+    entry in verified_overrides.toml allows it.
 
-    section, when provided ("LGA"/"SA2"/"UCL"), disambiguates sheets
-    with multiple parallel geography-level sections that can share both
-    a town name and an indicator name -- e.g. Population's
-    'Population (ERP)' row exists in BOTH the LGA and SA2 sections for
-    Goondiwindi, with genuinely different values (confirmed 42%
-    difference). Without section, a genuine collision still raises
-    AMBIGUOUS rather than guessing -- this is how you resolve it once
-    you've hit it, not a requirement for every call.
-
-    Used by update_population_ucl.py and update_population_nrw.py
-    (UCL-level, no source_series -- those sources only give the latest
-    year), update_population_nrw_lga.py (LGA-level, source_series
-    available), and update_population_erp.py (SA2-level, section="SA2"
-    required to avoid the LGA-section collision).
-
-    If an audit flags the write, automatically checks
-    verified_overrides.toml for an exact (town, indicator, sub_label,
-    year, value) match before giving up -- an override lets a
-    specifically-confirmed figure through despite the flag, without
-    weakening the audit itself for anything else. See that file's own
-    header for the format and the verification standard expected before
-    adding an entry.
+    source_series: full {year: value} history from the source. When
+        given, existing workbook values are compared with it directly
+        (audit_historical_series), which replaces the shape-based
+        outlier check.
+    section: "LGA", "SA2" or "UCL"; see _find_town_indicator_row.
     """
     from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 
@@ -317,14 +270,12 @@ def write_one(
 
 
 def deep_audit_context(lga: str, lga_series: dict, flagged_years: list) -> str:
-    """For a flagged UCL entry, check whether the corresponding LGA's
-    own history shows a similar swing in the same year(s) -- a real
-    regional workforce event should show up at both levels; a
-    UCL-only blip is more likely a genuine data-entry error specific
-    to that cell. This is corroborating context, not a verdict --
-    still a human call, just a better-informed one. Confirmed on real
-    data: correctly shows Isaac LGA's +26% swing in 2012 corroborating
-    Moranbah's flagged UCL figure that year.
+    """Describe whether an LGA series corroborates a flagged UCL value.
+
+    A genuine regional change normally appears at both the urban-centre
+    and LGA level; a change confined to the urban-centre series is more
+    likely a data-entry error. The returned text is context for a
+    reviewer, not a decision.
     """
     if not lga_series or not flagged_years:
         return f"  [deep-audit] No LGA series available for {lga} to cross-check against."
@@ -358,13 +309,10 @@ def update_indicator_value(
     sub_label: str | None = None,
     visible: bool = False,
 ) -> str:
-    """Open xlsx_path in a real Excel instance, write `value` into the
-    cell for (town, indicator, year) on `sheet_name`, save, and close.
-    Single-call convenience wrapper (opens/closes its own Excel
-    instance) -- for a batch run over many towns, use write_one()
-    directly inside one shared Excel session instead (see
-    update_population_ucl.py / update_population_nrw.py for the
-    pattern), since starting Excel per call is needlessly slow.
+    """Write a single value, opening and closing its own Excel session.
+
+    Convenience wrapper for one-off writes. Batch writers should open
+    one Excel session and call write_one() for each value instead.
     """
     app = xw.App(visible=visible, add_book=False)
     app.display_alerts = False

@@ -8,10 +8,10 @@ dependencies = [
     "beautifulsoup4",
     "pandas",
     "openpyxl",
-    "xlwings",  # drives real Excel via COM for xlsx_update/ -- openpyxl was
-                # confirmed to corrupt the real workbook on save (see TODO.md),
-                # so xlwings is required, not optional, for that module.
-                # Requires a real Excel installation (Windows or Mac).
+    "xlwings",  # workbook writers (transform/xlsx_update/). The workbook is
+                # edited through Excel itself because openpyxl cannot
+                # round-trip it (see transform/xlsx_update/base.py).
+                # Requires Microsoft Excel (Windows or macOS).
     "lxml",
     "pypdfium2",
     "Pillow",
@@ -27,20 +27,21 @@ dev = [
     "responses",
 ]
 geo = [
-    "duckdb",
+    "duckdb",       # fetchers/fetch_sa2.py, fetchers/fetch_qld_tenure.py
+]
+maps = [
+    "geopandas",    # assemble_maps/postcode_plot.py
+    "matplotlib",
+    "contextily",
 ]
 
-# NOTE: this intentionally does NOT declare a [build-system] / packaging table
-# yet. The regional-indicators/ folder is not currently an importable package
-# (hyphens aren't valid in a Python package name) -- fetchers/base.py adds it
-# to sys.path directly instead. Renaming it to regional_indicators/ and making
-# this a proper installable package (pip install -e .) is on TODO.md under
-# Infrastructure. Until then, this file's job is just: pin dependencies in one
-# place, and configure pytest below.
+# No [build-system] table is declared: regional-indicators/ is not an
+# importable package (its name contains a hyphen), and the scripts add it to
+# sys.path themselves. This file declares the dependencies and configures
+# pytest.
 
 [tool.pytest.ini_options]
-# Lets tests do `from config import get_config` etc, the same way the
-# fetchers themselves import, without duplicating a sys.path hack in every
-# test file.
+# Tests import the pipeline modules (config, logger, fetchers, ...) in the
+# same way the scripts do.
 pythonpath = ["regional-indicators"]
 testpaths = ["tests"]

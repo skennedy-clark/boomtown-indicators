@@ -11,10 +11,12 @@ Steps, in order:
      reuses the existing cache.
   3. Run every writer in transform/xlsx_update/ against the working
      copy, one sheet at a time, each in its own Excel session.
-  4. Build the website folder from the working copy
+  4. Extend the chart series ranges to the new year
+     (transform/xlsx_update/update_charts.py).
+  5. Build the website folder from the working copy
      (transform/web_export.py), compared with an earlier export if
      --previous-web is given.
-  5. Print one line per step with its status and summary.
+  6. Print one line per step with its status and summary.
 
 A step that fails is recorded and the run continues, so a single run
 reports the state of every step. All output is also written to
@@ -32,6 +34,7 @@ Usage (from the repository root):
         [--previous-web <earlier export folder>]
         [--web-out "3 Web Content"]
         [--business-year 2025]      (default: the previous calendar year)
+        [--last-year 2025]          (default: the previous calendar year)
         [--skip-fetch] [--visible]
 """
 
@@ -177,6 +180,10 @@ def build_steps(args, test_copy: Path) -> list[tuple[str, list[str]]]:
         if args.visible:
             command.append("--visible")
         steps.append((name, command))
+    charts = [py, str(WRITERS / "update_charts.py"), str(test_copy), "--last-year", str(args.last_year)]
+    if args.visible:
+        charts.append("--visible")
+    steps.append(("Charts: series ranges", charts))
     web = [py, str(HERE / "transform" / "web_export.py"), str(test_copy), "--out", str(args.web_out)]
     if args.previous_web:
         web += ["--compare-with", str(args.previous_web)]
@@ -196,6 +203,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--business-year", type=int, default=datetime.now().year - 1,
                         help="year for the Business sheet (financial year ending in it); "
                              "default: last calendar year")
+    parser.add_argument("--last-year", type=int, default=datetime.now().year - 1,
+                        help="latest data year, used when extending chart ranges: data after it "
+                             "is treated as projections (default: last calendar year)")
     parser.add_argument("--skip-fetch", action="store_true", help="reuse what is already in cache/")
     parser.add_argument("--visible", action="store_true", help="show Excel while the writers run")
     args = parser.parse_args(argv)

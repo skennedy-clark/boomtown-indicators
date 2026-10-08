@@ -119,7 +119,8 @@ python regional-indicators/run_end_to_end.py "Indicators Data-Charts 2025.xlsx" 
 ```
 
 This copies the starting workbook to the working copy, runs every fetcher,
-runs every writer against the working copy, and builds the website folder
+runs every writer against the working copy, extends the chart ranges, and
+builds the website folder
 `3 Web Content`. Each step's command line is printed before it runs, so any
 step can be repeated on its own.
 
@@ -129,6 +130,7 @@ step can be repeated on its own.
 | `--previous-web <folder>` | an earlier website folder; differences from it are reported |
 | `--web-out <folder>` | where to build the website folder (default `3 Web Content`) |
 | `--business-year <year>` | year for the Business sheet: the calendar year in which the financial year ends (default: last calendar year) |
+| `--last-year <year>` | latest data year, used when extending chart ranges (default: last calendar year) |
 | `--skip-fetch` | reuse the existing cache; do not download |
 | `--visible` | show Excel while the writers run |
 
@@ -254,6 +256,25 @@ so Excel is not needed. `--reference <workbook>` adds the range each series
 has in a second workbook. The statuses are described in the module
 docstring.
 
+### Extend the chart ranges
+
+```bash
+python regional-indicators/transform/xlsx_update/update_charts.py "Indicators Data-Charts 2026.xlsx" \
+    --last-year 2025 --dry-run                      # list the changes
+python regional-indicators/transform/xlsx_update/update_charts.py "Indicators Data-Charts 2026.xlsx" \
+    --last-year 2025 --page Chinchilla              # one page
+python regional-indicators/transform/xlsx_update/update_charts.py "Indicators Data-Charts 2026.xlsx" \
+    --last-year 2025                                # every page
+```
+
+Runs the audit and applies its proposed ranges through Excel: series
+marked `EXTEND` are extended to the latest year, and series made of several
+separate areas are replaced by a single range. Only the ranges change;
+chart formatting is not touched. The audit is run again after saving, and
+any series still out of date is listed. This step is part of
+`run_end_to_end.py`, after the writers. It uses the Excel object model and
+has been written for Excel on Windows.
+
 ### Build a booklet
 
 ```bash
@@ -344,6 +365,7 @@ regional-indicators/
         xlsx_update/           one writer per sheet section
             base.py            locating rows and columns; writing through Excel
             audit.py           checks applied before each write
+            update_charts.py   extends chart series ranges to the latest year
         web_export.py          website CSV folder from the workbook
         chart_audit.py         lists chart series whose ranges need extending
         to_csv.py              website CSVs from the cache (earlier approach; web_export.py is the current export)
@@ -371,7 +393,6 @@ docs/                          manual processes; project proposal
 - **Coverage outside Queensland.** Several fetchers are Queensland-only.
   Narrabri is covered through separate New South Wales sources; the
   Victorian towns are configured but not covered for most indicators.
-- **Derived rows and charts.** Rows that the workbook calculates, benchmark
-  rows without a fetcher, and chart series ranges are not yet updated
-  automatically.
+- **Derived rows.** Rows that the workbook calculates and benchmark rows
+  without a fetcher are not yet updated automatically.
 - **Booklets.** Generation is in development.
