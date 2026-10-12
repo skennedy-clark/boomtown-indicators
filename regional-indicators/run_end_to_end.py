@@ -7,16 +7,29 @@ Steps, in order:
   1. Copy the starting workbook (last year's delivered workbook) to the
      working copy, replacing any existing working copy. The starting
      workbook is never modified.
-  2. Run every fetcher (run_update.py). Skipped with --skip-fetch, which
+  2. Copy any manual downloads from the data folder ("1 Data") into the
+     cache, where the fetchers look for them (transform/data_folder.py).
+  3. Run every fetcher (run_update.py). Skipped with --skip-fetch, which
      reuses the existing cache.
-  3. Run every writer in transform/xlsx_update/ against the working
+  4. Run every writer in transform/xlsx_update/ against the working
      copy, one sheet at a time, each in its own Excel session.
-  4. Bring the charts up to date: show the new year in every chart
+  5. Bring the charts up to date: show the new year in every chart
      whose data has it (transform/xlsx_update/update_charts.py).
-  5. Build the website folder from the working copy
+  6. Build the website folder from the working copy
      (transform/web_export.py), compared with an earlier export if
      --previous-web is given.
-  6. Print one line per step with its status and summary.
+  7. Build the data folder: every source file used, by topic, with
+     where it came from (transform/data_folder.py).
+  8. Print one line per step with its status and summary, and write a
+     plain-English run report listing everything flagged for checking.
+
+The year to add is the year after the starting workbook's latest year,
+but never a year that has not finished; --year overrides it. It is
+passed to every step through the BOOMTOWN_YEAR_END environment variable
+(see config.py). With --output-folder, the year's results are gathered
+in one folder: "1 Data", "2 Workbook" (the finished workbook, named for
+the year), "3 Web Content" and "Run report.txt". "Run annual update.bat"
+in the repository root runs this with sensible settings.
 
 A step that fails is recorded and the run continues, so a single run
 reports the state of every step. All output is also written to
@@ -32,7 +45,8 @@ Usage (from the repository root):
     python regional-indicators/run_end_to_end.py <starting workbook.xlsx>
         [--test-copy test-copy.xlsx]
         [--previous-web <earlier export folder>]
-        [--web-out "3 Web Content"]
+        [--output-folder <folder> | --output-root <folder>] [--open-report]
+        [--web-out "3 Web Content"] [--data-out "1 Data"] [--year <year>]
         [--business-year 2025]      (default: the previous calendar year)
         [--last-year 2025]          (default: the previous calendar year)
         [--skip-fetch] [--visible]
@@ -41,6 +55,7 @@ Usage (from the repository root):
 from __future__ import annotations
 
 import argparse
+import re
 import os
 import shutil
 import subprocess
@@ -59,6 +74,12 @@ RETRY_AFTER_EXCEL_ERROR_S = 15
 PAUSE_BETWEEN_EXCEL_STEPS_S = 3     # pause for Excel and file-sync clients to release the file
 SETTLE_AFTER_COPY_S = 10            # let a file-sync client finish with the new copy before Excel opens it
 STEP_TIMEOUT_MIN = {"fetch": 30, "excel": 15, "other": 10}
+
+# Output lines worth repeating in the run report: values not written,
+# things to do by hand, and errors.
+NOTE_MARKERS = ("FLAGGED", "SKIPPED", "MANUAL DOWNLOAD NEEDED", "NOT FOUND", "FAILED",
+                "no category for", "STILL OUT OF DATE", "Error", "not found")
+MAX_NOTES_PER_STEP = 200
 
 # (step name, writer script, cache folder), in sheet order.
 WRITER_STEPS = [
@@ -117,6 +138,7 @@ def run_step(name: str, command: list[str], log: Log, timeout_s: float | None = 
     crashed = False
     excel_error = False
     timed_out = threading.Event()
+    notes: list[str] = []
     # Child processes write to a pipe, where Python on Windows defaults to
     # the ANSI code page and fails on characters outside it. Force UTF-8 to
     # match the decoding below.
@@ -143,6 +165,8 @@ def run_step(name: str, command: list[str], log: Log, timeout_s: float | None = 
             elif stripped.startswith(("✓ Passed :", "✗ Failed :")):
                 # pass/fail totals printed by run_update.py
                 summary = (summary + ", " if summary else "") + stripped[2:].replace(" :", ":").lower()
+            if any(marker in stripped for marker in NOTE_MARKERS) and len(notes) < MAX_NOTES_PER_STEP:
+                notes.append(stripped)
             if "Traceback (most recent call last)" in line:
                 crashed = True
             if "pywintypes.com_error" in line:
@@ -165,7 +189,53 @@ def run_step(name: str, command: list[str], log: Log, timeout_s: float | None = 
         "summary": summary, "seconds": time.time() - started,
         "excel_error": excel_error and code != 0,
         "timed_out": timed_out.is_set(),
+        "notes": notes,
     }
+
+
+YEAR_HEADER_ROWS = (("Crime", 1), ("Exogenous", 1), ("Housing", 1), ("Employment", 2))
+
+
+def latest_year_in_workbook(path: Path) -> int | None:
+    """Return the latest year in the year headers of the starting
+    workbook's data sheets (Crime, Exogenous, Housing, Employment), or
+    None if it cannot be read. Projection years further ahead than the
+    current year are ignored."""
+    try:
+        import openpyxl
+        book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return None
+    this_year = datetime.now().year
+    found = []
+    try:
+        for sheet, row in YEAR_HEADER_ROWS:
+            if sheet not in book.sheetnames:
+                continue
+            cells = next(book[sheet].iter_rows(min_row=row, max_row=row, values_only=True), ())
+            years = [int(v) for v in cells
+                     if isinstance(v, (int, float)) and not isinstance(v, bool)
+                     and float(v).is_integer() and 1990 <= v <= this_year]
+            if years:
+                found.append(max(years))
+    finally:
+        book.close()
+    return max(found) if found else None
+
+
+def choose_data_year(latest_in_workbook: int | None, requested: int | None = None) -> tuple[int, str]:
+    """The year to add: the one after the starting workbook's latest year,
+    but never a year that has not finished. Returns (year, explanation)."""
+    last_complete = datetime.now().year - 1
+    if requested:
+        return requested, "as requested (--year)"
+    if latest_in_workbook is None:
+        return last_complete, "the last complete calendar year (the workbook's years could not be read)"
+    year = min(latest_in_workbook + 1, last_complete)
+    if year == latest_in_workbook:
+        return year, (f"the starting workbook already runs to {latest_in_workbook}, and {latest_in_workbook + 1} "
+                      f"has not finished: the run refreshes {year}")
+    return year, f"the year after the starting workbook's latest year, {latest_in_workbook}"
 
 
 def in_synced_folder(path: Path) -> bool:
@@ -201,9 +271,135 @@ def copy_starting_workbook(original: Path, test_copy: Path) -> str | None:
     return None
 
 
+PLAIN_NAMES = {
+    "Manual downloads": "Manual downloads copied in from the data folder",
+    "Fetch everything": "Downloading the latest figures",
+    "Charts": "Charts brought up to date",
+    "Website folder": "Website files (3 Web Content)",
+    "Data folder": "Source files gathered (1 Data)",
+}
+
+
+ANSI = re.compile(r"\x1b?\[[0-9;]{1,5}m")          # colour codes, with or without the escape character
+LOG_PREFIX = re.compile(r"^\d{2}:\d{2}:\d{2}\s+(INFO|WARNING|ERROR|DEBUG)\s+")
+MISSING_BLOCK = re.compile(r"^(.+?)(?: \(Table 6\))?: SKIPPED \(row-finding\) .*Could not find town '([^']+)'")
+NOTE_LENGTH = 240
+
+
+def report_notes(notes: list[str]) -> list[str]:
+    """Turn a step's flagged output lines into short, readable report lines.
+
+    Colour codes and log prefixes are removed, a line's technical detail
+    (after the first ' | ') is left to the log, routine status lines are
+    dropped, and towns that have no block in a sheet are listed together.
+    """
+    lines: list[str] = []
+    no_block: list[str] = []
+    for raw in notes:
+        cleaned = ANSI.sub("", raw).strip()
+        if re.match(r"^\d{2}:\d{2}:\d{2}\s+WARNING", cleaned):
+            continue
+        note = LOG_PREFIX.sub("", cleaned).strip()
+        if not note or note.startswith(("Summary:", "Status :", "Errors :")):
+            continue
+        missing = MISSING_BLOCK.match(note)
+        if missing:
+            if missing.group(2) not in no_block:
+                no_block.append(missing.group(2))
+            continue
+        note = note.split(" | ")[0]
+        if note.startswith("[LGA] "):
+            note = note[len("[LGA] "):]
+        if len(note) > NOTE_LENGTH:
+            note = note[:NOTE_LENGTH].rstrip() + "... (full text in the log)"
+        if note not in lines:
+            lines.append(note)
+    if no_block:
+        lines.append("Not in this sheet, so nothing written (expected for towns the sheet does not cover): "
+                     + ", ".join(no_block))
+    return lines
+
+
+def write_report(path: Path, results: list[dict], context: dict) -> None:
+    """Write a plain-English summary of the run for the person who owns
+    the workbook: what was produced, what needs checking, and where."""
+    failed = [r for r in results if not r["ok"] and r["name"] != "Fetch everything"]
+    fetch = next((r for r in results if r["name"] == "Fetch everything"), None)
+    lines = [
+        f"Indicators annual update - run report",
+        f"Run on {datetime.now():%d %B %Y at %H:%M}",
+        "",
+        f"Starting workbook : {context['original']}",
+        f"Year added        : {context['year']} ({context['year_reason']})",
+        "",
+        "RESULT",
+        "------",
+        ("Every step finished." if not failed else
+         f"{len(failed)} step(s) did not finish: " + ", ".join(r["name"] for r in failed) + ". "
+         "See the log for details; the other steps' results are still usable."),
+    ]
+    if fetch is not None and not fetch["ok"]:
+        lines.append("Some data sources could not be downloaded (see 'Downloading the latest figures' "
+                     "under PLEASE CHECK); the figures that come from them were not updated.")
+    lines += [
+        "",
+    ]
+    if context.get("outputs"):
+        lines += ["WHERE THE RESULTS ARE", "---------------------"]
+        lines += [f"  {label:<14} {where}" for label, where in context["outputs"]]
+        lines.append("")
+    lines += ["WHAT EACH STEP DID", "------------------"]
+    for r in results:
+        name = PLAIN_NAMES.get(r["name"], f"Workbook: {r['name']}")
+        if r["ok"]:
+            status = "done"
+        elif r["name"] == "Fetch everything":
+            status = "some sources unavailable"
+        else:
+            status = "DID NOT FINISH"
+        lines.append(f"  [{status}] {name}: {r['summary'] or '-'}")
+    lines.append("")
+
+    to_check = [(PLAIN_NAMES.get(r["name"], r["name"]), note)
+                for r in results for note in report_notes(r.get("notes", []))]
+    lines += ["PLEASE CHECK", "------------"]
+    if not to_check:
+        lines.append("  Nothing was flagged.")
+    else:
+        lines += [
+            "  These values were not written, or were written and marked for review (bold red in",
+            "  the workbook), because they did not pass the automatic checks, or something has to",
+            "  be done by hand. Check each against its source. A value that is right can be",
+            "  typed into the workbook, or recorded in verified_overrides.toml so it is written",
+            "  next time.",
+            "",
+        ]
+        current = None
+        for step, note in to_check:
+            if step != current:
+                lines.append(f"  {step}")
+                current = step
+            lines.append(f"    - {note}")
+    lines += [
+        "",
+        "BEFORE THE NEXT RUN",
+        "-------------------",
+        "  Close Excel. If a step did not finish, end any EXCEL.EXE processes in Task Manager.",
+        "  Manual downloads go in the data folder; each topic folder has a 'read me' saying",
+        "  what to download and from where. Runs can be repeated: each starts again from the",
+        "  starting workbook.",
+        "",
+        f"Full technical log: {context['log']}",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def build_steps(args, test_copy: Path) -> list[tuple[str, list[str]]]:
     py = sys.executable
     steps: list[tuple[str, list[str]]] = []
+    data_folder = [py, str(HERE / "transform" / "data_folder.py"), "--out", str(args.data_out)]
+    steps.append(("Manual downloads", data_folder + ["--import-manual"]))
     if not args.skip_fetch:
         steps.append(("Fetch everything", [py, str(HERE / "run_update.py")]))
     for name, script, cache in WRITER_STEPS:
@@ -221,6 +417,7 @@ def build_steps(args, test_copy: Path) -> list[tuple[str, list[str]]]:
     if args.previous_web:
         web += ["--compare-with", str(args.previous_web)]
     steps.append(("Website folder", web))
+    steps.append(("Data folder", data_folder))
     return steps
 
 
@@ -231,17 +428,42 @@ def main(argv: list[str] | None = None) -> int:
                         help="working copy to create and write into (default: test-copy.xlsx)")
     parser.add_argument("--previous-web", type=Path, default=None,
                         help="an earlier '3 Web Content' folder to compare the new one with")
-    parser.add_argument("--web-out", type=Path, default=REPO_ROOT / "3 Web Content",
-                        help="where to build the website folder (default: '3 Web Content')")
-    parser.add_argument("--business-year", type=int, default=datetime.now().year - 1,
+    parser.add_argument("--output-folder", type=Path, default=None,
+                        help="put everything for the year in this folder: '1 Data', '2 Workbook' "
+                             "(the finished workbook), '3 Web Content' and 'Run report.txt'")
+    parser.add_argument("--output-root", type=Path, default=None,
+                        help="create the output folder here, named 'Indicators update <year>' "
+                             "after the workbook it produces")
+    parser.add_argument("--open-report", action="store_true",
+                        help="open the run report when the run has finished (Windows)")
+    parser.add_argument("--web-out", type=Path, default=None,
+                        help="where to build the website folder (default: '3 Web Content' in the "
+                             "output folder, or in the repository)")
+    parser.add_argument("--data-out", type=Path, default=None,
+                        help="the data folder: source files, and manual downloads to use "
+                             "(default: '1 Data' in the output folder, or in the repository)")
+    parser.add_argument("--year", type=int, default=None,
+                        help="the data year to add (default: the year after the starting "
+                             "workbook's latest year, but not a year that has not finished)")
+    parser.add_argument("--business-year", type=int, default=None,
                         help="year for the Business sheet (financial year ending in it); "
-                             "default: last calendar year")
-    parser.add_argument("--last-year", type=int, default=datetime.now().year - 1,
-                        help="latest data year, used when extending chart ranges: data after it "
-                             "is treated as projections (default: last calendar year)")
+                             "default: the data year")
+    parser.add_argument("--last-year", type=int, default=None,
+                        help="latest data year, used when updating the charts: data after it "
+                             "is treated as projections (default: the data year)")
     parser.add_argument("--skip-fetch", action="store_true", help="reuse what is already in cache/")
     parser.add_argument("--visible", action="store_true", help="show Excel while the writers run")
     args = parser.parse_args(argv)
+
+    year, year_reason = choose_data_year(latest_year_in_workbook(args.original), args.year)
+    if args.output_root and not args.output_folder:
+        args.output_folder = args.output_root / f"Indicators update {year + 1}"
+    base = args.output_folder.resolve() if args.output_folder else REPO_ROOT
+    args.web_out = args.web_out or base / "3 Web Content"
+    args.data_out = args.data_out or base / "1 Data"
+    args.business_year = args.business_year or year
+    args.last_year = args.last_year or year
+    os.environ["BOOMTOWN_YEAR_END"] = str(year)             # read by config.py in every step
 
     original = args.original.resolve()
     test_copy = args.test_copy.resolve()
@@ -257,6 +479,8 @@ def main(argv: list[str] | None = None) -> int:
     log(f"Starting workbook : {original}")
     log(f"Test copy         : {test_copy}")
     log(f"Website folder    : {args.web_out}")
+    log(f"Data folder       : {args.data_out}")
+    log(f"Year added        : {year} ({year_reason})")
     log(f"Python            : {sys.version.split()[0]} ({sys.executable})")
 
     problem = copy_starting_workbook(original, test_copy)
@@ -315,6 +539,31 @@ def main(argv: list[str] | None = None) -> int:
         log("Excel did not finish one or more steps. Before running again, close Excel and end any")
         log("EXCEL.EXE processes left in Task Manager (Details tab): a hidden Excel from a failed")
         log("step keeps the working copy open, and the next step then waits on it.")
+    outputs = [("Data", args.data_out), ("Website", args.web_out)]
+    if args.output_folder:
+        finished = base / "2 Workbook" / f"Indicators Data-Charts {year + 1}.xlsx"
+        try:
+            finished.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(test_copy, finished)
+            outputs.insert(1, ("Workbook", finished))
+            log(f"Finished workbook copied to {finished}")
+        except OSError as exc:
+            outputs.insert(1, ("Workbook", test_copy))
+            log(f"Could not copy the finished workbook to {finished} ({exc}); it is at {test_copy}")
+        report = base / "Run report.txt"
+    else:
+        outputs.insert(1, ("Workbook", test_copy))
+        report = log.path.with_name(log.path.stem.replace("end_to_end", "run_report") + ".txt")
+    write_report(report, results, {
+        "original": original, "year": year, "year_reason": year_reason,
+        "outputs": outputs, "log": log.path,
+    })
+    log(f"Run report saved to {report}")
+    if args.open_report and hasattr(os, "startfile"):
+        try:
+            os.startfile(report)                              # Windows: opens in Notepad
+        except OSError:
+            pass
     log(f"Log saved to {log.path}")
     log.close()
     return 1 if failed else 0

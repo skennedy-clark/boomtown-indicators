@@ -63,12 +63,13 @@ def test_steps_are_fetch_then_every_writer_then_the_website(tmp_path):
     import run_end_to_end as e2e
 
     args = argparse.Namespace(skip_fetch=False, business_year=2025, last_year=2025, visible=True,
-                              web_out=tmp_path / "3 Web Content", previous_web=tmp_path / "old")
+                              web_out=tmp_path / "3 Web Content", previous_web=tmp_path / "old",
+                              data_out=tmp_path / "1 Data")
     steps = e2e.build_steps(args, tmp_path / "test-copy.xlsx")
     names = [name for name, _ in steps]
-    assert names[0] == "Fetch everything" and names[-1] == "Website folder"
-    assert len(names) == len(e2e.WRITER_STEPS) + 3
-    assert names[-2] == "Charts"                        # after every writer, before the website
+    assert names[:2] == ["Manual downloads", "Fetch everything"]
+    assert names[-3:] == ["Charts", "Website folder", "Data folder"]
+    assert len(names) == len(e2e.WRITER_STEPS) + 5
 
     commands = dict(steps)
     business = commands["Business"]
@@ -87,10 +88,10 @@ def test_skip_fetch_leaves_the_fetch_step_out(tmp_path):
     import run_end_to_end as e2e
 
     args = argparse.Namespace(skip_fetch=True, business_year=2025, last_year=2025, visible=False,
-                              web_out=tmp_path / "w", previous_web=None)
+                              web_out=tmp_path / "w", previous_web=None, data_out=tmp_path / "d")
     steps = e2e.build_steps(args, tmp_path / "t.xlsx")
-    assert steps[0][0] != "Fetch everything"
-    assert "--compare-with" not in steps[-1][1]
+    assert "Fetch everything" not in [name for name, _ in steps]
+    assert "--compare-with" not in dict(steps)["Website folder"]
 
 
 def test_refuses_to_overwrite_the_starting_workbook(tmp_path, capsys):
@@ -168,3 +169,73 @@ def test_a_working_copy_in_a_onedrive_folder_is_recognised(path, synced, monkeyp
     for name in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
         monkeypatch.delenv(name, raising=False)
     assert e2e.in_synced_folder(Path(path)) is synced
+
+
+def test_the_data_year_follows_the_starting_workbook_but_never_an_unfinished_year(monkeypatch):
+    import run_end_to_end as e2e
+
+    this_year = __import__("datetime").datetime.now().year
+    assert e2e.choose_data_year(this_year - 3)[0] == this_year - 2          # the year after the workbook's
+    assert e2e.choose_data_year(this_year - 1)[0] == this_year - 1          # cannot add a year still under way
+    assert e2e.choose_data_year(None)[0] == this_year - 1
+    assert e2e.choose_data_year(2019, requested=2021) == (2021, "as requested (--year)")
+
+
+def test_the_latest_year_is_read_from_the_data_sheets_headers(tmp_path):
+    import openpyxl
+    import run_end_to_end as e2e
+
+    wb = openpyxl.Workbook()
+    wb.active.title = "Crime"
+    wb["Crime"].append([None, None, 2022, 2023, 2024])
+    wb.create_sheet("Employment").append(["Smoothed"])
+    wb["Employment"].append([None, None, 2023, 2024, 2025])
+    wb.create_sheet("Population").append([None, None, 2040, 2050])        # projections: not read
+    path = tmp_path / "book.xlsx"
+    wb.save(path)
+    assert e2e.latest_year_in_workbook(path) == 2025
+    assert e2e.latest_year_in_workbook(tmp_path / "missing.xlsx") is None
+
+
+def test_a_run_into_an_output_folder_leaves_the_workbook_and_a_plain_report(tmp_path, monkeypatch):
+    import run_end_to_end as e2e
+
+    monkeypatch.setenv("BOOMTOWN_YEAR_END", "")                          # restored after the test
+    original = tmp_path / "Indicators Data-Charts 2026.xlsx"
+    original.write_bytes(b"PK-workbook")
+    monkeypatch.setattr(e2e, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(e2e, "SETTLE_AFTER_COPY_S", 0)
+    monkeypatch.setattr(e2e, "PAUSE_BETWEEN_EXCEL_STEPS_S", 0)
+    monkeypatch.setattr(e2e, "latest_year_in_workbook", lambda path: 2024)
+    flagged = _script(tmp_path, "w.py", 'print("Roma Crime: FLAGGED, not written - differs from the sheet")\n'
+                                        'print("Summary: 1 written, 1 flagged for review.")\n')
+    monkeypatch.setattr(e2e, "build_steps", lambda args, copy: [("Crime", [sys.executable, flagged])])
+
+    out = tmp_path / "Boomtown 2026"
+    assert e2e.main([str(original), "--test-copy", str(tmp_path / "work.xlsx"), "--output-folder", str(out)]) == 0
+    assert (out / "2 Workbook" / "Indicators Data-Charts 2026.xlsx").read_bytes() == b"PK-workbook"
+    report = (out / "Run report.txt").read_text()
+    assert "Year added        : 2025" in report
+    assert "Every step finished." in report
+    assert "Roma Crime: FLAGGED, not written" in report
+    assert e2e.os.environ["BOOMTOWN_YEAR_END"] == "2025"
+
+
+def test_report_lines_are_short_and_readable():
+    import run_end_to_end as e2e
+
+    notes = [
+        "13:52:53  \x1b[33mWARNING \x1b[0m    [Shepparton] SA2 213041536 not found in SALM data",
+        "13:52:53  [31mERROR   [0m    LGA file not found at C:\\cache\\salm_smoothed_lga.csv. Download it",
+        "Status : ✗ FAILED",
+        "[LGA] LGA file not found at C:\\cache\\salm_smoothed_lga.csv. Download it",
+        "Toowoomba (West): SKIPPED (row-finding) — Could not find town 'Toowoomba (West)' in sheet 'Crime'.",
+        "Yarram (Table 6): SKIPPED (row-finding) — Could not find town 'Yarram' in sheet 'Income'.",
+        "Summary: 223 charts now show the new year(s); 0 not found in Excel",
+        "Chinchilla weapons: WRITTEN but FLAGGED FOR REVIEW (2025 = 4.68) -> $AA$14 — SERIES: 3.9x | HISTORICAL note: 2001",
+    ]
+    assert e2e.report_notes(notes) == [
+        "LGA file not found at C:\\cache\\salm_smoothed_lga.csv. Download it",
+        "Chinchilla weapons: WRITTEN but FLAGGED FOR REVIEW (2025 = 4.68) -> $AA$14 — SERIES: 3.9x",
+        "Not in this sheet, so nothing written (expected for towns the sheet does not cover): Toowoomba (West), Yarram",
+    ]

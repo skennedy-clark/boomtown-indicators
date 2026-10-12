@@ -10,14 +10,17 @@ fetchers reuse an earlier download.
 
 from __future__ import annotations
 
-# Range of calendar years handled by the pipeline.
-YEAR_START = 2000
-YEAR_END   = 2025   # last data year; update at the start of each annual cycle.
-                     # transform/to_csv.py defines the same constant and must be kept in step.
-
 import hashlib
 import json
 import os
+from datetime import date
+
+# Range of calendar years handled by the pipeline. The last data year is
+# the previous calendar year, the latest complete year, unless the
+# BOOMTOWN_YEAR_END environment variable sets it; run_end_to_end.py sets
+# it from the starting workbook. No yearly edit is needed.
+YEAR_START = 2000
+YEAR_END   = int(os.environ.get("BOOMTOWN_YEAR_END") or date.today().year - 1)
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional

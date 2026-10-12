@@ -72,3 +72,9 @@ assemble_maps/**/*.cpg
 assemble_maps/**/*.shp.xml
 # Exception: towns.toml config IS committed — it's source, not data
 !towns.toml
+
+# ── Outputs of an annual run ──────────────────────────────────────────────────
+1 Data/
+3 Web Content/
+Indicators update */
+chart_audit.csv

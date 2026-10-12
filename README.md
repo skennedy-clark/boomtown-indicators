@@ -20,6 +20,12 @@ update:
 3. **Export** the website's CSV files from the workbook.
 4. **Build** the town booklets (in development).
 
+**To use it:** download the latest release from
+<https://github.com/skennedy-clark/boomtown-indicators/releases/latest>
+(**Assets → Source code (zip)**), unzip it outside OneDrive, and follow
+[`docs/annual_update_runbook.md`](docs/annual_update_runbook.md). The rest of
+this page is technical detail.
+
 ## Contents
 
 - [Requirements](#requirements)
@@ -101,10 +107,19 @@ repository root with the virtual environment active.
 
 ## Annual update
 
+**The simple way (Windows):** double-click `Run annual update.bat` and choose
+last year's finished workbook. Everything below happens automatically, and the
+results land in a folder `Indicators update <year>` next to that workbook. The
+one-page instructions for the workbook's owner are in
+[`docs/annual_update_runbook.md`](docs/annual_update_runbook.md).
+
+The rest of this section describes the same steps run by hand.
+
 ### 1. Prepare
 
-- Set `YEAR_END` in `regional-indicators/config.py` to the new data year
-  (and the matching constant in `regional-indicators/transform/to_csv.py`).
+- No code needs editing. The year to add is worked out from the starting
+  workbook (the year after its latest year, but never a year that has not
+  finished); `--year` overrides it.
 - Have last year's delivered workbook to hand. It is the starting point and
   is never modified; the pipeline works on a copy.
 - Close the workbook in Excel. If the files are in a synchronised folder
@@ -119,23 +134,30 @@ python regional-indicators/run_end_to_end.py "Indicators Data-Charts 2025.xlsx" 
 ```
 
 This copies the starting workbook to the working copy, runs every fetcher,
-runs every writer against the working copy, brings the charts up to date, and
-builds the website folder
+runs every writer against the working copy, brings the charts up to date,
+builds the website folder, and gathers every source file into the data folder
+`1 Data`
 `3 Web Content`. Each step's command line is printed before it runs, so any
 step can be repeated on its own.
 
 | Option | Meaning |
 |---|---|
 | `--test-copy <file>` | working copy to create and write into (default `test-copy.xlsx`); replaced if it exists |
+| `--output-folder <folder>` | put everything for the year in one folder: `1 Data`, `2 Workbook` (the finished workbook), `3 Web Content` and `Run report.txt` |
+| `--output-root <folder>` | as `--output-folder`, with the folder created inside this one and named `Indicators update <year>` |
+| `--year <year>` | the data year to add (default: worked out from the starting workbook) |
 | `--previous-web <folder>` | an earlier website folder; differences from it are reported |
 | `--web-out <folder>` | where to build the website folder (default `3 Web Content`) |
+| `--data-out <folder>` | the data folder: source files by topic, and the place for manual downloads (default `1 Data`) |
 | `--business-year <year>` | year for the Business sheet: the calendar year in which the financial year ends (default: last calendar year) |
 | `--last-year <year>` | latest data year, used when updating the charts (default: last calendar year) |
 | `--skip-fetch` | reuse the existing cache; do not download |
 | `--visible` | show Excel while the writers run |
 
 The run ends with one line per step, and the full output is saved to
-`regional-indicators/logs/end_to_end_<date>_<time>.log`.
+`regional-indicators/logs/end_to_end_<date>_<time>.log`. A plain-English run
+report (what was produced, and every value flagged for checking) is written
+to the output folder, or beside the log.
 
 ### 3. Review
 
@@ -153,8 +175,10 @@ Writers add the new year only. Where a source has revised earlier years,
 the differences are reported and the earlier values in the workbook are
 left as they are.
 
-Some figures have no automated source and are entered by hand; see
-`docs/manual_processes.md`.
+Some figures have no automated source. Before the run, put the manual
+downloads in the data folder (`1 Data/<topic>/`, each with a "read me" that
+says what to download and from where); the run copies them to where the
+fetchers look. See also `docs/manual_processes.md`.
 
 ## Running the steps individually
 
@@ -293,7 +317,7 @@ the published booklets.
 | File | Purpose |
 |---|---|
 | `regional-indicators/towns.toml` | Towns and benchmark regions with their geography codes (postcodes, SA2, LGA, police division, rainfall station). Adding a town or a benchmark region is an edit to this file; its header documents every field. |
-| `regional-indicators/config.py` | Year range (`YEAR_START`, `YEAR_END`), paths, `SILO_EMAIL`. |
+| `regional-indicators/config.py` | Year range (`YEAR_END` defaults to the last complete year; the end-to-end run sets it from the starting workbook), paths, `SILO_EMAIL`. |
 | `regional-indicators/web_export_map.csv` | One line per website CSV: town folder, file name, and the sheet, section, block and row it is read from. |
 | `regional-indicators/verified_overrides.toml` | Values checked by hand that are to be written despite an audit flag. |
 | `regional-indicators/manual_rainfall_data.toml` | Monthly rainfall for stations that are not in the SILO dataset. |
@@ -369,13 +393,14 @@ regional-indicators/
             update_charts.py   brings chart series up to the latest year
         web_export.py          website CSV folder from the workbook
         chart_audit.py         lists chart series that do not show the latest year
+        data_folder.py         builds the "1 Data" folder of source files
         to_csv.py              website CSVs from the cache (earlier approach; web_export.py is the current export)
         booklet/               booklet generation (Word)
     cache/                     downloads and fetched JSON (not in version control)
     logs/                      run logs (not in version control)
 tests/                         pytest suite
 assemble_maps/                 postcode boundary map utility
-docs/                          manual processes; project proposal
+docs/                          runbook, handover notes, manual processes, project proposal
 ```
 
 ## Known limitations

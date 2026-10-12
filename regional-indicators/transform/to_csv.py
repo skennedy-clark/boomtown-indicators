@@ -39,10 +39,7 @@ log = get_child_logger("regional-indicators", "to_csv")
 
 # ── Year range ─────────────────────────────────────────────────────────────────
 
-YEAR_START = 2000
-YEAR_END   = 2025   # update each cycle, together with YEAR_END in config.py
-                     # (the two constants are defined separately and must be
-                     # kept equal; nothing checks that they agree)
+from config import YEAR_START, YEAR_END                           # noqa: E402  (see config.py)
 ALL_YEARS  = [str(y) for y in range(YEAR_START, YEAR_END + 1)]
 
 
