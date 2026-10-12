@@ -22,6 +22,10 @@ are filtered out. Two kinds of change follow:
              group takes its axis labels from its own series, so a short
              category range keeps the new year off that group's axis.)
 
+A chart that shows an empty, unlabelled category after its data (a
+spacer column with no year in the header and no figure in any of the
+chart's series) has that category filtered out.
+
 Series with any other status are left as they are, and years with no
 figures stay hidden. Nothing else is changed: chart type, formatting,
 titles, axes and series names are not touched, and no chart is added or
@@ -152,13 +156,22 @@ class Change:
 class Plan:
     changes: list[Change]
     unhide: dict[tuple[str, str], set[int]]          # (page, chart position) -> years to show
+    hide: dict[tuple[str, str], set[int]] = None     # (page, chart position) -> spacer category positions
+
+    def __post_init__(self):
+        if self.hide is None:
+            self.hide = {}
+
+    @property
+    def charts(self) -> set[tuple[str, str]]:
+        return {(c.page, c.chart_at) for c in self.changes} | set(self.unhide) | set(self.hide)
 
     @property
     def pages(self) -> set[str]:
-        return {c.page for c in self.changes} | {page for page, _ in self.unhide}
+        return {page for page, _ in self.charts}
 
     def __bool__(self) -> bool:
-        return bool(self.changes or self.unhide)
+        return bool(self.changes or self.unhide or self.hide)
 
 
 def build_plan(series_list, pages: set[str] | None = None) -> Plan:
@@ -181,16 +194,29 @@ def build_plan(series_list, pages: set[str] | None = None) -> Plan:
         years = {y for y in (series.unhide_years or []) if y is not None}
         if years:
             unhide.setdefault((series.page, series.chart_at), set()).update(years)
-    return Plan(changes, unhide)
+
+    # A spacer category is filtered out only where every series in the
+    # chart has it blank.
+    blanks: dict[tuple[str, str], set[int]] = {}
+    for series in series_list:
+        if pages is not None and series.page not in pages:
+            continue
+        key = (series.page, series.chart_at)
+        positions = set(getattr(series, "blank_positions", None) or [])
+        blanks[key] = positions if key not in blanks else blanks[key] & positions
+    hide = {key: positions for key, positions in blanks.items() if positions}
+    return Plan(changes, unhide, hide)
 
 
 def plan_lines(plan: Plan) -> list[str]:
     lines = []
-    charts = sorted({(c.page, c.chart_at) for c in plan.changes} | set(plan.unhide))
-    for page, chart_at in charts:
+    for page, chart_at in sorted(plan.charts):
         years = sorted(plan.unhide.get((page, chart_at), ()))
         if years:
             lines.append(f"{page} {chart_at}: show {', '.join(str(y) for y in years)}")
+        if plan.hide.get((page, chart_at)):
+            lines.append(f"{page} {chart_at}: hide the empty, unlabelled category at position(s) "
+                         f"{', '.join(str(n) for n in sorted(plan.hide[(page, chart_at)]))}")
         for change in (c for c in plan.changes if (c.page, c.chart_at) == (page, chart_at)):
             lines.append(
                 f"{change.label}: extend {change.old_values} -> {change.values}"
@@ -334,6 +360,27 @@ def show_years(chart, years: set[int]) -> tuple[set[int], str]:
     return found, ""
 
 
+def hide_spacers(chart, positions: set[int]) -> tuple[int, str]:
+    """Filter out the categories at `positions` (1-based) when they have
+    no year label. Returns (number hidden, problem or "")."""
+    hidden = 0
+    try:
+        for group in _items(chart.ChartGroups()):
+            members = list(_items(group.FullCategoryCollection()))
+            for position in sorted(positions):
+                if position > len(members):
+                    continue
+                category = members[position - 1]
+                if category_year(_read(lambda: category.Name, "")) is not None:
+                    continue                                   # labelled: not a spacer
+                if not category.IsFiltered:
+                    category.IsFiltered = True
+                    hidden += 1
+    except Exception as exc:
+        return hidden, f"the chart's category filter could not be changed ({exc})"
+    return hidden, ""
+
+
 def update_page(page: str, chart_objects, plan: Plan, resolve=None) -> tuple[list[str], Counter]:
     """Apply the plan to the charts of one page.
 
@@ -396,9 +443,20 @@ def update_page(page: str, chart_objects, plan: Plan, resolve=None) -> tuple[lis
                     f"on the chart's axis"
                 )
 
+        positions = plan.hide.get((page, where))
+        if positions:
+            hidden, problem = hide_spacers(chart, positions)
+            if problem:
+                counts["failed"] += 1
+                results.append(f"{page} {where}: FAILED, {problem}")
+            elif hidden:
+                counts["charts_tidied"] += 1
+                results.append(f"{page} {where}: hid {hidden} empty, unlabelled categor{'y' if hidden == 1 else 'ies'}")
+
     missed = [c for c in index.changes if c not in applied]
     counts["not_found"] = len(missed)
-    unseen_charts = sorted(chart_at for (p, chart_at) in plan.unhide if p == page and chart_at not in seen)
+    unseen_charts = sorted({chart_at for (p, chart_at) in set(plan.unhide) | set(plan.hide)
+                            if p == page and chart_at not in seen})
     counts["not_found"] += len(unseen_charts)
     if missed or unseen_charts:
         results.append(
@@ -435,7 +493,7 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
         f"{len(in_scope)} series in {len({(s.page, s.chart_at) for s in in_scope})} charts on "
         f"{len({s.page for s in in_scope})} page(s): "
         f"{statuses.get('UNHIDE', 0)} need filtered years shown, {statuses.get('EXTEND', 0)} need a longer range; "
-        f"{len(plan.unhide)} charts to change."
+        f"{len(plan.charts)} charts to change."
     ]
     left_alone = {k: v for k, v in statuses.items() if k not in CHANGE_STATUSES and k != "OK"}
     if left_alone:
@@ -443,7 +501,7 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
 
     if dry_run:
         results += plan_lines(plan)
-        results += ["", f"Summary: {len(plan.unhide)} charts would be changed (dry run, nothing written)."]
+        results += ["", f"Summary: {len(plan.charts)} charts would be changed (dry run, nothing written)."]
         return results, 0
     if not plan:
         results += ["", "Summary: 0 charts changed, 0 flagged for review."]
@@ -468,7 +526,7 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
                 lines, counts = update_page(page, page_charts(wb.sheets[page].api), plan, resolve)
                 results += lines
                 totals += counts
-            if totals["extended"] or totals["charts_shown"]:
+            if totals["extended"] or totals["charts_shown"] or totals["charts_tidied"]:
                 wb.save()
         finally:
             wb.close()
@@ -476,7 +534,7 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
         app.quit()
 
     remaining = []
-    if totals["extended"] or totals["charts_shown"]:
+    if totals["extended"] or totals["charts_shown"] or totals["charts_tidied"]:
         remaining = [
             s for s in audit(xlsx_path, last_year)
             if (pages is None or s.page in pages) and s.status in CHANGE_STATUSES
@@ -490,7 +548,8 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
     results += [
         "",
         f"Summary: {totals['charts_shown']} charts now show the new year(s), "
-        f"{totals['extended']} series ranges extended; {flagged} flagged for review "
+        f"{totals['extended']} series ranges extended, {totals['charts_tidied']} charts had empty "
+        f"spacer categories hidden; {flagged} flagged for review "
         f"({totals['failed']} could not be changed, {totals['not_found']} not found in Excel, "
         f"{len(remaining)} series still out of date after saving).",
     ]

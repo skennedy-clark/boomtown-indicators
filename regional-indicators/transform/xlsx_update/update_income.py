@@ -9,8 +9,11 @@ Input:  cache/ato/<slug>_income.json      (ATO Table 8, fetch_income.py)
 Target: the Income sheet.
 
 Sheet layout:
-  Row 1  fiscal-year labels ("2000/01", ...) from column C. There is no
-         calendar-year header row; row 2 holds column headings.
+  Row 1  fiscal-year labels ("2000/01", ...) from column C.
+  Row 2  column headings, and over the recent year columns the calendar
+         year (2021, 2022, ...), which the charts' year axis reads. A new
+         year column gets its calendar year here when the column before
+         it has one.
   Each town is a block of twelve rows: the town name, its postcode
   (a number in column A), then ten indicator rows in a fixed order.
   A "State" section follows the towns, with a three-row block per state
@@ -107,6 +110,7 @@ def _find_year_column(sheet, year: int) -> int:
             # label "2022/23" corresponds to year 2023.
             end_year = int(label.split("/")[0]) + 1
             if end_year == year:
+                _fill_calendar_year(sheet, col, year)
                 return col
             last_year_col = col
 
@@ -121,7 +125,23 @@ def _find_year_column(sheet, year: int) -> int:
     year_cell = sheet.cells(YEAR_HEADER_ROW, new_col)
     year_cell.value = _fiscal_label(year)
     year_cell.number_format = "General"
+    _fill_calendar_year(sheet, new_col, year)
     return new_col
+
+
+CALENDAR_YEAR_ROW = 2
+
+
+def _fill_calendar_year(sheet, col: int, year: int) -> None:
+    """Write `year` into row 2 of `col` if row 2 holds the previous year
+    in the column before and nothing in this one."""
+    cell = sheet.cells(CALENDAR_YEAR_ROW, col)
+    if cell.value not in (None, ""):
+        return
+    previous = sheet.cells(CALENDAR_YEAR_ROW, col - 1).value
+    if isinstance(previous, (int, float)) and not isinstance(previous, bool) and int(previous) == year - 1:
+        cell.value = year
+        cell.number_format = "General"
 
 
 def _find_income_town_row(sheet, town_name: str, expected_postcode: str) -> int:

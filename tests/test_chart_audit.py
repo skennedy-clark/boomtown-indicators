@@ -93,6 +93,10 @@ def workbook(tmp_path):
     biz.append(["Roma"])
     biz.append(["Average price"] + [150 + i for i in range(7)])
 
+    crime = wb.create_sheet("Crime")
+    crime.append([None] + list(range(2021, 2026)) + [None])                       # G1 is a spacer, no year
+    crime.append(["Drug offences"] + [10 + i for i in range(5)] + [None])
+
     page = wb.create_sheet("Roma")
     _chart(page, "B2", [                                                          # chart1
         ("Residents", "Population!$C$4:$K$4", "Population!$C$1:$K$1"),           # data continues to 2025
@@ -114,6 +118,7 @@ def workbook(tmp_path):
     _chart(page, "T20", [("Stitched", "(Population!$C$4:$J$4,Population!$N$4)",
                           "(Population!$C$1:$J$1,Population!$N$1)")])                          # chart6
     _chart(page, "AC2", [("Short axis", "Population!$C$4:$K$4", "Population!$C$1:$K$1")])      # chart7
+    _chart(page, "AC20", [("Spacer", "Crime!$B$2:$G$2", "Crime!$B$1:$G$1")])                   # chart8
 
     path = tmp_path / "book.xlsx"
     wb.save(path)
@@ -135,7 +140,7 @@ def test_every_series_is_listed_with_its_page_and_position(workbook):
     from chart_audit import audit
 
     series = audit(workbook, last_year=2025)
-    assert len(series) == 11
+    assert len(series) == 12
     assert {s.page for s in series} == {"Roma"}
     assert [s.chart_at for s in series][:2] == ["B2", "B2"]
     assert [s.series_no for s in series if s.chart_at == "B2"] == [1, 2]
@@ -176,6 +181,13 @@ def test_a_category_range_that_stops_short_of_the_data_is_extended(audited):
     assert s.proposed_values == s.values == "Population!$C$4:$N$4"
     assert s.proposed_categories == "Population!$C$1:$N$1"
     assert s.unhide_years == [2025]
+
+
+def test_an_empty_unlabelled_column_after_the_data_is_listed_as_a_spacer(audited):
+    s = audited["Spacer"]
+    assert s.status == "ENDS_PAST_DATA"
+    assert s.blank_positions == [6]                       # column G is the 6th category of B..G
+    assert audited["Miles"].blank_positions == []
 
 
 def test_an_up_to_date_range_is_left_alone(audited):
@@ -247,10 +259,10 @@ def test_the_csv_has_one_line_per_series_and_the_workbook_is_unchanged(workbook,
     assert main([str(workbook), "--out", str(out), "--last-year", "2025", "--reference", str(workbook)]) == 0
     with open(out, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
-    assert len(rows) == 11
+    assert len(rows) == 12
     assert {r["status"] for r in rows} == {
         "OK", "EXTEND", "UNHIDE", "PROJECTION", "ENDS_PAST_DATA", "MULTI_AREA", "UNRESOLVED"}
     assert all(r["reference_values"] == r["shown_values"] for r in rows)
     assert next(r for r in rows if r["series_name"] == "Stitched")["unhide_years"] == "2024 2025"
     assert workbook.read_bytes() == before
-    assert "11 of 11 series paired" in capsys.readouterr().out
+    assert "12 of 12 series paired" in capsys.readouterr().out

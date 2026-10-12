@@ -72,11 +72,11 @@ def fake_chart(address, *series, cats=()):
 
 
 def audited(page, values, categories, status, proposed_values="", proposed_categories="",
-            chart_at="B2", series_no=1, name="s", unhide=()):
+            chart_at="B2", series_no=1, name="s", unhide=(), blanks=()):
     return SimpleNamespace(
         page=page, chart_at=chart_at, series_no=series_no, series_name=name, values=values,
         categories=categories, status=status, proposed_values=proposed_values,
-        proposed_categories=proposed_categories, unhide_years=list(unhide),
+        proposed_categories=proposed_categories, unhide_years=list(unhide), blank_positions=list(blanks),
     )
 
 
@@ -243,6 +243,29 @@ def test_a_year_missing_from_the_axis_and_a_missing_chart_are_reported():
     assert counts["not_found"] == 1
 
 
+def test_a_spacer_is_hidden_only_where_every_series_in_the_chart_is_blank():
+    from update_charts import build_plan
+
+    plan = build_plan([
+        audited("Roma", "Crime!$D$5:$AB$5", "Crime!$D$1:$AB$1", "ENDS_PAST_DATA", chart_at="B2", blanks=[25]),
+        audited("Roma", "Crime!$D$9:$AB$9", "Crime!$D$1:$AB$1", "ENDS_PAST_DATA", chart_at="B2", blanks=[25]),
+        audited("Roma", "Crime!$D$5:$AB$5", "Crime!$D$1:$AB$1", "ENDS_PAST_DATA", chart_at="K2", blanks=[25]),
+        audited("Roma", "Crime!$D$7:$AC$7", "Crime!$D$1:$AC$1", "OK", chart_at="K2", blanks=[]),
+    ])
+    assert plan.hide == {("Roma", "B2"): {25}}
+
+
+def test_spacer_categories_are_filtered_out_but_labelled_years_are_not():
+    from update_charts import build_plan, update_page
+
+    plan = build_plan([audited("Roma", "Crime!$D$5:$G$5", "Crime!$D$1:$G$1", "ENDS_PAST_DATA", blanks=[3, 4])])
+    cats = categories("2024", "2025", "", "2027")
+    results, counts = update_page("Roma", [fake_chart("$B$2", FakeSeries("=SERIES(,Crime!$D$1:$G$1,Crime!$D$5:$G$5,1)"),
+                                                      cats=cats)], plan)
+    assert [c.IsFiltered for c in cats] == [False, False, True, False]
+    assert counts["charts_tidied"] == 1 and "hid 1 empty" in results[0]
+
+
 def test_charts_inside_grouped_shapes_are_included():
     from update_charts import MSO_GROUP, page_charts
 
@@ -269,3 +292,4 @@ def test_dry_run_lists_changes_without_opening_excel(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="No charts on page"):
         update_charts.update_charts(tmp_path / "book.xlsx", {"Nowhere"}, 2025, dry_run=True)
+

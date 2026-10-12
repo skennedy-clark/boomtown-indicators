@@ -49,6 +49,12 @@ calendar years (2025) or as financial-year labels ("2024/25", read as
 Education on the Exogenous sheet) are therefore read against that header
 and not against the top of the sheet.
 
+Spacer columns: a shown column after the row's figures that has neither
+a year in the header nor a figure draws an empty, unlabelled slot at the
+end of the chart's axis. Its position in the category range is listed
+(blank_positions) so that the chart step can filter it out when no
+series in the chart has a figure there.
+
 Which years are missing: starting from the last shown column that has a
 figure, the run of numeric cells is followed to the right until the
 first empty cell or the cut-off year. The years in that run that the
@@ -110,7 +116,7 @@ CSV_COLUMNS = [
     "data_sheet", "row", "row_label", "sub_label", "block",
     "values", "categories", "shown_values", "range_from_year", "range_to_year",
     "data_to_year", "status", "proposed_values", "proposed_categories",
-    "unhide_years", "reference_values", "note",
+    "unhide_years", "blank_positions", "reference_values", "note",
 ]
 
 
@@ -158,6 +164,7 @@ class Series:
     proposed_values: str = ""
     proposed_categories: str = ""
     unhide_years: list[int] = field(default_factory=list)
+    blank_positions: list[int] = field(default_factory=list)   # shown categories with no year and no figure
     reference_values: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -165,6 +172,7 @@ class Series:
         row = {name: getattr(self, name, "") for name in CSV_COLUMNS if name != "note"}
         row["note"] = "; ".join(self.notes)
         row["unhide_years"] = " ".join(str(y) for y in self.unhide_years)
+        row["blank_positions"] = " ".join(str(n) for n in self.blank_positions)
         return {k: ("" if v is None else v) for k, v in row.items()}
 
 
@@ -470,6 +478,18 @@ def assess(series: Series, cells: Cells, last_year: int) -> None:
     if series.shown_values and normalise_reference(series.shown_values) != normalise_reference(series.values):
         series.notes.append("chart filter: " + describe_columns(sorted(shown), area.col1, area.col2))
     shown_end = max(shown)
+
+    # Shown columns after the row's figures that have neither a year in
+    # the header nor a figure (spacer columns). They draw an empty, unlabelled
+    # slot at the end of the axis; their positions in the category range
+    # are recorded so that the chart can filter them out.
+    cat_areas = parse_reference(series.categories) if series.categories else None
+    cat_start = cat_areas[0].col1 if cat_areas and len(cat_areas) == 1 else area.col1
+    last_figure = max((c for c in shown if has_data(c)), default=0)
+    series.blank_positions = [
+        c - cat_start + 1 for c in sorted(shown)
+        if c > last_figure and year_at(c) is None and not has_data(c) and c >= cat_start
+    ]
     shown_years = [year_at(c) for c in sorted(shown) if year_at(c) is not None]
     series.range_from_year = shown_years[0] if shown_years else None
     series.range_to_year = shown_years[-1] if shown_years else None
