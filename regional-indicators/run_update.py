@@ -254,6 +254,14 @@ def main():
     results:    list[FetchResult] = []
     run_start = time.time()
 
+    # --towns: restrict every fetcher to the named towns. All fetchers share
+    # one configuration object, so the filter is applied to it once.
+    if args.towns:
+        shared_config = get_config()
+        every_study_town = shared_config.study_towns
+        wanted = set(args.towns)
+        shared_config.study_towns = lambda: [t for t in every_study_town() if t.name in wanted]
+
     for name, FetcherClass in to_run.items():
         log.info(f"\n{'─' * 40}")
         log.info(f"Running: {name}")
@@ -261,16 +269,6 @@ def main():
 
         try:
             fetcher = FetcherClass(force=args.force)
-
-            # Apply --towns filter if specified
-            if args.towns:
-                # Restrict the run to the named towns.
-                original_study = fetcher.config.study_towns
-                specified = args.towns
-                fetcher.config.study_towns = lambda: [
-                    t for t in original_study()
-                    if t.name in specified
-                ]
 
             result = fetcher.run()
             results.append(result)

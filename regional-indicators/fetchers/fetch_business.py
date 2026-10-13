@@ -157,7 +157,8 @@ def _discover_current_release(log) -> str:
     return ABS_RELEASE
 
 # SA2 codes for every region the Business sheet tracks (see the module
-# docstring for how they were established).
+# docstring for how they were established). The SA2 of any study town in
+# towns.toml that is not listed here is added at run time (see regions()).
 SA2_REGIONS = {
     "Broadsound-Nebo":            [312011338],
     "Chinchilla":                 [307011172],
@@ -220,8 +221,32 @@ class ABSBusinessFetcher(BaseFetcher):
             self.result.add_error("ALL", "No data rows parsed from Table 1")
             return
 
-        for region_name, sa2_codes in SA2_REGIONS.items():
+        for region_name, sa2_codes in self.regions().items():
+            if region_name not in SA2_REGIONS and not any(code in by_sa2 for code in sa2_codes):
+                # A town added in towns.toml whose SA2 is not in this table:
+                # reported, but not counted as a failure of the fetch.
+                self.log.warning(f"  [{region_name}] SA2 {sa2_codes[0]} (from towns.toml) is not in "
+                                 f"the business counts table -- skipped")
+                continue
             self._write_region(region_name, sa2_codes, by_sa2)
+
+    def regions(self) -> dict[str, list[int]]:
+        """SA2_REGIONS, plus the SA2 of every study town in towns.toml that
+        is not already covered, so that a town added to towns.toml is
+        fetched without a code change."""
+        regions = dict(SA2_REGIONS)
+        covered = {code for codes in regions.values() for code in codes}
+        for town in self.config.study_towns():
+            if not (town.sa2_code and town.sa2_name):
+                continue
+            try:
+                code = int(town.sa2_code)
+            except ValueError:
+                continue
+            if code not in covered and town.sa2_name not in regions:
+                regions[town.sa2_name] = [code]
+                covered.add(code)
+        return regions
 
     def _parse_table(self, ws) -> dict:
         """Return {sa2_code: {"NPP": {band: count}, "PP": {band: count}}}.

@@ -316,6 +316,76 @@ sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-t
 notes            = "West Toowoomba SA2 sub-area"
 
 
+# ─── QUEENSLAND TOWNS ADDED IN 2026 ─────────────────────────────────────────
+# Codes from the ABS ASGS 2021 boundaries (SA2, SA3, LGA, postal area and UCL
+# found from each town's coordinates), police divisions from the QPS division
+# offence-rate file, and rainfall stations from the SILO station list.
+# Each rainfall station is the nearby SILO station with the longest record that
+# is still reporting: Emerald Airport (35264, since 1993; the Post Office station
+# 35027 closed in 1991), Mitchell Post Office (43020, since 1889) and Charleville
+# Aero (44021, since 1943; the Post Office station 44022 closed in 1959).
+# csg_notice_year is set to the median of the existing towns (2009), to be checked.
+
+[towns.emerald]
+name             = "Emerald"
+state            = "QLD"
+postcode         = "4720"
+postcodes        = ["4720"]
+sa2_code         = "308011192"
+qgso_sa2         = "308011192"
+qgso_lga         = "LGA/32270"
+sa2_name         = "Emerald"
+sa3_code         = "30801"
+lga              = "Central Highlands (Qld)"
+qps_division     = "Emerald"
+bom_station      = "35264"
+csg_notice_year  = 2009
+benchmark        = false
+district         = "Emerald and District"
+cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-emerald.pdf"
+notes            = "UCL 'Emerald'. Rainfall: Emerald Airport (035264); the Post Office station (035027) is the alternative with a longer record."
+
+[towns.mitchell]
+name             = "Mitchell"
+state            = "QLD"
+postcode         = "4465"
+postcodes        = ["4465"]
+sa2_code         = "307011177"
+qgso_sa2         = "307011177"
+qgso_lga         = "LGA/34860"
+sa2_name         = "Roma Surrounds"
+sa3_code         = "30701"
+lga              = "Maranoa"
+qps_division     = "Mitchell"
+bom_station      = "43020"
+csg_notice_year  = 2009
+benchmark        = false
+district         = "Mitchell and District"
+cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-roma-surrounds.pdf"
+notes            = "Mitchell has no SA2 of its own: it lies in Roma Surrounds (307011177), which it shares with Wallumbilla, so SA2 figures are the same for both towns. UCL 'Mitchell (L)' (bounded locality)."
+
+[towns.charleville]
+name             = "Charleville"
+state            = "QLD"
+postcode         = "4470"
+postcodes        = ["4470"]
+sa2_code         = "315031409"
+qgso_sa2         = "315031409"
+qgso_lga         = "LGA/35600"
+sa2_name         = "Charleville"
+sa3_code         = "31503"
+lga              = "Murweh"
+qps_division     = "Charleville"
+bom_station      = "44021"
+csg_notice_year  = 2009
+benchmark        = false
+district         = "Charleville and District"
+cover_photo      = "cover.jpg"
+sa2_map_url      = "https://www.qgso.qld.gov.au/issues/10696/qld-sa2-asgs-2021-charleville.pdf"
+notes            = "UCL 'Charleville'. Rainfall: Charleville Aero (044021); the Post Office station (044022) is the alternative."
+
 # ─── BENCHMARKS ─────────────────────────────────────────────────────────────
 # benchmark = true marks comparison regions, which are not study towns.
 # Town-level fetchers skip them; LGA-level fetchers include them.

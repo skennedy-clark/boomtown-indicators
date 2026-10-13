@@ -92,7 +92,7 @@ REGIONS = {
             "non-resident-population-queensland-resource-regions/"
             "bowen-galilee-basins"
         ),
-        "lgas": ["Isaac"],
+        "lgas": ["Isaac", "Central Highlands"],
         "nrw_lga_url": (
             "https://www.qgso.qld.gov.au/issues/3341/"
             "bowen-basin-population-report-tables-non-resident-workers-"
@@ -108,6 +108,18 @@ REGIONS = {
 }
 
 
+def lga_key(name: str) -> str:
+    """Compare LGA names as QGSO and the ABS write them: 'Central Highlands'
+    in the QGSO tables is 'Central Highlands (Qld)' in ABS names and
+    towns.toml. Footnote markers such as '(c)' are ignored too."""
+    text = re.sub(r"\((qld|[a-z])\)", "", (name or "").lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def in_lgas(name: str, lgas: list[str]) -> bool:
+    return lga_key(name) in {lga_key(l) for l in lgas}
+
+
 class QGSOPopulationNRWFetcher(BaseFetcher):
 
     SOURCE_NAME      = "population_nrw"
@@ -118,7 +130,7 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
 
         for region_key, region in REGIONS.items():
             towns_in_region = [
-                t for t in self.applicable_towns() if t.lga in region["lgas"]
+                t for t in self.applicable_towns() if in_lgas(t.lga, region["lgas"])
             ]
             if not towns_in_region:
                 continue
@@ -139,7 +151,7 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
 
         for town in self.applicable_towns():
             region_key = next(
-                (k for k, r in REGIONS.items() if town.lga in r["lgas"]), None
+                (k for k, r in REGIONS.items() if in_lgas(town.lga, r["lgas"])), None
             )
             if region_key is None or region_key not in region_data:
                 continue
@@ -418,7 +430,7 @@ class QGSOPopulationNRWFetcher(BaseFetcher):
 
         lga_series = None
         for key in nrw_lga:
-            if key.lower() == town.lga.lower():
+            if lga_key(key) == lga_key(town.lga):
                 lga_series = nrw_lga[key]
                 break
 
