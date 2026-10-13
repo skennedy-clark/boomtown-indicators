@@ -98,11 +98,11 @@ RESOURCE_PAGE  = (
 )
 
 # Update each cycle. Fallback only, used when scraping the resource page
-# fails. This is the December quarter 2025 release.
+# fails. This is the June quarter 2026 release.
 FALLBACK_CSV_URL = (
     "https://www.dewr.gov.au/download/17068/"
-    "salm-smoothed-sa2-datafiles-asgs-2021-december-quarter-2025/"
-    "42403/salm-smoothed-sa2-datafiles-asgs-2021-december-quarter-2025/csv"
+    "salm-smoothed-sa2-datafiles-asgs-2021-june-quarter-2026/"
+    "43876/salm-smoothed-sa2-datafiles-asgs-2021-june-quarter-2026/csv"
 )
 
 CACHE_KEY = "salm_smoothed_sa2"
