@@ -68,7 +68,7 @@ last quarter in each file so that a stale file is visible.
 Notes: towns are matched on the sa2_code field in towns.toml (ASGS 2021
 Edition 3). Shepparton's sa2_code is not a valid ASGS 2021 code; the
 town spans "Shepparton - North" (216031416) and "Shepparton - South
-East" (216031594) and has no single SA2, so it is reported as failed.
+East" (216031594) and has no single SA2, so it is reported as a warning.
 """
 
 from __future__ import annotations
@@ -507,8 +507,10 @@ class SALMUnemploymentFetcher(BaseFetcher):
         rec = data.get(sa2)
         annual = rec[1] if rec else None
         if not annual:
+            # A town code problem (towns.toml), not a download failure: report it
+            # in the summary without marking the whole source as failed.
             self.log.warning(f"  [{town.name}] SA2 {sa2} not found in SALM data")
-            self.result.towns_failed.append(town.name)
+            self.result.add_warning(town.name, f"SA2 {sa2} not in the SALM file; check sa2_code in towns.toml")
             return
 
         from config import YEAR_START, YEAR_END
