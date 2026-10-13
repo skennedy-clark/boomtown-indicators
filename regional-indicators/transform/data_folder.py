@@ -98,8 +98,9 @@ MANUAL_FILES = [
             "1. Open https://www.dewr.gov.au/employment-research/small-area-labour-markets\n"
             "2. Download the latest 'SALM Smoothed LGA Datafiles' in CSV format.\n"
             "3. Save it in this folder as:  salm_smoothed_lga.csv\n"
-            "The site does not allow automated downloads, so this file is downloaded by hand.\n"
-            "Without it the LGA unemployment rows are not updated; everything else still runs."
+            "The update tries to download this file itself; this is needed only if the run\n"
+            "report says the LGA file was not found. Without it the LGA unemployment rows are\n"
+            "not updated; everything else still runs."
         ),
     ),
 ]

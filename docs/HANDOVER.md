@@ -64,7 +64,7 @@ completes, so one broken source does not stop the update.
 
 **Manual items, every year:**
 
-- the SALM smoothed LGA file (the site blocks automated downloads), saved as
+- the SALM smoothed LGA file, only if the run could not download it, saved as
   `1 Data/Employment/salm_smoothed_lga.csv`;
 - monthly rainfall for Goondiwindi (041507) and Moranbah (034035), entered in
   `regional-indicators/manual_rainfall_data.toml`.

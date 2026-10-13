@@ -40,7 +40,9 @@ Output:
   2. Per-region files cache/unemployment/regions/{sa2|lga}_{slug}.json,
      one for every row of the workbook's Employment sheet that SALM can
      supply: 15 SA2 rows (including Toowoomba - East and Narrabri
-     Surrounds, which are not towns) and 5 LGA rows. Read by
+     Surrounds, which are not towns) and 5 LGA rows, plus the SA2 and LGA
+     of any study town in towns.toml not already covered, so that a town
+     added there is fetched without a code change. Read by
      update_employment.py.
 
 Region matching: regions are matched by code and then checked by name.
@@ -53,12 +55,15 @@ Not covered: the NSW and "Queensland (benchmark)" state rows. SALM does
 not publish state figures. Those rows are supplied by
 fetch_nsw_labour.py and fetch_qrsis_labour.py.
 
-LGA file is cache-only: the DEWR site returns 503 to automated requests
-for this file, so the LGA CSV must be placed manually at
+Downloads: both files are linked from a resource page whose download
+link changes with each release. The SA2 file is downloaded from the link
+scraped from its resource page, with a fallback URL. For the LGA file the
+resource page is found from the main SALM page and the link scraped from
+it; if that fails, the LGA CSV is placed by hand at
 cache/salm_smoothed_lga.csv (download "Smoothed LGA Datafiles" from the
-SALM page). The fetcher logs the last quarter in each file so that a
-stale cache is visible. The SA2 file is downloaded automatically, from a
-scraped link with a fallback URL.
+SALM page). DEWR serves a block page to requests that identify as
+scripts, so all requests send a browser User-Agent. The fetcher logs the
+last quarter in each file so that a stale file is visible.
 
 Notes: towns are matched on the sa2_code field in towns.toml (ASGS 2021
 Edition 3). Shepparton's sa2_code is not a valid ASGS 2021 code; the
@@ -116,22 +121,35 @@ BROWSER_UA = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
-# A download link on the resource page, absolute or relative:
-#   /download/{id}/salm-smoothed-sa2-datafiles-...-{quarter}/{id}/...{quarter}/csv
-SA2_CSV_LINK = re.compile(
-    r"""href=["']((?:https://www\.dewr\.gov\.au)?/download/\d+/[^"']*sa2[^"']*/csv)["']""",
-    re.IGNORECASE,
-)
+DEWR_SITE = "https://www.dewr.gov.au"
+
+
+def _absolute(link: str) -> str:
+    return link if link.startswith("http") else DEWR_SITE + link
+
+
+def find_csv_link(html: str, area: str) -> str | None:
+    """The first CSV download link for `area` ("sa2" or "lga") in a
+    resource page's HTML, as an absolute URL, or None. Links look like
+    /download/{id}/salm-smoothed-{area}-datafiles-...-{quarter}/{id}/.../csv
+    and may be absolute or relative."""
+    pattern = (r"""href=["']((?:https://www\.dewr\.gov\.au)?/download/\d+/"""
+               r"""[^"']*-""" + re.escape(area) + r"""-[^"']*/csv)["']""")
+    match = re.search(pattern, html or "", re.IGNORECASE)
+    return _absolute(match.group(1)) if match else None
 
 
 def find_sa2_csv_link(html: str) -> str | None:
-    """The first SA2 CSV download link in the resource page's HTML, as an
-    absolute URL, or None."""
-    match = SA2_CSV_LINK.search(html or "")
-    if not match:
-        return None
-    link = match.group(1)
-    return link if link.startswith("http") else "https://www.dewr.gov.au" + link
+    return find_csv_link(html, "sa2")
+
+
+def find_resource_page_link(html: str, area: str) -> str | None:
+    """The link to the "SALM Smoothed {area} Datafiles" resource page on
+    the main SALM page, as an absolute URL, or None."""
+    pattern = (r"""href=["']((?:https://www\.dewr\.gov\.au)?/[^"']*/resources/"""
+               r"""salm-smoothed-""" + re.escape(area) + r"""-datafiles[^"']*)["']""")
+    match = re.search(pattern, html or "", re.IGNORECASE)
+    return _absolute(match.group(1)) if match else None
 
 # Workbook Employment-sheet row label (column A) -> ASGS 2021 SA2 code.
 # The same 15 regions are used for the Business sheet.
@@ -201,16 +219,22 @@ class SALMUnemploymentFetcher(BaseFetcher):
             self._extract_town(town, sa2_data)
 
         # Per-region files for the Employment sheet: SA2 rows ...
-        for label, code in SA2_REGIONS.items():
+        for label, code in self.sa2_regions().items():
+            if label not in SA2_REGIONS and code not in sa2_data:
+                # A town's own region, added from towns.toml: report, do not fail.
+                self.log.warning(f"  [SA2:{label}] code {code} not in the SALM SA2 file; skipped")
+                continue
             self._write_region("SA2", label, code, sa2_data, path.name)
 
-        # ... and LGA rows (cache-only file; see the module docstring).
+        # ... and LGA rows (scraped link, then a file placed by hand).
         lga_path = CACHE_DIR / f"{LGA_CACHE_KEY}.csv"
+        lga_url = self._find_lga_csv_url()
+        if lga_url:
+            lga_path = self._download_with_browser_ua(lga_url, LGA_CACHE_KEY) or lga_path
         if not lga_path.exists():
             msg = (
                 f"LGA file not found at {lga_path}. Download 'SALM Smoothed LGA "
-                f"Datafiles' (CSV) from {LGA_PAGE} and save it there -- the DEWR "
-                f"site blocks automated downloads, so this one is manual."
+                f"Datafiles' (CSV) from {LGA_PAGE} and save it there."
             )
             self.log.error("  " + msg)
             self.result.add_error("LGA", msg)
@@ -220,7 +244,11 @@ class SALMUnemploymentFetcher(BaseFetcher):
         if not lga_data:
             self.result.add_error("LGA", "SALM LGA CSV parse returned no data")
             return
-        for label, code in LGA_REGIONS.items():
+        for label, code in self.lga_regions().items():
+            if label not in LGA_REGIONS and code not in lga_data:
+                # A town's own region, added from towns.toml: report, do not fail.
+                self.log.warning(f"  [LGA:{label}] code {code} not in the SALM LGA file; skipped")
+                continue
             self._write_region("LGA", label, code, lga_data, lga_path.name)
 
         self.log.info(
@@ -257,6 +285,55 @@ class SALMUnemploymentFetcher(BaseFetcher):
             return out_path
         except Exception as exc:
             self.log.error(f"  Download failed: {exc}")
+            return None
+
+    def sa2_regions(self) -> dict[str, str]:
+        """SA2_REGIONS, plus the SA2 of every study town not already covered."""
+        regions = dict(SA2_REGIONS)
+        covered = set(regions.values())
+        for town in self.config.study_towns():
+            code = (town.sa2_code or "").strip()
+            if code.isdigit() and town.sa2_name and code not in covered and town.sa2_name not in regions:
+                regions[town.sa2_name] = code
+                covered.add(code)
+        return regions
+
+    def lga_regions(self) -> dict[str, str]:
+        """LGA_REGIONS, plus the LGA of every study town not already covered.
+        The code comes from qgso_lga ("LGA/32270"); the label is the LGA
+        name without its state suffix ("Central Highlands")."""
+        regions = dict(LGA_REGIONS)
+        covered = set(regions.values())
+        for town in self.config.study_towns():
+            code = re.sub(r"\D", "", getattr(town, "qgso_lga", "") or "")
+            label = re.sub(r"\s*\([^)]*\)\s*$", "", town.lga or "").strip()
+            if code and label and code not in covered and label not in regions:
+                regions[label] = code
+                covered.add(code)
+        return regions
+
+    def _get_page(self, url: str) -> str:
+        resp = requests.get(url, headers={"User-Agent": BROWSER_UA}, timeout=20)
+        resp.raise_for_status()
+        return resp.text
+
+    def _find_lga_csv_url(self) -> str | None:
+        """The current LGA CSV download URL: the resource page is found from
+        the main SALM page and the link scraped from it. None if either
+        step fails; the cached or hand-placed file is then used."""
+        try:
+            page = find_resource_page_link(self._get_page(SALM_MAIN_PAGE), "lga")
+            if not page:
+                self.log.warning("  LGA resource page not linked from the SALM page")
+                return None
+            url = find_csv_link(self._get_page(page), "lga")
+            if url:
+                self.log.info(f"  Found LGA CSV URL on resource page: {url}")
+            else:
+                self.log.warning(f"  Could not find CSV link on {page}")
+            return url
+        except Exception as exc:
+            self.log.warning(f"  LGA resource page scrape failed ({exc})")
             return None
 
     def _find_csv_url(self) -> str:
@@ -361,9 +438,10 @@ class SALMUnemploymentFetcher(BaseFetcher):
     def _norm_name(name: str) -> str:
         """Normalise a region name for loose comparison, so that
         'Broadsound - Nebo' equals 'Broadsound-Nebo' and 'Toowoomba' equals
-        'Toowoomba LGA'.
+        'Toowoomba LGA', and 'Central Highlands (Qld)' equals 'Central Highlands'.
         """
         n = name.lower()
+        n = re.sub(r"\((qld|nsw|vic|sa|wa|tas|nt|act|[a-z])\)", "", n)
         n = re.sub(r"\blga\b", "", n)
         return re.sub(r"[^a-z0-9]", "", n)
 
