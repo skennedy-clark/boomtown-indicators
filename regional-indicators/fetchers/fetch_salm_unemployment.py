@@ -109,6 +109,30 @@ CACHE_KEY = "salm_smoothed_sa2"
 LGA_CACHE_KEY = "salm_smoothed_lga"
 LGA_PAGE = SALM_MAIN_PAGE
 
+# The DEWR site serves a block page to requests that identify as scripts.
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
+# A download link on the resource page, absolute or relative:
+#   /download/{id}/salm-smoothed-sa2-datafiles-...-{quarter}/{id}/...{quarter}/csv
+SA2_CSV_LINK = re.compile(
+    r"""href=["']((?:https://www\.dewr\.gov\.au)?/download/\d+/[^"']*sa2[^"']*/csv)["']""",
+    re.IGNORECASE,
+)
+
+
+def find_sa2_csv_link(html: str) -> str | None:
+    """The first SA2 CSV download link in the resource page's HTML, as an
+    absolute URL, or None."""
+    match = SA2_CSV_LINK.search(html or "")
+    if not match:
+        return None
+    link = match.group(1)
+    return link if link.startswith("http") else "https://www.dewr.gov.au" + link
+
 # Workbook Employment-sheet row label (column A) -> ASGS 2021 SA2 code.
 # The same 15 regions are used for the Business sheet.
 SA2_REGIONS = {
@@ -159,6 +183,9 @@ class SALMUnemploymentFetcher(BaseFetcher):
         path = self._download_with_browser_ua(url, CACHE_KEY)
 
         if not path:
+            self.log.error(
+                "  To update by hand: open " + RESOURCE_PAGE + ", download the CSV and save it as "
+                + str(CACHE_DIR / f"{CACHE_KEY}.csv") + ", then run this step again.")
             self.result.add_error("ALL", "Could not download SALM SA2 CSV")
             return
 
@@ -212,13 +239,7 @@ class SALMUnemploymentFetcher(BaseFetcher):
             self.log.info(f"  Using cached: {out_path.name}")
             return out_path
         try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                )
-            }
+            headers = {"User-Agent": BROWSER_UA}
             self.log.info(f"  Downloading {url} → {out_path.name}")
             resp = requests.get(url, headers=headers, timeout=60, stream=True)
             resp.raise_for_status()
@@ -244,21 +265,17 @@ class SALMUnemploymentFetcher(BaseFetcher):
         has no matching link.
         """
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (research pipeline; contact uq.edu.au)"}
-            resp = requests.get(RESOURCE_PAGE, headers=headers, timeout=20)
+            resp = requests.get(RESOURCE_PAGE, headers={"User-Agent": BROWSER_UA}, timeout=20)
             resp.raise_for_status()
-
-            # Download link pattern: /download/{id}/salm-smoothed-sa2.../csv
-            pattern = r'(https://www\.dewr\.gov\.au/download/\d+/salm-smoothed-sa2[^"\'>\s]+/csv)'
-            matches = re.findall(pattern, resp.text)
-            if matches:
-                url = matches[0]
+            url = find_sa2_csv_link(resp.text)
+            if url:
                 self.log.info(f"  Found CSV URL on resource page: {url}")
                 return url
-
-            self.log.warning("  Could not find CSV link on resource page — using fallback URL")
+            self.log.warning(
+                f"  Could not find CSV link on resource page ({len(resp.text) // 1024} KB, "
+                f"{resp.text.count('/download/')} download links) - using fallback URL")
         except Exception as exc:
-            self.log.warning(f"  Resource page scrape failed ({exc}) — using fallback URL")
+            self.log.warning(f"  Resource page scrape failed ({exc}) - using fallback URL")
 
         return FALLBACK_CSV_URL
 
