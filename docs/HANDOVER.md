@@ -104,6 +104,17 @@ When someone has updated a workbook by hand and wants to compare:
   sheet; the logic is simple (cells empty in the starting workbook and numeric
   in the hand-made one) and is worth adding as a script if this is done often.
 
+## Adding a town
+
+`transform/add_town.py` copies a similar town's page and rows (README,
+"Add a town"). The writers then fill the new rows with each source's
+history; `run_update.py --only business_history income_history` fetches
+the earlier years of business counts (ABS releases back to June 2009) and
+postcode income (ATO tables back to 2000-01), which the annual run does
+not need. Non-resident workers by urban centre, the 2018 population
+projections and RACQ fuel prices for towns outside the report have no
+history to fill.
+
 ## Where things are
 
 | Path | What |

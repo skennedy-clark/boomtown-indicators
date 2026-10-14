@@ -379,6 +379,17 @@ class QGSOHousingFetcher(BaseFetcher):
             region_map[f"SA2/{code}"] = (label, "SA2")
         for label, code in STATE_REGIONS.items():
             region_map[code] = (label, "State")
+        # The LGA and SA2 of every Queensland study town not listed above, so
+        # that a town added to towns.toml is fetched without a code change.
+        for town in self.config.study_towns():
+            if town.state != "QLD":
+                continue
+            lga_code = (town.qgso_lga or "").strip()
+            if lga_code.startswith("LGA/") and lga_code not in region_map:
+                region_map[lga_code] = (re.sub(r"\s*\([^)]*\)\s*$", "", town.lga).strip(), "LGA")
+            sa2_code = (town.qgso_sa2 or town.sa2_code or "").strip()
+            if sa2_code.isdigit() and f"SA2/{sa2_code}" not in region_map and town.sa2_name:
+                region_map[f"SA2/{sa2_code}"] = (town.sa2_name, "SA2")
 
         by_region: dict[str, dict[str, dict[int, list]]] = {}  # code -> series -> year -> {period: value}
 

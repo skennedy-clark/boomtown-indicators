@@ -303,10 +303,13 @@ Windows.
 ### Add a town
 
 1. Add the town to `regional-indicators/towns.toml` (codes and stations;
-   the file's header explains each field) and run the fetchers for it:
+   the file's header explains each field) and run the fetchers for it,
+   including the two that fetch earlier years of business counts and
+   postcode income (they are not part of the annual run):
 
    ```bash
    python regional-indicators/run_update.py --towns Emerald
+   python regional-indicators/run_update.py --only business_history income_history
    ```
 
 2. Add it to the workbook, copied from a similar town (its page, its rows
@@ -333,9 +336,14 @@ Windows.
    ```
 
 3. Run the writers (or the whole update). A row with no figures yet
-   receives the source's full history, not only the latest year. Sources
-   that publish only the latest year (business counts, non-resident
-   workers by UCL) start from that year.
+   (or only the latest year's) receives the source's full history, not
+   only the latest year. What has no history to fill:
+   - non-resident workers by urban centre: QGSO publishes only the two
+     latest years, and the earlier reports are no longer online;
+   - population projections: the workbook holds the 2018 edition, which
+     QGSO no longer publishes; the 2025 edition is available but would
+     differ from the other towns' rows;
+   - fuel prices for towns not in the RACQ report.
 
 4. Check the new page: text that names the template town, rainfall
    station names, and the CSG notice line, which is placed by hand. The

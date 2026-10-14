@@ -186,6 +186,25 @@ SA2_REGIONS = {
 }
 
 
+def business_regions(config) -> dict[str, list[int]]:
+    """SA2_REGIONS, plus the SA2 of every study town in towns.toml that is
+    not already covered, so that a town added to towns.toml is fetched
+    without a code change."""
+    regions = dict(SA2_REGIONS)
+    covered = {code for codes in regions.values() for code in codes}
+    for town in config.study_towns():
+        if not (town.sa2_code and town.sa2_name):
+            continue
+        try:
+            code = int(town.sa2_code)
+        except ValueError:
+            continue
+        if code not in covered and town.sa2_name not in regions:
+            regions[town.sa2_name] = [code]
+            covered.add(code)
+    return regions
+
+
 class ABSBusinessFetcher(BaseFetcher):
 
     SOURCE_NAME      = "business"
@@ -231,22 +250,7 @@ class ABSBusinessFetcher(BaseFetcher):
             self._write_region(region_name, sa2_codes, by_sa2)
 
     def regions(self) -> dict[str, list[int]]:
-        """SA2_REGIONS, plus the SA2 of every study town in towns.toml that
-        is not already covered, so that a town added to towns.toml is
-        fetched without a code change."""
-        regions = dict(SA2_REGIONS)
-        covered = {code for codes in regions.values() for code in codes}
-        for town in self.config.study_towns():
-            if not (town.sa2_code and town.sa2_name):
-                continue
-            try:
-                code = int(town.sa2_code)
-            except ValueError:
-                continue
-            if code not in covered and town.sa2_name not in regions:
-                regions[town.sa2_name] = [code]
-                covered.add(code)
-        return regions
+        return business_regions(self.config)
 
     def _parse_table(self, ws) -> dict:
         """Return {sa2_code: {"NPP": {band: count}, "PP": {band: count}}}.

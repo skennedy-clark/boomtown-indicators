@@ -62,7 +62,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
-from base import backfill_new_row  # noqa: E402
+from base import backfill_new_row, filled_note  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 from base import _fiscal_label
 
@@ -355,6 +355,19 @@ def _find_state_indicator_row(sheet, state_row: int, label: str) -> int:
     )
 
 
+def _load_history(cache_dir: Path, t6_path: Path) -> dict:
+    """{year: {indicator: value}} from fetch_income_history.py for the town
+    of a Table 6 cache file, or {} if it has not been fetched."""
+    path = cache_dir / t6_path.name.replace("_income_t6.json", "_income_history.json")
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("years", {})
+    except (OSError, ValueError):
+        return {}
+
+
 def update_income(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
     t8_files = sorted(cache_dir.glob("*_income.json"))
     t6_files_by_slug = {
@@ -438,9 +451,21 @@ def update_income(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> li
                         skip_this_year = True
 
                 if skip_this_year:
+                    # A new row still takes Table 8's earlier years; the latest
+                    # year is left to Table 6.
+                    note = ""
+                    try:
+                        row = _find_income_indicator_row(sheet, town_row, INDICATOR_ROW_LABELS["avg_taxable_income_all"])
+                        filled = backfill_new_row(sheet, row, _find_year_column(sheet, latest_year),
+                                                  latest_year, source_series)
+                        if filled:
+                            any_written = True
+                            note = filled_note(filled)
+                    except ValueError:
+                        pass
                     results.append(
                         f"{town} avg taxable income (all): {latest_year} deferred to "
-                        f"Table 6B (verified-correct source for this year) -- see below"
+                        f"Table 6B (verified-correct source for this year) -- see below{note}"
                     )
                 else:
                     label = INDICATOR_ROW_LABELS["avg_taxable_income_all"]
@@ -467,6 +492,7 @@ def update_income(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> li
 
                 town_name = data["town"]
                 indicators = data.get("indicators", {})
+                history = _load_history(cache_dir, t6_path)
                 expected_postcode = postcode_by_name.get(town_name)
                 if expected_postcode is None:
                     results.append(f"{town_name}: not found in towns.toml, skipped")
@@ -506,10 +532,17 @@ def update_income(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> li
                     label = INDICATOR_ROW_LABELS[row_label_key]
                     try:
                         row = _find_income_indicator_row(sheet, town_row, label)
+                        # A new row takes its earlier years from the history file
+                        # (fetch_income_history.py), if it has been fetched.
+                        earlier = {int(y): v[key] for y, v in history.items() if key in v}
+                        filled = backfill_new_row(sheet, row, _find_year_column(sheet, year), year, earlier)
                         report, coord = _write_income_row(sheet, row, year, value, None)
                         line, is_written, is_flagged = _describe_write(
                             f"{town_name} {key}", report, coord, f"{year} = {value:,.0f}"
                         )
+                        if filled:
+                            line += filled_note(filled)
+                            any_written = True
                         results.append(line)
                         if is_written:
                             written_count += 1

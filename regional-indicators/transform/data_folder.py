@@ -70,7 +70,7 @@ SOURCE_FILE_RULES = [
     (r"^abs_lga_population", "Crime"),               # populations used to turn NSW offence counts into rates
     (r"^salm|^abs_nsw_labour", "Employment"),
     (r"^dcj_(rent|sales)", "Housing"),
-    (r"^ato_table", "Income"),
+    (r"^ato_", "Income"),
     (r"^abs_dc9|business", "Business"),
     (r"^qps_|^bocsar", "Crime"),
     (r"^silo_rainfall|^bom_|rainfall", "Rainfall"),

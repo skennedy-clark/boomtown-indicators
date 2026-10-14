@@ -51,7 +51,7 @@ import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
 from audit import audit_cell, audit_series, WriteAuditReport, apply_write_formatting, describe_write_outcome
-from base import _fiscal_label
+from base import _fiscal_label, backfill_new_row
 
 SHEET_NAME = "Business"
 FIRST_YEAR_COLUMN = 2   # column B
@@ -207,20 +207,37 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
     return series
 
 
-def _write_business_row(sheet, row: int, year: int, value):
+def _write_business_row(sheet, row: int, year: int, value, source_series: dict | None = None):
     col = _find_year_column(sheet, year)
     cell = sheet.cells(row, col)
+    history_filled = backfill_new_row(sheet, row, col, year, source_series)
 
     cell_result = audit_cell(cell, value)
     existing_series = _read_existing_series(sheet, row, exclude_col=col)
     series_result = audit_series(existing_series, year, value)
 
     report = WriteAuditReport(cell_result, series_result)
+    report.history_filled = history_filled
     if report.safe_to_write or report.should_write_with_flag:
         cell.value = value
     apply_write_formatting(cell, report.safe_to_write, report.should_write_with_flag)
 
     return report, cell.address
+
+
+def _load_history(cache_dir: Path, region_file: Path) -> dict:
+    """{year: {"npp": {band: n}, "pp": {...}}} from fetch_business_history.py
+    for the region in `region_file`, or {} if it has not been fetched. Used
+    only to fill a row that has no figures yet (a town just added)."""
+    stem = region_file.name[: -len("_business.json")]
+    path = cache_dir / "history" / f"{stem}_business_history.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("years", {})
+    except (OSError, ValueError):
+        return {}
 
 
 def update_business(xlsx_path: Path, cache_dir: Path, year: int, visible: bool = False) -> list[str]:
@@ -251,6 +268,7 @@ def update_business(xlsx_path: Path, cache_dir: Path, year: int, visible: bool =
 
                 region = data["region"]
                 indicators = data.get("indicators", {})
+                history = _load_history(cache_dir, path)
 
                 for production, section_row, next_section in (
                     ("npp", npp_section_row, pp_section_row),
@@ -276,7 +294,10 @@ def update_business(xlsx_path: Path, cache_dir: Path, year: int, visible: bool =
 
                         try:
                             row = _find_band_row(sheet, region_row, band_label)
-                            report, coord = _write_business_row(sheet, row, year, value)
+                            series = {int(y): counts.get(production, {}).get(band_label)
+                                      for y, counts in history.items()}
+                            series = {y: v for y, v in series.items() if v is not None}
+                            report, coord = _write_business_row(sheet, row, year, value, series or None)
                             line, is_written, is_flagged = describe_write_outcome(
                                 f"{region} {production} {band_label}", report, coord, f"{year} = {value}"
                             )

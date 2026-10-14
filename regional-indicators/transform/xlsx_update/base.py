@@ -30,6 +30,7 @@ process, so the finder functions read whole ranges in one call.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import xlwings as xw
@@ -80,13 +81,29 @@ def _find_year_column(sheet: "xw.Sheet", year: int) -> int:
 
 SECTION_LABELS = {"LGA", "SA2", "UCL"}
 
+_STATE_SUFFIX = re.compile(r"\s*\((qld|nsw|vic|sa|wa|tas|nt|act)\)\s*$", re.IGNORECASE)
+
+
+def same_area(label, name) -> bool:
+    """A block heading names an area: equal to `name`, or equal once a state
+    suffix is removed ("Central Highlands" for "Central Highlands (Qld)",
+    as towns.toml writes ABS LGA names). Other brackets are kept, so
+    "Toowoomba (West)" never matches "Toowoomba"."""
+    if not isinstance(label, str) or not isinstance(name, str):
+        return label == name
+    if label == name:
+        return True
+    return _STATE_SUFFIX.sub("", label.strip()) == _STATE_SUFFIX.sub("", name.strip())
+
 
 # ── Filling a new row's history ────────────────────────────────────────────────
 #
 # A row with no figures yet (a town just added with transform/add_town.py)
 # receives the source's earlier years along with the latest one, so that a
-# new town's charts start with its full history. Rows that already hold
-# figures are never touched here: the writers add the latest year only.
+# new town's charts start with its full history. A row that holds only the
+# latest year (a run before the history was available) counts as new.
+# Rows with earlier figures are never touched here: the writers add the
+# latest year only.
 
 def _header_year(value) -> int | None:
     """The year a header cell stands for: 2025, 2025.0, "2025", or a
@@ -105,31 +122,52 @@ def _header_year(value) -> int | None:
     return None
 
 
+def _year_row(sheet, candidate: int, last_col: int, through_col: int) -> dict[int, int]:
+    """{year: column} if row `candidate` reads as a run of consecutive years
+    reaching `through_col`, else {}."""
+    values = sheet.range((candidate, 1), (candidate, last_col)).value
+    if not isinstance(values, list):
+        values = [values]
+    years = {}
+    for offset, value in enumerate(values):
+        year = _header_year(value)
+        if year is not None:
+            years.setdefault(year, offset + 1)
+    if len(years) < 3 or through_col not in years.values():
+        return {}
+    ordered = sorted(years.items(), key=lambda item: item[1])
+    if not all(b[0] - a[0] == 1 for a, b in zip(ordered, ordered[1:])):
+        return {}
+    return years
+
+
 def year_columns_above(sheet, row: int, through_col: int) -> dict[int, int]:
-    """{year: column} from the nearest row above `row` that reads as a run of
-    consecutive years and reaches `through_col`. Empty if there is none."""
+    """{year: column} from the nearest year header above `row` that reaches
+    `through_col`. Where header rows are stacked (fiscal labels over
+    calendar years, as on the Income sheet), the one with the most years
+    is used. Empty if there is none."""
     last_col = max(sheet.used_range.last_cell.column, through_col)
     for candidate in range(row - 1, 0, -1):
-        values = sheet.range((candidate, 1), (candidate, last_col)).value
-        if not isinstance(values, list):
-            values = [values]
-        years = {}
-        for offset, value in enumerate(values):
-            year = _header_year(value)
-            if year is not None:
-                years.setdefault(year, offset + 1)
-        if len(years) < 3 or through_col not in years.values():
+        years = _year_row(sheet, candidate, last_col, through_col)
+        if not years:
             continue
-        ordered = sorted(years.items(), key=lambda item: item[1])
-        if all(b[0] - a[0] == 1 for a, b in zip(ordered, ordered[1:])):
-            return years
+        above = candidate - 1
+        while above >= 1:
+            stacked = _year_row(sheet, above, last_col, through_col)
+            if not stacked:
+                break
+            if len(stacked) > len(years):
+                years = stacked
+            above -= 1
+        return years
     return {}
 
 
 def backfill_new_row(sheet, row: int, latest_col: int, latest_year: int, source_series: dict | None) -> list[int]:
     """Write the source's years before `latest_year` into a row that has no
-    figures yet. Returns the years written (none if the row already has
-    figures, or if its year columns cannot be read).
+    figures yet, apart from the latest year's (written by an earlier run).
+    Returns the years written (none if the row has earlier figures, or if
+    its year columns cannot be read).
 
     The year header is read from the sheet; the writer's own column for
     the latest year fixes how source years line up with header years (a
@@ -141,10 +179,13 @@ def backfill_new_row(sheet, row: int, latest_col: int, latest_year: int, source_
     header = year_columns_above(sheet, row, latest_col)
     if not header:
         return []
-    columns = sorted(header.values())
+    columns = sorted(c for c in header.values() if c != latest_col)
+    if not columns:
+        return []
     figures = sheet.range((row, columns[0]), (row, columns[-1])).value
     if not isinstance(figures, list):
         figures = [figures]
+    figures = [v for c, v in zip(range(columns[0], columns[-1] + 1), figures) if c in columns]
     if any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in figures):
         return []
     header_year_at_latest = next(y for y, c in header.items() if c == latest_col)
@@ -217,7 +258,7 @@ def _find_town_indicator_row(
                 current_section = col_a
                 in_town_block = False  # a section heading is never a region row
                 continue
-            in_town_block = col_a == town
+            in_town_block = same_area(col_a, town)
             continue
 
         if in_town_block and col_a == indicator:

@@ -220,3 +220,30 @@ def test_replace_web_map(tmp_path):
         b"folder,file,sheet,section,block,row_label,sub_label,note\r\n"
         b"Dalby,Population,Population,UCL,Dalby,y,,\r\n"
         b"Mitchell,New,Population,UCL,Mitchell,z,,\r\n")
+
+
+def test_block_heading_matches_lga_name_with_state_suffix():
+    from base import same_area
+    assert same_area("Central Highlands", "Central Highlands (Qld)")
+    assert same_area("Roma", "Roma")
+    assert not same_area("Toowoomba", "Toowoomba (West)")
+
+
+def test_backfill_fills_a_row_holding_only_the_latest_year(tmp_path):
+    from base import backfill_new_row
+    sheet = _sheet(tmp_path, [
+        (None, None, 2022, 2023, 2024),
+        ("Rate", "label", None, None, 5.0),
+    ])
+    assert backfill_new_row(sheet, 2, 5, 2024, {2022: 3.0, 2023: 4.0, 2024: 5.0}) == [2022, 2023]
+
+
+def test_backfill_uses_the_fuller_of_stacked_year_headers(tmp_path):
+    from base import backfill_new_row
+    # Income sheet: fiscal labels in row 1, calendar years for recent columns in row 2.
+    sheet = _sheet(tmp_path, [
+        (None, None, "2019/20", "2020/21", "2021/22", "2022/23", "2023/24"),
+        ("Postcode", "Label", None, None, 2022, 2023, 2024),
+        ("Earners", None, None, None, None, None, 9.0),
+    ])
+    assert backfill_new_row(sheet, 3, 7, 2024, {2020: 5.0, 2021: 6.0, 2022: 7.0, 2023: 8.0}) == [2020, 2021, 2022, 2023]

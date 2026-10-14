@@ -11,6 +11,8 @@ Usage (from the repository root):
     python regional-indicators/run_update.py --only income      # selected fetchers
     python regional-indicators/run_update.py --skip crime_qps   # all but these
     python regional-indicators/run_update.py --towns Roma Dalby # selected towns
+    python regional-indicators/run_update.py --only business_history income_history
+                                                                # earlier years, after adding a town
     python regional-indicators/run_update.py --force            # ignore the cache
     python regional-indicators/run_update.py --validate         # check towns.toml and exit
     python regional-indicators/run_update.py --list-cache       # list cached files and exit
@@ -51,6 +53,8 @@ from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 from fetchers.fetch_business import ABSBusinessFetcher
 from fetchers.fetch_fuel import RACQFuelFetcher
 from fetchers.fetch_schools import ACARASchoolsFetcher
+from fetchers.fetch_business_history import ABSBusinessHistoryFetcher
+from fetchers.fetch_income_history import ATOIncomeHistoryFetcher
 
 FETCHER_REGISTRY: dict[str, type] = {
     "income":         ATOIncomeFetcher,
@@ -71,7 +75,13 @@ FETCHER_REGISTRY: dict[str, type] = {
     "business":          ABSBusinessFetcher,
     "fuel":              RACQFuelFetcher,      # petrol prices (RACQ Annual Fuel Price Report)
     "schools":           ACARASchoolsFetcher,  # school enrolments and staff (ACARA School Profile)
+    "business_history":  ABSBusinessHistoryFetcher,  # earlier years, for a town just added (on request)
+    "income_history":    ATOIncomeHistoryFetcher,    # earlier years, for a town just added (on request)
 }
+
+# Run only when named with --only: their sources do not change from year to
+# year, and they are needed only when a town is added to the workbook.
+ON_REQUEST = {"business_history", "income_history"}
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -217,7 +227,7 @@ def main():
         sys.exit(0)
 
     # ── Build list of fetchers to run ──────────────────────────────────────────
-    to_run: dict[str, type] = dict(FETCHER_REGISTRY)
+    to_run: dict[str, type] = {k: v for k, v in FETCHER_REGISTRY.items() if k not in ON_REQUEST}
 
     if args.only:
         unknown = [k for k in args.only if k not in FETCHER_REGISTRY]
@@ -225,7 +235,7 @@ def main():
             log.error(f"Unknown fetcher(s): {unknown}. "
                       f"Available: {list(FETCHER_REGISTRY)}")
             sys.exit(1)
-        to_run = {k: v for k, v in to_run.items() if k in args.only}
+        to_run = {k: v for k, v in FETCHER_REGISTRY.items() if k in args.only}
 
     if args.skip:
         to_run = {k: v for k, v in to_run.items() if k not in args.skip}

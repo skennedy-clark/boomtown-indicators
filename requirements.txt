@@ -5,6 +5,7 @@ beautifulsoup4
 lxml
 pandas
 openpyxl
+xlrd                 # older .xls files (ABS business counts before 2019)
 xlwings              # workbook writers; requires Microsoft Excel (Windows or macOS)
 pypdfium2
 Pillow

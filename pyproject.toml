@@ -8,6 +8,7 @@ dependencies = [
     "beautifulsoup4",
     "pandas",
     "openpyxl",
+    "xlrd",          # older .xls files (ABS business counts before 2019)
     "xlwings",  # workbook writers (transform/xlsx_update/). The workbook is
                 # edited through Excel itself because openpyxl cannot
                 # round-trip it (see transform/xlsx_update/base.py).
