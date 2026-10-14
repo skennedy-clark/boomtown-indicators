@@ -81,6 +81,95 @@ def _find_year_column(sheet: "xw.Sheet", year: int) -> int:
 SECTION_LABELS = {"LGA", "SA2", "UCL"}
 
 
+# ── Filling a new row's history ────────────────────────────────────────────────
+#
+# A row with no figures yet (a town just added with transform/add_town.py)
+# receives the source's earlier years along with the latest one, so that a
+# new town's charts start with its full history. Rows that already hold
+# figures are never touched here: the writers add the latest year only.
+
+def _header_year(value) -> int | None:
+    """The year a header cell stands for: 2025, 2025.0, "2025", or a
+    fiscal label "2024/25" or "2024-25" (taken as the year it ends)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and float(value).is_integer() and 1900 <= value <= 2100:
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit() and 1900 <= int(text) <= 2100:
+            return int(text)
+        parts = text.replace("-", "/").split("/")
+        if len(parts) == 2 and parts[0].isdigit() and len(parts[0]) == 4 and parts[1].isdigit():
+            return int(parts[0]) + 1
+    return None
+
+
+def year_columns_above(sheet, row: int, through_col: int) -> dict[int, int]:
+    """{year: column} from the nearest row above `row` that reads as a run of
+    consecutive years and reaches `through_col`. Empty if there is none."""
+    last_col = max(sheet.used_range.last_cell.column, through_col)
+    for candidate in range(row - 1, 0, -1):
+        values = sheet.range((candidate, 1), (candidate, last_col)).value
+        if not isinstance(values, list):
+            values = [values]
+        years = {}
+        for offset, value in enumerate(values):
+            year = _header_year(value)
+            if year is not None:
+                years.setdefault(year, offset + 1)
+        if len(years) < 3 or through_col not in years.values():
+            continue
+        ordered = sorted(years.items(), key=lambda item: item[1])
+        if all(b[0] - a[0] == 1 for a, b in zip(ordered, ordered[1:])):
+            return years
+    return {}
+
+
+def backfill_new_row(sheet, row: int, latest_col: int, latest_year: int, source_series: dict | None) -> list[int]:
+    """Write the source's years before `latest_year` into a row that has no
+    figures yet. Returns the years written (none if the row already has
+    figures, or if its year columns cannot be read).
+
+    The year header is read from the sheet; the writer's own column for
+    the latest year fixes how source years line up with header years (a
+    fiscal header "2024/25" may hold the source's 2024 or 2025). No
+    column is ever added: years without a column are skipped.
+    """
+    if not source_series:
+        return []
+    header = year_columns_above(sheet, row, latest_col)
+    if not header:
+        return []
+    columns = sorted(header.values())
+    figures = sheet.range((row, columns[0]), (row, columns[-1])).value
+    if not isinstance(figures, list):
+        figures = [figures]
+    if any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in figures):
+        return []
+    header_year_at_latest = next(y for y, c in header.items() if c == latest_col)
+    offset = header_year_at_latest - latest_year
+    written = []
+    for year, value in sorted((int(y), v) for y, v in source_series.items()):
+        if year >= latest_year or not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        col = header.get(year + offset)
+        if col is None:
+            continue
+        sheet.cells(row, col).value = value
+        written.append(year)
+    return written
+
+
+def filled_note(years: list[int]) -> str:
+    """Text added to a writer's result line when a new row's history was filled."""
+    if not years:
+        return ""
+    years = sorted(years)
+    span = f"{years[0]}-{years[-1]}" if len(years) > 1 else str(years[0])
+    return f" (new row: history {span} filled, {len(years)} years)"
+
+
 def _find_town_indicator_row(
     sheet: "xw.Sheet", town: str, indicator: str, sub_label: str | None,
     section: str | None = None,
@@ -249,6 +338,7 @@ def write_one(
     col = _find_year_column(sheet, year)
     row = _find_town_indicator_row(sheet, town, indicator, sub_label, section=section)
     cell = sheet.cells(row, col)
+    history_filled = backfill_new_row(sheet, row, col, year, source_series)
 
     cell_result = audit_cell(cell, value)
     existing_series = read_existing_series(sheet, row, exclude_col=col)
@@ -259,6 +349,7 @@ def write_one(
         historical_result = audit_historical_series(existing_series, source_series)
 
     report = WriteAuditReport(cell_result, series_result, historical_result)
+    report.history_filled = history_filled
     if not report.safe_to_write:
         report.override_reason = _check_override(town, indicator, sub_label, year, value)
 

@@ -33,7 +33,7 @@ from pathlib import Path
 
 import xlwings as xw
 
-from base import _find_year_column, _find_town_indicator_row, read_existing_series
+from base import _find_year_column, _find_town_indicator_row, read_existing_series, backfill_new_row, filled_note
 from audit import audit_cell, audit_series, WriteAuditReport
 
 INDICATOR_NAME = "Estimated resident population (a) by urban centre and locality"
@@ -88,6 +88,8 @@ def update_population_ucl(xlsx_path: Path, cache_dir: Path, visible: bool = Fals
                     continue
 
                 cell = sheet.cells(row, col)
+                source_series = {int(y): v for y, v in year_vals.items()}
+                filled = backfill_new_row(sheet, row, col, latest_year, source_series)
                 cell_result = audit_cell(cell, latest_value)
                 existing_series = read_existing_series(sheet, row, exclude_col=col)
                 series_result = audit_series(existing_series, latest_year, latest_value)
@@ -97,7 +99,7 @@ def update_population_ucl(xlsx_path: Path, cache_dir: Path, visible: bool = Fals
                     cell.value = latest_value
                     cell.number_format = "General"
                     coord = cell.address
-                    results.append(f"{town}: WRITTEN {latest_year} = {latest_value:,} -> {coord}")
+                    results.append(f"{town}: WRITTEN {latest_year} = {latest_value:,} -> {coord}{filled_note(filled)}")
                     written_count += 1
                     any_written = True
                 else:

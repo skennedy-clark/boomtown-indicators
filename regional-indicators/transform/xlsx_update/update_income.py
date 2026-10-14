@@ -62,6 +62,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
+from base import backfill_new_row  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 from base import _fiscal_label
 
@@ -261,6 +262,7 @@ def _describe_write(label: str, report, coord: str, extra_note: str = "") -> tup
 def _write_income_row(sheet, row: int, year: int, value, source_series: dict | None):
     col = _find_year_column(sheet, year)
     cell = sheet.cells(row, col)
+    history_filled = backfill_new_row(sheet, row, col, year, source_series)
 
     cell_result = audit_cell(cell, value)
     existing_series = _read_existing_series(sheet, row, exclude_col=col)
@@ -271,6 +273,7 @@ def _write_income_row(sheet, row: int, year: int, value, source_series: dict | N
         historical_result = audit_historical_series(existing_series, source_series)
 
     report = WriteAuditReport(cell_result, series_result, historical_result)
+    report.history_filled = history_filled
     if report.safe_to_write:
         cell.value = value
         cell.number_format = "General"

@@ -47,6 +47,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
+from base import backfill_new_row  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport, apply_write_formatting, describe_write_outcome
 
 SHEET_NAME = "Crime"
@@ -191,6 +192,7 @@ def _apply_crime_specific_formatting(cell, row: int) -> None:
 def _write_crime_row(sheet, row: int, year: int, value, source_series: dict | None):
     col = _find_year_column(sheet, year)
     cell = sheet.cells(row, col)
+    history_filled = backfill_new_row(sheet, row, col, year, source_series)
 
     cell_result = audit_cell(cell, value)
     existing_series = _read_existing_series(sheet, row, exclude_col=col)
@@ -201,6 +203,7 @@ def _write_crime_row(sheet, row: int, year: int, value, source_series: dict | No
         historical_result = audit_historical_series(existing_series, source_series)
 
     report = WriteAuditReport(cell_result, series_result, historical_result)
+    report.history_filled = history_filled
     if report.safe_to_write or report.should_write_with_flag:
         cell.value = value
     apply_write_formatting(cell, report.safe_to_write, report.should_write_with_flag)

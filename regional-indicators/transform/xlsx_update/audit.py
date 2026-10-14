@@ -393,6 +393,11 @@ def describe_write_outcome(label: str, report: "WriteAuditReport", coord: str, e
     three cases: written, written and flagged for review, or not
     written.
     """
+    filled = getattr(report, "history_filled", None)
+    if filled:
+        years = sorted(filled)
+        span = f"{years[0]}-{years[-1]}" if len(years) > 1 else str(years[0])
+        extra_note = "; ".join(n for n in (extra_note, f"new row: history {span} filled ({len(years)} years)") if n)
     suffix = f" ({extra_note})" if extra_note else ""
     if report.safe_to_write and not report.should_write_with_flag:
         return f"{label}: WRITTEN{suffix} -> {coord}", True, False

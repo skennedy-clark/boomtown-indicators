@@ -50,6 +50,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
+from base import backfill_new_row, filled_note  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 
 SHEET_NAME      = "Exogenous"
@@ -181,6 +182,7 @@ def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
 
         col = _find_year_column(sheet, header_row, year)
         cell = sheet.cells(row, col)
+        filled = backfill_new_row(sheet, row, col, year, source_series)
         existing = _read_existing_series(sheet, header_row, row, exclude_col=col)
         report = WriteAuditReport(
             audit_cell(cell, value),
@@ -199,7 +201,7 @@ def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
             if differing:
                 detail = ", ".join(f"{y} sheet {existing[y]} vs report {source_series[y]}" for y in differing)
                 note = f" (note: earlier years differ from this report, not changed — {detail})"
-            results.append(f"{town}: WRITTEN {year} = {value} -> {cell.address}{note}")
+            results.append(f"{town}: WRITTEN {year} = {value} -> {cell.address}{note}{filled_note(filled)}")
             written_count += 1
         else:
             results.append(f"{town}: FLAGGED, not written — {report.summary_line()}")
