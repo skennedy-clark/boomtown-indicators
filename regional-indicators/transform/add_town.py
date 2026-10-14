@@ -53,9 +53,19 @@ What has to be checked by hand (listed in the report)
   - the CSG notice line on the charts, which is placed by hand;
   - blocks for sources that do not cover the new town stay empty.
 
+Changing the template later (--replace)
+  If a town turns out to be better copied from another town, run the
+  tool again with the other template and --replace. The town's page is
+  deleted and copied afresh from the new template; the town's existing
+  rows (and the figures in them) are kept and the new page's charts read
+  them; any block the new template has and the town lacks is added; the
+  town's lines in web_export_map.csv are replaced. Blocks that only the
+  old template had stay on the data sheets, unused by the page.
+
 Usage:
     python add_town.py <workbook.xlsx> --town Emerald --like Moranbah --dry-run
     python add_town.py <workbook.xlsx> --town Emerald --like Moranbah [--visible]
+    python add_town.py <workbook.xlsx> --town Emerald --like Dysart --replace
 
 The workbook is changed in place, through Excel (xlwings); a copy of
 the original is saved next to it first, named "<name> (before adding
@@ -278,6 +288,9 @@ def _match_rows(rows, template_unit: Unit, existing: Unit) -> dict[int, int | No
             found[r] = by_both[(a, b)][0]
         elif a and len(by_a.get(a, [])) == 1:
             found[r] = by_a[a][0]
+        elif existing.size == template_unit.size:
+            # Same shape, differently named row (a rainfall station): same position.
+            found[r] = existing.first + (r - template_unit.first)
         else:
             found[r] = None
     return found
@@ -406,13 +419,14 @@ def remap_formula(formula: str, row_map: dict[tuple[str, int], int]) -> str:
 
 # ── web_export_map.csv ─────────────────────────────────────────────────────────
 
-def web_map_lines(path: Path, town, template) -> tuple[list[dict], list[str]]:
+def web_map_lines(path: Path, town, template, replace: bool = False) -> tuple[list[dict], list[str]]:
     """The map lines to add for `town`, copied from the template's lines.
-    Returns (lines, header)."""
+    Returns (lines, header). Without `replace`, nothing is returned for a
+    town already in the map."""
     with open(path, encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         header, lines = reader.fieldnames, list(reader)
-    if any(norm(line["folder"]) == norm(town.name) for line in lines):
+    if not replace and any(norm(line["folder"]) == norm(town.name) for line in lines):
         return [], header
     added = []
     for line in lines:
@@ -440,6 +454,21 @@ def append_web_map(path: Path, lines: list[dict], header: list[str]) -> None:
             f.write(ending)
         writer = csv.DictWriter(f, fieldnames=header, lineterminator=ending)
         writer.writerows(lines)
+
+
+def replace_web_map(path: Path, town, lines: list[dict], header: list[str]) -> int:
+    """Remove the town's lines from the map and append `lines`. Returns the
+    number of lines removed. The file's line endings are kept."""
+    raw = path.read_bytes()
+    ending = "\r\n" if b"\r\n" in raw else "\n"
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        existing = list(csv.DictReader(f))
+    kept = [line for line in existing if norm(line["folder"]) != norm(town.name)]
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=header, lineterminator=ending)
+        writer.writeheader()
+        writer.writerows(kept + lines)
+    return len(existing) - len(kept)
 
 
 # ── Report ─────────────────────────────────────────────────────────────────────
@@ -491,7 +520,7 @@ def _original_map(plan: Plan) -> dict:
 
 # ── Excel ──────────────────────────────────────────────────────────────────────
 
-def apply_plan(workbook: Path, plan: Plan, visible: bool = False) -> list[str]:
+def apply_plan(workbook: Path, plan: Plan, visible: bool = False, replace: bool = False) -> list[str]:
     import xlwings as xw
     from update_charts import page_charts
 
@@ -504,7 +533,12 @@ def apply_plan(workbook: Path, plan: Plan, visible: bool = False) -> list[str]:
         try:
             names = [s.name for s in wb.sheets]
             if town.name in names:
-                raise ValueError(f"The workbook already has a sheet named {town.name}.")
+                if not replace:
+                    raise ValueError(f"The workbook already has a sheet named {town.name} "
+                                     f"(use --replace to copy it again from another town).")
+                wb.sheets[town.name].delete()
+                names.remove(town.name)
+                report.append(f"Page {town.name} removed, to be copied again from {template.name}.")
             if template.name not in names:
                 raise ValueError(f"The workbook has no page named {template.name} to copy.")
 
@@ -688,6 +722,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--like", required=True, metavar="TOWN", help="the town to copy (its page and rows)")
     parser.add_argument("--dry-run", action="store_true", help="list what would be done; change nothing")
     parser.add_argument("--visible", action="store_true", help="show Excel while the town is added")
+    parser.add_argument("--replace", action="store_true",
+                        help="the town is already in the workbook: copy its page again from --like, keeping its rows")
     args = parser.parse_args(argv)
 
     if not args.workbook.is_file():
@@ -698,6 +734,21 @@ def main(argv: list[str] | None = None) -> int:
     config = get_config()
     town, template = find_town(config, args.town), find_town(config, args.like)
 
+    import openpyxl
+    book = openpyxl.load_workbook(args.workbook, read_only=True)
+    pages = book.sheetnames
+    book.close()
+    if template.name not in pages:
+        print(f"The workbook has no page named {template.name} to copy.")
+        return 2
+    if town.name in pages and not args.replace:
+        print(f"{town.name} is already in the workbook. To copy its page again from another "
+              f"town, keeping its rows, add --replace.")
+        return 2
+    if args.replace and town.name not in pages:
+        print(f"{town.name} is not in the workbook yet; run without --replace to add it.")
+        return 2
+
     plan = make_plan(read_sheet_rows(args.workbook), town, template)
     series = None
     try:
@@ -707,8 +758,9 @@ def main(argv: list[str] | None = None) -> int:
         plan.notes.append(f"Chart series could not be read ({exc}).")
     lines = plan_lines(plan, series)
 
-    map_lines, header = web_map_lines(WEB_MAP, town, template)
-    lines.append(f"web_export_map.csv: {len(map_lines)} lines to add for {town.name}"
+    map_lines, header = web_map_lines(WEB_MAP, town, template, replace=args.replace)
+    verb = "to replace the existing lines" if args.replace else "to add"
+    lines.append(f"web_export_map.csv: {len(map_lines)} lines {verb} for {town.name}"
                  + ("" if map_lines else " (none: the town is already in the map, or the template has no lines)"))
 
     if args.dry_run:
@@ -716,11 +768,15 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDry run: nothing changed.")
         return 0
 
-    backup = args.workbook.with_name(f"{args.workbook.stem} (before adding {town.name}){args.workbook.suffix}")
+    action = "replacing" if args.replace else "adding"
+    backup = args.workbook.with_name(f"{args.workbook.stem} (before {action} {town.name}){args.workbook.suffix}")
     shutil.copy2(args.workbook, backup)
     lines.append(f"Original saved as {backup.name}.")
-    lines += apply_plan(args.workbook, plan, visible=args.visible)
-    if map_lines:
+    lines += apply_plan(args.workbook, plan, visible=args.visible, replace=args.replace)
+    if map_lines and args.replace:
+        removed = replace_web_map(WEB_MAP, town, map_lines, header)
+        lines.append(f"web_export_map.csv: {removed} lines for {town.name} replaced by {len(map_lines)}.")
+    elif map_lines:
         append_web_map(WEB_MAP, map_lines, header)
     print("\n".join(lines))
     return 0

@@ -323,6 +323,15 @@ Windows.
    Where the new town shares an area with an existing one (an LGA or SA2),
    the existing rows are used. The new rows are empty.
 
+   To copy a town from a different template later, run it again with the
+   other town and `--replace`: the page is copied afresh, and the town's
+   rows and figures are kept.
+
+   ```bash
+   python regional-indicators/transform/add_town.py "Indicators Data-Charts 2026.xlsx" \
+       --town Emerald --like Dysart --replace
+   ```
+
 3. Run the writers (or the whole update). A row with no figures yet
    receives the source's full history, not only the latest year. Sources
    that publish only the latest year (business counts, non-resident

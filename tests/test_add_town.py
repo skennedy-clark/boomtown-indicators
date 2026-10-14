@@ -189,3 +189,34 @@ def test_backfill_follows_a_fiscal_header(tmp_path):
     ])
     assert backfill_new_row(sheet, 2, 6, 2022, {2019: 1.0, 2020: 2.0, 2021: 3.0}) == [2019, 2020, 2021]
     assert sheet.writes == {(2, 3): 1.0, (2, 4): 2.0, (2, 5): 3.0}
+
+
+# ── Changing the template ──────────────────────────────────────────────────────
+
+def test_a_town_already_added_reuses_its_rows_with_another_template():
+    from add_town import read_units
+    # Mitchell already has a UCL block (added from Roma); copying from Tara now
+    # adds nothing and points the charts at Mitchell's existing rows.
+    rows = POPULATION[:16] + [("Mitchell", None, None, None),
+                              ("Estimated resident population", "Residents (UCL)", None, None)] + POPULATION[16:]
+    tara = town("Tara", "Tara", "Western Downs")
+    plan = make_plan({"Population": rows}, MITCHELL, tara)
+    assert plan.inserts == []
+    assert [(t.label, e.label) for t, e in plan.reused if t.section == "UCL"] == [("Tara", "Mitchell")]
+    assert plan.row_map[("Population", 20)] == 18
+
+
+def test_replace_web_map(tmp_path):
+    from add_town import replace_web_map
+    path = tmp_path / "map.csv"
+    path.write_bytes(
+        b"folder,file,sheet,section,block,row_label,sub_label,note\r\n"
+        b"Mitchell,Old,Population,UCL,Mitchell,x,,\r\n"
+        b"Dalby,Population,Population,UCL,Dalby,y,,\r\n")
+    header = ["folder", "file", "sheet", "section", "block", "row_label", "sub_label", "note"]
+    new = [dict(zip(header, ["Mitchell", "New", "Population", "UCL", "Mitchell", "z", "", ""]))]
+    assert replace_web_map(path, MITCHELL, new, header) == 1
+    assert path.read_bytes() == (
+        b"folder,file,sheet,section,block,row_label,sub_label,note\r\n"
+        b"Dalby,Population,Population,UCL,Dalby,y,,\r\n"
+        b"Mitchell,New,Population,UCL,Mitchell,z,,\r\n")
