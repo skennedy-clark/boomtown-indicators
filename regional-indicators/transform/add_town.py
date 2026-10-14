@@ -690,6 +690,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--visible", action="store_true", help="show Excel while the town is added")
     args = parser.parse_args(argv)
 
+    if not args.workbook.is_file():
+        print(f"Workbook not found: {args.workbook}")
+        return 2
+
     from config import get_config
     config = get_config()
     town, template = find_town(config, args.town), find_town(config, args.like)

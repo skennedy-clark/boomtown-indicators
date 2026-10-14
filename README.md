@@ -300,6 +300,38 @@ series still out of date is listed. This step is part of
 (chart filters need Excel 2013 or later) and has been written for Excel on
 Windows.
 
+### Add a town
+
+1. Add the town to `regional-indicators/towns.toml` (codes and stations;
+   the file's header explains each field) and run the fetchers for it:
+
+   ```bash
+   python regional-indicators/run_update.py --towns Emerald
+   ```
+
+2. Add it to the workbook, copied from a similar town (its page, its rows
+   on each data sheet, and its lines in `web_export_map.csv`):
+
+   ```bash
+   python regional-indicators/transform/add_town.py "Indicators Data-Charts 2026.xlsx" \
+       --town Emerald --like Moranbah --dry-run     # list what would be added
+   python regional-indicators/transform/add_town.py "Indicators Data-Charts 2026.xlsx" \
+       --town Emerald --like Moranbah               # add it (through Excel)
+   ```
+
+   The original workbook is saved first as "... (before adding Emerald).xlsx".
+   Where the new town shares an area with an existing one (an LGA or SA2),
+   the existing rows are used. The new rows are empty.
+
+3. Run the writers (or the whole update). A row with no figures yet
+   receives the source's full history, not only the latest year. Sources
+   that publish only the latest year (business counts, non-resident
+   workers by UCL) start from that year.
+
+4. Check the new page: text that names the template town, rainfall
+   station names, and the CSG notice line, which is placed by hand. The
+   add_town report lists what to look at.
+
 ### Build a booklet
 
 ```bash
@@ -316,7 +348,7 @@ the published booklets.
 
 | File | Purpose |
 |---|---|
-| `regional-indicators/towns.toml` | Towns and benchmark regions with their geography codes (postcodes, SA2, LGA, police division, rainfall station). Adding a town or a benchmark region is an edit to this file; its header documents every field. |
+| `regional-indicators/towns.toml` | Towns and benchmark regions with their geography codes (postcodes, SA2, LGA, police division, rainfall station). A new town starts here (see "Add a town"); its header documents every field. |
 | `regional-indicators/config.py` | Year range (`YEAR_END` defaults to the last complete year; the end-to-end run sets it from the starting workbook), paths, `SILO_EMAIL`. |
 | `regional-indicators/web_export_map.csv` | One line per website CSV: town folder, file name, and the sheet, section, block and row it is read from. |
 | `regional-indicators/verified_overrides.toml` | Values checked by hand that are to be written despite an audit flag. |
@@ -393,6 +425,7 @@ regional-indicators/
             update_charts.py   brings chart series up to the latest year
         web_export.py          website CSV folder from the workbook
         chart_audit.py         lists chart series that do not show the latest year
+        add_town.py            adds a town to the workbook, copied from a similar town
         data_folder.py         builds the "1 Data" folder of source files
         to_csv.py              website CSVs from the cache (earlier approach; web_export.py is the current export)
         booklet/               booklet generation (Word)
