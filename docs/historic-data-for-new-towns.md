@@ -18,7 +18,7 @@ without a fetcher have to be entered by hand.
 | Income (postcode) | ATO data.gov.au package `taxation-statistics-postcode-data`, one Table 6 per income year | `run_update.py --only income_history`, then the writers. 2010-11 has no average for taxable individuals |
 | Housing | QGSO QRSIS series for the town's LGA and SA2 | Writers |
 | Crime, rainfall, education | The current fetchers' sources hold the history | Writers |
-| Fuel | RACQ Annual Fuel Price Report (towns it names). For other towns, the Queensland fuel price open data (site prices from 2019) may do, if its annual averages agree with RACQ's where both exist; not yet compared | Not yet |
+| Fuel | RACQ Annual Fuel Price Report for the towns it names. Earlier years: every RACQ annual report since 2011 (RACQ's reports page, see Links), back to 2009; RACQ's list of towns changes, so a town may be in older reports only (Charleville: 2009-2016, not monitored after August 2017). Other Queensland towns: the Queensland fuel price open data, site price changes from 2019 (fetcher `fuel_qld`, part of the annual run). Its annual averages agree with RACQ's to within 1.4 c/L for Goondiwindi and Roma in every year 2019-2025, and within 5 c/L for Dalby and Emerald | `run_update.py --only fuel_history`, then the writers. Emerald 2012-2025 (RACQ); Charleville 2012-2016 (RACQ), 2017-2018 blank, 2019 onwards (open data, 3 sites); Mitchell 2019 onwards (open data, 2 sites; in no RACQ report) |
 
 ## Links
 
@@ -33,5 +33,6 @@ without a fetcher have to be entered by hand.
   https://archive.qgso.qld.gov.au/products/tables/proj-pop-medium-series-sa2-sa3-sa4-qld/proj-pop-medium-series-sa2-sa3-sa4-qld-2018-ed.xlsx
 - Non-resident population projections 2022 edition (Bowen and Galilee Basins):
   https://www.qgso.qld.gov.au/issues/3376/bowen-galilee-basins-non-resident-population-projections-2022-2026.pdf
+- RACQ Annual Fuel Price Reports 2010 onwards: https://www.racq.com.au/about-us/advocacy/reports-and-research
 - Queensland fuel price open data: https://www.data.qld.gov.au/dataset/fuel-price-reporting-2019-2022
   (and the later `fuel-price-reporting-*` datasets)

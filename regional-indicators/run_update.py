@@ -11,7 +11,7 @@ Usage (from the repository root):
     python regional-indicators/run_update.py --only income      # selected fetchers
     python regional-indicators/run_update.py --skip crime_qps   # all but these
     python regional-indicators/run_update.py --towns Roma Dalby # selected towns
-    python regional-indicators/run_update.py --only business_history income_history
+    python regional-indicators/run_update.py --only business_history income_history fuel_history
                                                                 # earlier years, after adding a town
     python regional-indicators/run_update.py --force            # ignore the cache
     python regional-indicators/run_update.py --validate         # check towns.toml and exit
@@ -52,6 +52,8 @@ from fetchers.fetch_narrabri_sales_rent import NarrabriSalesRentFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 from fetchers.fetch_business import ABSBusinessFetcher
 from fetchers.fetch_fuel import RACQFuelFetcher
+from fetchers.fetch_fuel_qld import QldFuelOpenDataFetcher
+from fetchers.fetch_fuel_history import RACQFuelHistoryFetcher
 from fetchers.fetch_schools import ACARASchoolsFetcher
 from fetchers.fetch_business_history import ABSBusinessHistoryFetcher
 from fetchers.fetch_income_history import ATOIncomeHistoryFetcher
@@ -74,14 +76,16 @@ FETCHER_REGISTRY: dict[str, type] = {
     "qgso_housing":      QGSOHousingFetcher,
     "business":          ABSBusinessFetcher,
     "fuel":              RACQFuelFetcher,      # petrol prices (RACQ Annual Fuel Price Report)
+    "fuel_qld":          QldFuelOpenDataFetcher,  # petrol prices for towns RACQ does not name (Qld open data)
     "schools":           ACARASchoolsFetcher,  # school enrolments and staff (ACARA School Profile)
     "business_history":  ABSBusinessHistoryFetcher,  # earlier years, for a town just added (on request)
     "income_history":    ATOIncomeHistoryFetcher,    # earlier years, for a town just added (on request)
+    "fuel_history":      RACQFuelHistoryFetcher,     # earlier years, for a town just added (on request)
 }
 
 # Run only when named with --only: their sources do not change from year to
 # year, and they are needed only when a town is added to the workbook.
-ON_REQUEST = {"business_history", "income_history"}
+ON_REQUEST = {"business_history", "income_history", "fuel_history"}
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────

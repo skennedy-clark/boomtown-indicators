@@ -23,8 +23,17 @@ Locations are taken from the sheet, not from configuration. Every row
 in the section that is followed by an "Average RULP Price (cents)" row
 is a location block, and its column A text is looked up in the report's
 list of locations (case-insensitive, surrounding whitespace ignored).
-A block whose name the report does not publish is reported and left
-unchanged. To add a location, add a block to the sheet.
+A block whose name the report does not publish takes its figures from
+cache/fuel/qld_open_data_ulp_annual.json (fetch_fuel_qld.py, the
+Queensland fuel price open data) if the town is there, and is reported
+and left unchanged otherwise. To add a location, add a block to the
+sheet.
+
+A block with no figures before the year written (a town just added)
+also receives its earlier years: from the same source, and for years
+that source does not hold, from cache/fuel/racq_rulp_history.json
+(fetch_fuel_history.py, every RACQ annual report since 2011) if it has
+been fetched. Rows that already hold earlier figures are not changed.
 
 Only the report year is written. The report also carries about eleven
 years of history, which is passed to the historical audit; earlier
@@ -58,6 +67,8 @@ SECTION_HEADER  = "Fuel"
 INDICATOR_LABEL = "Average RULP Price (cents)"
 FIRST_YEAR_COLUMN = 2          # column B
 CACHE_FILE      = "racq_rulp_annual.json"
+OPEN_DATA_FILE  = "qld_open_data_ulp_annual.json"   # fetch_fuel_qld.py, for towns RACQ does not name
+HISTORY_FILE    = "racq_rulp_history.json"          # fetch_fuel_history.py, earlier years for new rows
 
 
 def _is_year(value) -> bool:
@@ -139,8 +150,14 @@ def _read_existing_series(sheet, header_row: int, row: int, exclude_col: int) ->
     return series
 
 
-def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
+def write_fuel(sheet, data: dict, open_data: dict | None = None,
+               history: dict | None = None) -> tuple[list[str], int, int]:
     """Audit and write the report year's price for every location block.
+
+    open_data: figures from fetch_fuel_qld.py (Queensland fuel price open
+        data), used only for a block that RACQ's report does not name.
+    history: figures from fetch_fuel_history.py (earlier RACQ reports),
+        used only to fill a new row's years that its own source lacks.
 
     Separate from the Excel session handling so that it can be run
     against any object with the xlwings Sheet interface (see
@@ -151,8 +168,12 @@ def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
     written_count = 0
     flagged_count = 0
 
-    year = int(data["report_year"])
+    racq_year = int(data["report_year"])
     by_name = {name.strip().lower(): series for name, series in data["locations"].items()}
+    open_by_name = {name.strip().lower(): series
+                    for name, series in (open_data or {}).get("locations", {}).items()}
+    history_by_name = {name.strip().lower(): series
+                       for name, series in (history or {}).get("locations", {}).items()}
 
     labels = _column_a(sheet)
     header_row = _find_section_header_row(labels)
@@ -165,6 +186,11 @@ def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
 
     for town, row in blocks:
         series = by_name.get(town.lower())
+        year, source_note = racq_year, ""
+        if series is None and town.lower() in open_by_name:
+            series = open_by_name[town.lower()]
+            year = int(open_data["report_year"])
+            source_note = " (Queensland fuel price open data; RACQ does not report this town)"
         if series is None:
             results.append(
                 f"{town}: SKIPPED — RACQ's report has no location called '{town}'. "
@@ -182,7 +208,10 @@ def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
 
         col = _find_year_column(sheet, header_row, year)
         cell = sheet.cells(row, col)
-        filled = backfill_new_row(sheet, row, col, year, source_series)
+        fill_series = {int(y): v for y, v in history_by_name.get(town.lower(), {}).items()}
+        fill_series.update(source_series)
+        filled = backfill_new_row(sheet, row, col, year, fill_series)
+        from_history = sorted(y for y in filled if y not in source_series)
         existing = _read_existing_series(sheet, header_row, row, exclude_col=col)
         report = WriteAuditReport(
             audit_cell(cell, value),
@@ -201,13 +230,26 @@ def write_fuel(sheet, data: dict) -> tuple[list[str], int, int]:
             if differing:
                 detail = ", ".join(f"{y} sheet {existing[y]} vs report {source_series[y]}" for y in differing)
                 note = f" (note: earlier years differ from this report, not changed — {detail})"
-            results.append(f"{town}: WRITTEN {year} = {value} -> {cell.address}{note}{filled_note(filled)}")
+            history_note = f" (from earlier RACQ reports: {_year_ranges(from_history)})" if from_history else ""
+            results.append(f"{town}: WRITTEN {year} = {value} -> {cell.address}{note}"
+                           f"{filled_note(filled)}{history_note}{source_note}")
             written_count += 1
         else:
             results.append(f"{town}: FLAGGED, not written — {report.summary_line()}")
             flagged_count += 1
 
     return results, written_count, flagged_count
+
+
+def _year_ranges(years: list[int]) -> str:
+    """[2012, 2013, 2014, 2016] -> "2012-2014, 2016"."""
+    parts, start = [], None
+    for i, year in enumerate(years):
+        start = year if start is None else start
+        if i + 1 == len(years) or years[i + 1] != year + 1:
+            parts.append(str(year) if start == year else f"{start}-{year}")
+            start = None
+    return ", ".join(parts)
 
 
 def update_fuel(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
@@ -219,6 +261,14 @@ def update_fuel(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list
         )
     with open(cache_path, encoding="utf-8") as f:
         data = json.load(f)
+    open_data = None
+    if (cache_dir / OPEN_DATA_FILE).exists():
+        with open(cache_dir / OPEN_DATA_FILE, encoding="utf-8") as f:
+            open_data = json.load(f)
+    history = None
+    if (cache_dir / HISTORY_FILE).exists():
+        with open(cache_dir / HISTORY_FILE, encoding="utf-8") as f:
+            history = json.load(f)
 
     app = xw.App(visible=visible, add_book=False)
     app.display_alerts = False
@@ -226,7 +276,7 @@ def update_fuel(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list
         wb = app.books.open(str(xlsx_path))
         try:
             sheet = wb.sheets[SHEET_NAME]
-            results, written_count, flagged_count = write_fuel(sheet, data)
+            results, written_count, flagged_count = write_fuel(sheet, data, open_data, history)
             if written_count:
                 wb.save()
         finally:

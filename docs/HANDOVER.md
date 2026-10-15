@@ -108,12 +108,13 @@ When someone has updated a workbook by hand and wants to compare:
 
 `transform/add_town.py` copies a similar town's page and rows (README,
 "Add a town"). The writers then fill the new rows with each source's
-history; `run_update.py --only business_history income_history` fetches
-the earlier years of business counts (ABS releases back to June 2009) and
-postcode income (ATO tables back to 2000-01), which the annual run does
-not need. Non-resident workers by urban centre, the 2018 population
-projections and RACQ fuel prices for towns outside the report have no
-history to fill.
+history; `run_update.py --only business_history income_history fuel_history`
+fetches the earlier years of business counts (ABS releases back to June
+2009), postcode income (ATO tables back to 2000-01) and RACQ fuel prices
+(every annual report since 2011, back to 2009), which the annual run
+does not need. Non-resident workers by urban centre, the 2018 population
+projections and fuel prices before 2019 for towns RACQ has never
+reported have no history to fill.
 
 ## Where things are
 
