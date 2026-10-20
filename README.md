@@ -235,7 +235,7 @@ On Windows `cmd`, substitute the paths in full; in PowerShell use
 | Population (LGA) | `update_population_erp_lga.py` | `population_erp_lga` |
 | Exogenous: rainfall | `update_rainfall.py` | `bom_rainfall` |
 | Exogenous: education | `update_education.py` | `schools` |
-| Exogenous: fuel | `update_fuel.py` | `fuel` |
+| Exogenous: fuel | `update_fuel.py` | `fuel`, `fuel_qld` |
 | Crime | `update_crime.py` | `crime_qps`, `crime_bocsar` |
 | Employment | `update_employment.py` | `salm_unemployment`, `qrsis_labour`, `nsw_labour` |
 | Housing | `update_housing.py` | `qgso_housing`, `narrabri_approvals`, `narrabri_sales_rent` |
@@ -304,12 +304,13 @@ Windows.
 
 1. Add the town to `regional-indicators/towns.toml` (codes and stations;
    the file's header explains each field) and run the fetchers for it,
-   including the two that fetch earlier years of business counts and
-   postcode income (they are not part of the annual run):
+   including the three that fetch earlier years of business counts,
+   postcode income and RACQ fuel prices (they are not part of the annual
+   run):
 
    ```bash
    python regional-indicators/run_update.py --towns Emerald
-   python regional-indicators/run_update.py --only business_history income_history
+   python regional-indicators/run_update.py --only business_history income_history fuel_history
    ```
 
 2. Add it to the workbook, copied from a similar town (its page, its rows
@@ -343,7 +344,10 @@ Windows.
    - population projections: the workbook holds the 2018 edition, which
      QGSO no longer publishes; the 2025 edition is available but would
      differ from the other towns' rows;
-   - fuel prices for towns not in the RACQ report.
+   - fuel prices for a town RACQ has never reported before 2019 (the
+     Queensland open data used for it starts in 2019). A town RACQ
+     reported in earlier years (Charleville, to 2016) gets those years
+     from the earlier reports; years with no figure stay blank.
 
 4. Check the new page: text that names the template town, rainfall
    station names, and the CSG notice line, which is placed by hand. The
@@ -399,6 +403,8 @@ Towns currently configured:
 | `crime_bocsar` | Offence rates, New South Wales | NSW Bureau of Crime Statistics and Research |
 | `bom_rainfall` | Rainfall | SILO Patched Point Dataset (Bureau of Meteorology stations) |
 | `fuel` | Average petrol price | RACQ Annual Fuel Price Report |
+| `fuel_qld` | Average petrol price, for towns RACQ does not name (from 2019) | Queensland fuel price reporting open data (data.qld.gov.au) |
+| `fuel_history` | Average petrol price, earlier years for a town just added (on request) | RACQ Annual Fuel Price Reports, 2011 onwards |
 | `schools` | Enrolments and teaching staff | ACARA School Profile |
 
 Source URLs, file layouts and the method used for each indicator are

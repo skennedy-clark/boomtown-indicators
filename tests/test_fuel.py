@@ -134,3 +134,52 @@ def test_earlier_year_that_differs_from_the_report_is_noted_not_changed(fuel_she
     dalby = next(line for line in results if line.startswith("Dalby"))
     assert "2023 sheet 174.4 vs report 178.4" in dalby
     assert (10, 4) not in fuel_sheet.writes            # the 2023 cell is not written
+
+
+# ── Queensland fuel price open data (fetch_fuel_qld.py) ────────────────────
+
+def test_open_data_fills_a_block_that_racq_does_not_name(fuel_sheet):
+    from update_fuel import write_fuel
+
+    open_data = {"report_year": 2025, "locations": {"Chinchilla": {"2024": 182.0, "2025": 179.5},
+                                                    "Dalby": {"2025": 999.0}}}
+    results, written, flagged = write_fuel(fuel_sheet, DATA, open_data)
+    assert (written, flagged) == (3, 0)
+    assert fuel_sheet.writes[(12, 6)] == 179.5
+    assert fuel_sheet.writes[(10, 6)] == 171.2          # RACQ still wins where it names the town
+    assert any(line.startswith("Chinchilla: WRITTEN") and "open data" in line for line in results)
+
+
+OPEN_DATA_CSV = """SiteId,Site_Name,Site_Brand,Sites_Address_Line_1,Site_Suburb,Site_State,Site_Post_Code,Site_Latitude,Site_Longitude,Fuel_Type,Price,TransactionDateutc
+1,A,B,x,EMERALD,QLD,4720,0,0,Unleaded,1800,01/01/2024 00:00
+1,A,B,x,EMERALD,QLD,4720,0,0,Unleaded,2000,01/07/2024 00:00
+1,A,B,x,EMERALD,QLD,4720,0,0,Diesel,2100,01/01/2024 00:00
+2,C,D,y,EMERALD,QLD,4720,0,0,Unleaded,1900,01/01/2024 00:00
+2,C,D,y,EMERALD,QLD,4720,0,0,Unleaded,9999,01/03/2024 00:00
+2,C,D,y,EMERALD,QLD,4720,0,0,Unleaded,1910,01/04/2024 00:00
+3,E,F,z,BRISBANE,QLD,4000,0,0,Unleaded,1500,01/01/2024 00:00
+4,G,H,w,EMERALD,QLD,4720,0,0,Unleaded,1950,01/12/2024 00:00
+"""
+
+
+def test_open_data_annual_mean_weights_prices_by_days_and_drops_keying_errors():
+    from collections import defaultdict
+    from fetchers.fetch_fuel_qld import annual_means, read_changes
+
+    changes = defaultdict(list)
+    read_changes(OPEN_DATA_CSV, {"4720"}, changes)
+    means = annual_means(changes, range(2024, 2025))
+    mean, sites = means[("4720", 2024)]
+    # Site 1: 182 days at 180.0, 184 at 200.0; site 2: 999.9 ignored, so 91 days
+    # at 190.0 then 275 at 191.0; site 4 has one month only and does not count.
+    assert sites == 2
+    expected = ((182 * 180.0 + 184 * 200.0) / 366 + (91 * 190.0 + 275 * 191.0) / 366) / 2
+    assert abs(mean - expected) < 1e-9
+
+
+def test_open_data_file_month():
+    from fetchers.fetch_fuel_qld import file_month
+    assert file_month("Queensland Fuel Prices December 2019") == (2019, 12)
+    assert file_month(" Queensland Fuel Prices  March 2024") == (2024, 3)
+    assert file_month("fuel-prices-2025-06-changes-only.csv") == (2025, 6)
+    assert file_month("Fuel price reporting 2019-2022") is None
