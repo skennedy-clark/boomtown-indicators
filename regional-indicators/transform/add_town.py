@@ -50,9 +50,12 @@ What is added, for each block of the template town
 
   web_export_map.csv: the template's lines are copied for the new town.
 
+  The rainfall station row is labelled with the town's own station
+  (bom_station in towns.toml, named from BOM's stations list; see
+  fetchers/bom_stations.py), replacing the template town's station.
+
 What has to be checked by hand (listed in the report)
-  - text that names the template town in other ways (station names
-    such as "Roma Airport", commentary);
+  - text that names the template town in other ways (commentary);
   - the CSG notice line on the charts, which is placed by hand;
   - blocks for sources that do not cover the new town stay empty.
 
@@ -573,6 +576,10 @@ def apply_plan(workbook: Path, plan: Plan, visible: bool = False, replace: bool 
                     _clear_and_relabel(sheet, dest, t.size, template, town, insert.label, t.label)
                     report.append(f"{sheet_name}: {insert.label} added at row {dest} ({t.size} rows).")
 
+            # 2b. The rainfall station row names the town's own station.
+            if "Exogenous" in names:
+                report += label_rainfall_station(wb.sheets["Exogenous"], town)
+
             # 3. Point the copied page's charts at the new rows.
             changed = unchanged = failed = 0
             for chart_object in page_charts(page.api):
@@ -618,6 +625,52 @@ def apply_plan(workbook: Path, plan: Plan, visible: bool = False, replace: bool 
     finally:
         app.quit()
     return report
+
+
+def _rainfall_station_row(column_a: list, town_name: str) -> int | None:
+    """The row (1-based) of `town_name`'s station in the Rainfall section
+    of the Exogenous sheet: the row after the town's heading, followed by
+    the Summer and Winter rows. `column_a` is the sheet's column A."""
+    in_rainfall = False
+    for index, value in enumerate(column_a):
+        text = str(value).strip() if value is not None else ""
+        if text in SECTION_HEADINGS:
+            in_rainfall = text == "Rainfall"
+            continue
+        if not in_rainfall or norm(text) != norm(town_name):
+            continue
+        below = [str(v or "").strip() for v in column_a[index + 2:index + 4]]
+        if len(below) == 2 and below[0].startswith("Summer") and below[1].startswith("Winter"):
+            return index + 2
+    return None
+
+
+def label_rainfall_station(sheet, town, names: dict | None = None) -> list[str]:
+    """Write the town's own station into its rainfall station row ("Mitchell
+    Post Office 043020"), from towns.toml (bom_station) and BOM's stations
+    list, when the row names another station (one copied from the template
+    town). A label that already contains the town's station number is
+    kept. Returns report lines."""
+    station = str(getattr(town, "bom_station", "") or "").strip()
+    if not station:
+        return [f"Exogenous: {town.name} has no bom_station in towns.toml; check its rainfall station row."]
+    last_row = sheet.used_range.last_cell.row
+    column_a = sheet.range((1, 1), (last_row, 1)).value
+    row = _rainfall_station_row(column_a if isinstance(column_a, list) else [column_a], town.name)
+    if row is None:
+        return [f"Exogenous: no rainfall block for {town.name}."]
+    label = str(sheet.cells(row, 1).value or "").strip()
+    if any(int(n) == int(station) for n in re.findall(r"\d{5,6}", label)):
+        return []
+    from fetchers.bom_stations import station_label, station_names
+    if names is None:
+        names = station_names()
+    new = station_label(station, names)
+    if new is None:
+        return [f"Exogenous: rainfall station row {row} reads {label!r}; station {station} is not in "
+                f"BOM's stations list (or the list could not be downloaded), so the label was not changed."]
+    sheet.cells(row, 1).value = new
+    return [f"Exogenous: rainfall station label {label!r} -> {new!r} (row {row})."]
 
 
 def _free_template_axes(chart) -> str:

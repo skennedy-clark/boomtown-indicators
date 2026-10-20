@@ -359,10 +359,12 @@ Windows.
        --page Emerald
    ```
 
-5. Check the new page: text that names the template town, the rainfall
-   station row on the Exogenous sheet (its name and number are copied
-   from the template town's), and the CSG notice line, which is placed
-   by hand. The add_town report lists what to look at.
+5. Check the new page: text that names the template town and the CSG
+   notice line, which is placed by hand. The add_town report lists what
+   to look at. The rainfall station row on the Exogenous sheet is
+   labelled by add_town with the town's own station (`bom_station` in
+   towns.toml, named from BOM's stations list), for example "Mitchell
+   Post Office 043020".
 
 ### Build a booklet
 

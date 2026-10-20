@@ -59,6 +59,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(1, str(Path(__file__).parent.parent.parent))   # regional-indicators, for fetchers.bom_stations
 from base import as_number, backfill_new_row  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 
@@ -200,11 +201,19 @@ def _station_label_note(sheet, station_row: int, station_number: str) -> str:
     wanted = str(station_number).lstrip("0")
     numbers_in_label = [n.lstrip("0") for n in re.findall(r"\d{5,6}", label)]
     if numbers_in_label and wanted not in numbers_in_label:
+        suggestion = ""
+        try:
+            from fetchers.bom_stations import station_label, station_names
+            new = station_label(station_number, station_names())
+            if new:
+                suggestion = f" BOM's name for that station gives the label {new!r}."
+        except Exception:
+            pass
         return (
             f"note: the sheet's label reads {label!r} but towns.toml uses "
-            f"station {station_number} for this town. Fine if the station "
-            f"was replaced -- consider updating the label; otherwise check "
-            f"towns.toml."
+            f"station {station_number} for this town.{suggestion} Fine if the "
+            f"station was replaced -- consider updating the label; otherwise "
+            f"check towns.toml."
         )
     return ""
 

@@ -55,6 +55,18 @@ a real question, not just against whether it makes today's run pass.
 ## Inbox
 _(untriaged — add here, sort later)_
 
+- [ ] **Audit for hard-coded row numbers (and other fixed positions) in
+  the writers and tools.** Adding a town inserts rows, so any fixed row
+  number points at the wrong place afterwards. Found so far:
+  `update_crime.py` kept the Narrabri/NSW year header at row 162; after
+  add_town inserted rows it wrote "2025" into Wallumbilla's Good Order
+  Offences cell (fixed 2026-10-20: the row is now found on the sheet).
+  Check every writer, `add_town.py`, `update_charts.py`, `web_export.py`
+  and the booklet code for constants such as `*_ROW = <n>` above row 2,
+  fixed `range("A123")` addresses and fixed block offsets; each should
+  find its row from labels on the sheet. Add a test that inserts rows
+  above each fixed-position block and runs the writer.
+
 - Checked whether the 5 flagged "isolated outlier" years (Isaac 2012,
   Toowoomba LGA 2013, Dysart 2015, Moranbah 2012 & 2016, Roma 2018,
   Toowoomba UCL 2023) match problems Steve already found and fixed
