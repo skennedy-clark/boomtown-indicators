@@ -43,7 +43,10 @@ What is added, for each block of the template town
   Every chart series that read the template's rows is pointed at the
   new town's rows; series that read other rows (Queensland, Brisbane)
   are left as they are. The town name is replaced in the page's cells,
-  chart titles and text boxes, and every replacement is listed.
+  chart titles and text boxes, and every replacement is listed. A fixed
+  value-axis maximum or minimum on a copied chart was set for the
+  template town's figures; it is set back to automatic (a minimum of 0
+  is kept), and every chart changed is listed.
 
   web_export_map.csv: the template's lines are copied for the new town.
 
@@ -600,6 +603,10 @@ def apply_plan(workbook: Path, plan: Plan, visible: bool = False, replace: bool 
                             report.append(f"  chart title: {title!r} -> {new_title!r}")
                 except Exception:
                     pass
+                freed = _free_template_axes(chart)
+                if freed:
+                    report.append(f"  chart at {chart_object.TopLeftCell.Address}: {freed} "
+                                  f"(set for {template.name}) set to automatic")
             report.append(f"Charts: {changed} series now read {town.name}'s rows, {unchanged} unchanged, {failed} failed.")
 
             # 4. The town's name in the page's cells and text boxes.
@@ -611,6 +618,28 @@ def apply_plan(workbook: Path, plan: Plan, visible: bool = False, replace: bool 
     finally:
         app.quit()
     return report
+
+
+def _free_template_axes(chart) -> str:
+    """Set a copied chart's fixed value-axis limits back to automatic: the
+    template's scale was chosen for the template town's figures. A fixed
+    minimum of 0 is kept. Returns what was changed ("" if nothing)."""
+    changed = []
+    for group, name in ((1, "value axis"), (2, "secondary value axis")):
+        try:
+            axis = chart.Axes(2, group)                                 # xlValue
+        except Exception:
+            continue                                                    # no such axis
+        try:
+            if not axis.MaximumScaleIsAuto:
+                changed.append(f"{name} maximum {axis.MaximumScale:g}")
+                axis.MaximumScaleIsAuto = True
+            if not axis.MinimumScaleIsAuto and axis.MinimumScale != 0:
+                changed.append(f"{name} minimum {axis.MinimumScale:g}")
+                axis.MinimumScaleIsAuto = True
+        except Exception:
+            continue
+    return ", ".join(changed)
 
 
 def _clear_and_relabel(sheet, first: int, size: int, template, town, new_label: str, old_label: str) -> None:

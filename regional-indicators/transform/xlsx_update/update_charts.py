@@ -26,6 +26,10 @@ A chart that shows an empty, unlabelled category after its data (a
 spacer column with no year in the header and no figure in any of the
 chart's series) has that category filtered out.
 
+A chart whose fixed value-axis maximum or minimum its data go beyond
+(chart_audit.axis_limits) has that limit set back to automatic, so the
+bars or lines are no longer cut off at the edge of the plot.
+
 Series with any other status are left as they are, and years with no
 figures stay hidden. Nothing else is changed: chart type, formatting,
 titles, axes and series names are not touched, and no chart is added or
@@ -68,7 +72,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from chart_audit import CHANGE_STATUSES, as_year, audit, parse_reference      # noqa: E402
+from chart_audit import CHANGE_STATUSES, as_year, audit, axis_limits, parse_reference      # noqa: E402
 
 
 # ── Series formulas ────────────────────────────────────────────────────────────
@@ -157,21 +161,24 @@ class Plan:
     changes: list[Change]
     unhide: dict[tuple[str, str], set[int]]          # (page, chart position) -> years to show
     hide: dict[tuple[str, str], set[int]] = None     # (page, chart position) -> spacer category positions
+    axes: dict[tuple[str, str], list] = None         # (page, chart position) -> chart_audit.AxisLimit
 
     def __post_init__(self):
         if self.hide is None:
             self.hide = {}
+        if self.axes is None:
+            self.axes = {}
 
     @property
     def charts(self) -> set[tuple[str, str]]:
-        return {(c.page, c.chart_at) for c in self.changes} | set(self.unhide) | set(self.hide)
+        return {(c.page, c.chart_at) for c in self.changes} | set(self.unhide) | set(self.hide) | set(self.axes)
 
     @property
     def pages(self) -> set[str]:
         return {page for page, _ in self.charts}
 
     def __bool__(self) -> bool:
-        return bool(self.changes or self.unhide or self.hide)
+        return bool(self.changes or self.unhide or self.hide or self.axes)
 
 
 def build_plan(series_list, pages: set[str] | None = None) -> Plan:
@@ -222,7 +229,23 @@ def plan_lines(plan: Plan) -> list[str]:
                 f"{change.label}: extend {change.old_values} -> {change.values}"
                 + (f"   axis: {change.old_categories} -> {change.categories}" if change.categories else "")
             )
+        for limit in plan.axes.get((page, chart_at), []):
+            lines.append(f"{limit.describe()}: set the axis limit to automatic")
     return lines
+
+
+def free_axis(chart, limit) -> str:
+    """Set the fixed value-axis limit(s) that cut off the data back to
+    automatic. Returns "" on success, or the problem."""
+    try:
+        axis = chart.Axes(2, limit.axis_group)                      # xlValue
+        if limit.maximum is not None and limit.data_peak > limit.maximum:
+            axis.MaximumScaleIsAuto = True
+        if limit.minimum is not None and limit.data_low < limit.minimum:
+            axis.MinimumScaleIsAuto = True
+    except Exception as exc:
+        return f"the value axis could not be changed ({exc})"
+    return ""
 
 
 class PageIndex:
@@ -453,9 +476,18 @@ def update_page(page: str, chart_objects, plan: Plan, resolve=None) -> tuple[lis
                 counts["charts_tidied"] += 1
                 results.append(f"{page} {where}: hid {hidden} empty, unlabelled categor{'y' if hidden == 1 else 'ies'}")
 
+        for limit in plan.axes.get((page, where), []):
+            problem = free_axis(chart, limit)
+            if problem:
+                counts["failed"] += 1
+                results.append(f"{page} {where}: FAILED, {problem}")
+            else:
+                counts["axes_freed"] += 1
+                results.append(f"{limit.describe()}: axis limit set to automatic")
+
     missed = [c for c in index.changes if c not in applied]
     counts["not_found"] = len(missed)
-    unseen_charts = sorted({chart_at for (p, chart_at) in set(plan.unhide) | set(plan.hide)
+    unseen_charts = sorted({chart_at for (p, chart_at) in set(plan.unhide) | set(plan.hide) | set(plan.axes)
                             if p == page and chart_at not in seen})
     counts["not_found"] += len(unseen_charts)
     if missed or unseen_charts:
@@ -487,13 +519,16 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
                 f"Pages with charts: {', '.join(sorted(known_pages))}"
             )
     plan = build_plan(series_list, pages)
+    for limit in axis_limits(xlsx_path, pages):
+        plan.axes.setdefault((limit.page, limit.chart_at), []).append(limit)
     in_scope = [s for s in series_list if pages is None or s.page in pages]
     statuses = Counter(s.status for s in in_scope)
     results = [
         f"{len(in_scope)} series in {len({(s.page, s.chart_at) for s in in_scope})} charts on "
         f"{len({s.page for s in in_scope})} page(s): "
         f"{statuses.get('UNHIDE', 0)} need filtered years shown, {statuses.get('EXTEND', 0)} need a longer range; "
-        f"{len(plan.charts)} charts to change."
+        f"{len(plan.charts)} charts to change"
+        + (f" ({sum(len(v) for v in plan.axes.values())} with a fixed axis limit that cuts off data)." if plan.axes else ".")
     ]
     left_alone = {k: v for k, v in statuses.items() if k not in CHANGE_STATUSES and k != "OK"}
     if left_alone:
@@ -526,7 +561,7 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
                 lines, counts = update_page(page, page_charts(wb.sheets[page].api), plan, resolve)
                 results += lines
                 totals += counts
-            if totals["extended"] or totals["charts_shown"] or totals["charts_tidied"]:
+            if totals["extended"] or totals["charts_shown"] or totals["charts_tidied"] or totals["axes_freed"]:
                 wb.save()
         finally:
             wb.close()
@@ -534,7 +569,11 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
         app.quit()
 
     remaining = []
-    if totals["extended"] or totals["charts_shown"] or totals["charts_tidied"]:
+    still_cut_off = []
+    if totals["extended"] or totals["charts_shown"] or totals["charts_tidied"] or totals["axes_freed"]:
+        still_cut_off = axis_limits(xlsx_path, pages)
+        for limit in still_cut_off:
+            results.append(f"STILL CUT OFF after saving: {limit.describe()}")
         remaining = [
             s for s in audit(xlsx_path, last_year)
             if (pages is None or s.page in pages) and s.status in CHANGE_STATUSES
@@ -544,12 +583,13 @@ def update_charts(xlsx_path: Path, pages: set[str] | None, last_year: int,
                 f"STILL OUT OF DATE after saving: {s.page} {s.chart_at} [{s.series_name or s.series_no}] "
                 f"{s.status}: shows {s.shown_values}, data to {s.data_to_year}"
             )
-    flagged = totals["failed"] + totals["not_found"] + len(remaining)
+    flagged = totals["failed"] + totals["not_found"] + len(remaining) + len(still_cut_off)
     results += [
         "",
         f"Summary: {totals['charts_shown']} charts now show the new year(s), "
         f"{totals['extended']} series ranges extended, {totals['charts_tidied']} charts had empty "
-        f"spacer categories hidden; {flagged} flagged for review "
+        f"spacer categories hidden, {totals['axes_freed']} axis limits set to automatic; "
+        f"{flagged} flagged for review "
         f"({totals['failed']} could not be changed, {totals['not_found']} not found in Excel, "
         f"{len(remaining)} series still out of date after saving).",
     ]

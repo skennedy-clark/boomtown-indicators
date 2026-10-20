@@ -16,7 +16,7 @@ Sheet layout:
   offences (person, property, other)". Column A is unique within a
   block and is used to find rows.
   Narrabri and the NSW benchmark: a separate block lower on the sheet
-  with its own copy of the year header row (BOCSAR_YEAR_HEADER_ROW) and
+  with its own copy of the year header row (found by _bocsar_header_row) and
   BOCSAR's offence categories. The aggregate rate sits on the name row
   itself, not on a separate total row.
 
@@ -57,7 +57,8 @@ YEAR_HEADER_ROW = 1
 # immediately above it. It is kept in step with row 1 by
 # _mirror_bocsar_year_header. This is specific to the Crime sheet and is
 # deliberately not part of _find_year_column, which other sheets share.
-BOCSAR_YEAR_HEADER_ROW = 162
+# Its row is found on the sheet each time (_bocsar_header_row): adding a
+# town inserts rows above it.
 TOWN_BLOCK_SIZE = 13    # name row + 12 offence-category rows
 
 # Row labels are not defined here. Each fetcher's output carries the
@@ -106,18 +107,45 @@ def _find_year_column(sheet, year: int) -> int:
     return new_col
 
 
+def _bocsar_header_row(sheet) -> int | None:
+    """The row of the Narrabri/NSW block's year header: the first row
+    below row 1 whose column A is empty and whose columns C and D hold
+    two consecutive years. None if there is no such row."""
+    last_row = sheet.used_range.last_cell.row
+    if last_row < 2:
+        return None
+    block = sheet.range((2, 1), (last_row, FIRST_YEAR_COLUMN + 1)).value
+    if last_row == 2:
+        block = [block]
+    for offset, cells in enumerate(block):
+        label = cells[0]
+        first, second = (as_number(v) for v in cells[FIRST_YEAR_COLUMN - 1:FIRST_YEAR_COLUMN + 1])
+        if label not in (None, "") or first is None or second is None:
+            continue
+        if first.is_integer() and 1990 <= first <= 2100 and second == first + 1:
+            return offset + 2
+    return None
+
+
 def _mirror_bocsar_year_header(sheet, year: int) -> bool:
     """Copy the year in row 1 into the Narrabri/NSW block's header row.
 
     Idempotent: writes only when the block's header cell for that column
-    is missing or different. Returns True if a cell was written, so the
+    is missing or different, and only into a row that reads as that
+    block's year header. Returns True if a cell was written, so the
     caller knows the workbook needs saving.
     """
+    header_row = _bocsar_header_row(sheet)
+    if header_row is None:
+        return False
     col = _find_year_column(sheet, year)  # the column already exists by this point; nothing is created here
-    existing = sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).value
+    previous = as_number(sheet.cells(header_row, col - 1).value)
+    if previous != year - 1:
+        return False
+    existing = sheet.cells(header_row, col).value
     if existing != year:
-        sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).value = year
-        sheet.cells(BOCSAR_YEAR_HEADER_ROW, col).number_format = "General"
+        sheet.cells(header_row, col).value = year
+        sheet.cells(header_row, col).number_format = "General"
         return True
     return False
 

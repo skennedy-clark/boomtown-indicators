@@ -247,3 +247,30 @@ def test_backfill_uses_the_fuller_of_stacked_year_headers(tmp_path):
         ("Earners", None, None, None, None, None, 9.0),
     ])
     assert backfill_new_row(sheet, 3, 7, 2024, {2020: 5.0, 2021: 6.0, 2022: 7.0, 2023: 8.0}) == [2020, 2021, 2022, 2023]
+
+
+# ── Fixed axis limits on a copied chart ────────────────────────────────────────
+
+def test_template_axis_limits_are_set_to_automatic():
+    from types import SimpleNamespace
+    from add_town import _free_template_axes
+
+    primary = SimpleNamespace(MaximumScaleIsAuto=False, MaximumScale=500.0,
+                              MinimumScaleIsAuto=False, MinimumScale=0.0)
+
+    def axes(kind, group):
+        if group == 2:
+            raise RuntimeError("no secondary axis")
+        return primary
+
+    note = _free_template_axes(SimpleNamespace(Axes=axes))
+    assert note == "value axis maximum 500"
+    assert primary.MaximumScaleIsAuto is True and primary.MinimumScaleIsAuto is False
+
+
+def test_automatic_axes_are_left_alone():
+    from types import SimpleNamespace
+    from add_town import _free_template_axes
+
+    axis = SimpleNamespace(MaximumScaleIsAuto=True, MinimumScaleIsAuto=True)
+    assert _free_template_axes(SimpleNamespace(Axes=lambda kind, group: axis)) == ""

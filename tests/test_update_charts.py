@@ -284,6 +284,7 @@ def test_dry_run_lists_changes_without_opening_excel(tmp_path, monkeypatch):
     series = [audited("Roma", "Housing!$C$5:$AE$5", "Housing!$C$1:$AE$1", "UNHIDE", unhide=[2025]),
               audited("Roma", "Income!$C$5:$Y$5", "Income!$C$1:$Y$1", "OK")]
     monkeypatch.setattr(update_charts, "audit", lambda path, last_year: series)
+    monkeypatch.setattr(update_charts, "axis_limits", lambda path, pages=None: [])
     monkeypatch.setitem(sys.modules, "xlwings", None)                  # importing it would fail
     results, flagged = update_charts.update_charts(tmp_path / "book.xlsx", None, 2025, dry_run=True)
     text = "\n".join(results)
@@ -293,3 +294,63 @@ def test_dry_run_lists_changes_without_opening_excel(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="No charts on page"):
         update_charts.update_charts(tmp_path / "book.xlsx", {"Nowhere"}, 2025, dry_run=True)
 
+
+
+# ── Fixed value-axis limits ────────────────────────────────────────────────────
+
+def _stacked_chart_book(tmp_path, maximum):
+    """A data sheet and a page with one stacked column chart whose value
+    axis is fixed at `maximum`."""
+    import openpyxl
+    from openpyxl.chart import BarChart, Reference
+    wb = openpyxl.Workbook()
+    data = wb.active
+    data.title = "Business"
+    data.append(["", 2023, 2024, 2025])
+    data.append(["0k-50k", 200, 210, 228])
+    data.append(["50k-200k", 300, 340, 361])
+    page = wb.create_sheet("Emerald")
+    chart = BarChart()
+    chart.grouping = "stacked"
+    chart.overlap = 100
+    chart.add_data(Reference(data, min_col=2, max_col=4, min_row=2, max_row=3), from_rows=True)
+    chart.y_axis.scaling.max = maximum
+    page.add_chart(chart, "B2")
+    path = tmp_path / "book.xlsx"
+    wb.save(path)
+    return path
+
+
+def test_axis_limits_compare_the_height_of_each_stack(tmp_path):
+    from chart_audit import axis_limits
+    limits = axis_limits(_stacked_chart_book(tmp_path, 500))
+    assert len(limits) == 1
+    limit = limits[0]
+    assert (limit.page, limit.chart_at, limit.maximum, limit.data_peak) == ("Emerald", "B2", 500, 589)
+    assert "above the fixed maximum 500" in limit.describe()
+
+
+def test_axis_limit_that_fits_the_data_is_not_listed(tmp_path):
+    from chart_audit import axis_limits
+    assert axis_limits(_stacked_chart_book(tmp_path, 1000)) == []
+
+
+def test_cut_off_axis_is_set_to_automatic():
+    from chart_audit import AxisLimit
+    from update_charts import Plan, update_page
+
+    axis = SimpleNamespace(MaximumScaleIsAuto=False, MinimumScaleIsAuto=False)
+    calls = []
+
+    def axes(kind, group):
+        calls.append((kind, group))
+        return axis
+
+    chart = fake_chart("$AA$11")
+    chart.Chart.Axes = axes
+    limit = AxisLimit("Emerald", "AA11", "Count of Businesses", 1, None, 500.0, 44.0, 1310.0)
+    plan = Plan([], {}, {}, {("Emerald", "AA11"): [limit]})
+    results, counts = update_page("Emerald", [chart], plan)
+    assert calls == [(2, 1)]
+    assert axis.MaximumScaleIsAuto is True and axis.MinimumScaleIsAuto is False
+    assert counts["axes_freed"] == 1 and "set to automatic" in results[0]

@@ -349,9 +349,20 @@ Windows.
      reported in earlier years (Charleville, to 2016) gets those years
      from the earlier reports; years with no figure stay blank.
 
-4. Check the new page: text that names the template town, rainfall
-   station names, and the CSG notice line, which is placed by hand. The
-   add_town report lists what to look at.
+4. Run the chart step for the new page. Charts whose series were
+   pointed at the new town's rows show empty slots after the last year
+   until this is done, and any axis whose fixed limit cuts off the data
+   is set back to automatic:
+
+   ```bash
+   python regional-indicators/transform/xlsx_update/update_charts.py "Indicators Data-Charts 2026.xlsx" \
+       --page Emerald
+   ```
+
+5. Check the new page: text that names the template town, the rainfall
+   station row on the Exogenous sheet (its name and number are copied
+   from the template town's), and the CSG notice line, which is placed
+   by hand. The add_town report lists what to look at.
 
 ### Build a booklet
 

@@ -63,6 +63,14 @@ mentioned in the note and is not included. When the full range is
 extended, the category (axis label) range is extended with it if it
 ends on the same column.
 
+Fixed value-axis limits: a chart whose value axis has a fixed maximum
+(or minimum) that its data goes beyond draws the bars or lines cut off
+at the edge of the plot. Such charts are listed separately
+(axis_limits); for a stacked chart the height of each stack is compared.
+The chart step (update_charts.py) sets those limits back to automatic.
+A fixed limit can come from a template page (transform/add_town.py) or
+be outgrown by a new year's figure.
+
 With --reference <workbook>, the same audit is run on a second workbook
 and each series is listed with the columns it shows there. Series are paired
 by page, chart position on the page and series order.
@@ -271,6 +279,133 @@ def read_chart_series(workbook_path: Path) -> list[Series]:
                             shown_categories=shown_categories,
                         ))
     return series_list
+
+
+@dataclass
+class AxisLimit:
+    """A chart whose fixed value-axis limit cuts off its data."""
+    page: str
+    chart_at: str
+    chart_title: str
+    axis_group: int                 # 1 primary, 2 secondary (Excel's XlAxisGroup)
+    minimum: float | None           # the fixed limits, None where automatic
+    maximum: float | None
+    data_low: float
+    data_peak: float
+
+    @property
+    def label(self) -> str:
+        return f"{self.page} {self.chart_at}"
+
+    def describe(self) -> str:
+        parts = []
+        if self.maximum is not None and self.data_peak > self.maximum:
+            parts.append(f"data reach {self.data_peak:,.0f}, above the fixed maximum {self.maximum:,.0f}")
+        if self.minimum is not None and self.data_low < self.minimum:
+            parts.append(f"data fall to {self.data_low:,.0f}, below the fixed minimum {self.minimum:,.0f}")
+        axis = "" if self.axis_group == 1 else " (secondary axis)"
+        return f"{self.label} '{self.chart_title}'{axis}: " + "; ".join(parts)
+
+
+AXIS_GROUPS = ("barChart", "bar3DChart", "lineChart", "line3DChart", "areaChart", "area3DChart",
+               "scatterChart", "radarChart")
+
+
+def _number(text: str | None) -> float | None:
+    try:
+        return float(text) if text not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def axis_limits(workbook_path: Path, pages: set[str] | None = None) -> list[AxisLimit]:
+    """Every chart (optionally on `pages`) whose fixed value-axis maximum
+    or minimum its data go beyond. The data are the columns each series
+    shows; for a stacked group, the positive figures of each category are
+    added up."""
+    found: list[AxisLimit] = []
+    pending = []                                   # (page, chart_at, title, group, min, max, [references], stacked)
+    sheets: set[str] = set()
+    with zipfile.ZipFile(workbook_path) as package:
+        workbook_rels = _relationships(package, "xl/workbook.xml")
+        workbook = ET.fromstring(package.read("xl/workbook.xml"))
+        for sheet in workbook.findall("m:sheets/m:sheet", NS):
+            page = sheet.get("name")
+            if pages is not None and page not in pages:
+                continue
+            sheet_part = workbook_rels[sheet.get(f"{{{NS['r']}}}id")][1]
+            for rel_type, drawing_part in _relationships(package, sheet_part).values():
+                if rel_type != DRAWING_REL:
+                    continue
+                drawing_rels = _relationships(package, drawing_part)
+                for anchor in list(ET.fromstring(package.read(drawing_part))):
+                    chart_ref = anchor.find(".//c:chart", NS)
+                    origin = anchor.find("xdr:from", NS)
+                    if chart_ref is None:
+                        continue
+                    rel_id = chart_ref.get(f"{{{NS['r']}}}id")
+                    if rel_id not in drawing_rels or drawing_rels[rel_id][0] != CHART_REL:
+                        continue
+                    col = int(origin.findtext("xdr:col", "0", NS)) + 1 if origin is not None else 1
+                    row = int(origin.findtext("xdr:row", "0", NS)) + 1 if origin is not None else 1
+                    chart = ET.fromstring(package.read(drawing_rels[rel_id][1]))
+                    plot = chart.find("c:chart/c:plotArea", NS)
+                    if plot is None:
+                        continue
+                    title = _text(chart.find("c:chart/c:title", NS), ".//a:t")
+                    value_axes = {}
+                    for order, axis in enumerate(plot.findall("c:valAx", NS)):
+                        scaling = axis.find("c:scaling", NS)
+                        value_axes[axis.find("c:axId", NS).get("val")] = (
+                            order,
+                            _number(scaling.find("c:min", NS).get("val")) if scaling.find("c:min", NS) is not None else None,
+                            _number(scaling.find("c:max", NS).get("val")) if scaling.find("c:max", NS) is not None else None,
+                        )
+                    primary = min((o for o, _, _ in value_axes.values()), default=0)
+                    for group in plot:
+                        if group.tag.split("}")[1] not in AXIS_GROUPS:
+                            continue
+                        axis_ids = [a.get("val") for a in group.findall("c:axId", NS)]
+                        axis = next((value_axes[i] for i in axis_ids if i in value_axes), None)
+                        if axis is None or (axis[1] is None and axis[2] is None):
+                            continue
+                        grouping = group.find("c:grouping", NS)
+                        stacked = grouping is not None and "stacked" in (grouping.get("val") or "").lower()
+                        references = [_ranges(ser, VALUE_PATHS)[0] for ser in group.findall("c:ser", NS)]
+                        for reference in references:
+                            for area in parse_reference(reference) or []:
+                                sheets.add(area.sheet)
+                        pending.append((page, f"{get_column_letter(col)}{row}", title,
+                                        1 if axis[0] == primary else 2, axis[1], axis[2], references, stacked))
+    if not pending:
+        return found
+    cells = Cells(workbook_path, sheets)
+    for page, chart_at, title, axis_group, minimum, maximum, references, stacked in pending:
+        columns: list[list[float]] = []
+        for reference in references:
+            figures = []
+            for area in parse_reference(reference) or []:
+                if not cells.has(area.sheet):
+                    continue
+                for r in range(area.row1, area.row2 + 1):
+                    for c in range(area.col1, area.col2 + 1):
+                        value = cells.value(area.sheet, r, c)
+                        figures.append(float(value) if is_number(value) else None)
+            columns.append(figures)
+        numbers = [v for figures in columns for v in figures if v is not None]
+        if not numbers:
+            continue
+        if stacked:
+            width = max(len(f) for f in columns)
+            peak = max(sum(f[i] for f in columns if i < len(f) and f[i] is not None and f[i] > 0)
+                       for i in range(width))
+        else:
+            peak = max(numbers)
+        low = min(numbers)
+        if (maximum is not None and peak > maximum) or (minimum is not None and low < minimum):
+            found.append(AxisLimit(page, chart_at, title, axis_group, minimum, maximum, low, peak))
+    found.sort(key=lambda a: (a.page, a.chart_at))
+    return found
 
 
 # ── Range references ───────────────────────────────────────────────────────────
@@ -737,6 +872,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Reference: {args.reference}")
         print(f"  {paired} of {len(series_list)} series paired by page, chart position and series order")
         print(f"  {same} show the same columns in both workbooks")
+
+    limits = axis_limits(args.workbook)
+    print("")
+    print(f"Charts whose fixed value-axis limit cuts off data: {len(limits)}")
+    for limit in limits:
+        print(f"  {limit.describe()}")
 
     write_csv(series_list, args.out)
     print("")
