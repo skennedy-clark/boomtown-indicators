@@ -31,6 +31,7 @@ process, so the finder functions read whole ranges in one call.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import xlwings as xw
@@ -105,13 +106,25 @@ def same_area(label, name) -> bool:
 # Rows with earlier figures are never touched here: the writers add the
 # latest year only.
 
+def as_number(value) -> float | None:
+    """The number in a cell value read through xlwings, or None.
+
+    Excel returns cells in a currency or accounting format as
+    decimal.Decimal through xlwings on Windows, and other numbers as
+    float; both are numbers here. Booleans are not."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        return float(value)
+    return None
+
+
 def _header_year(value) -> int | None:
     """The year a header cell stands for: 2025, 2025.0, "2025", or a
     fiscal label "2024/25" or "2024-25" (taken as the year it ends)."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)) and float(value).is_integer() and 1900 <= value <= 2100:
-        return int(value)
+    number = as_number(value)
+    if number is not None:
+        return int(number) if number.is_integer() and 1900 <= number <= 2100 else None
     if isinstance(value, str):
         text = value.strip()
         if text.isdigit() and 1900 <= int(text) <= 2100:
@@ -169,6 +182,10 @@ def backfill_new_row(sheet, row: int, latest_col: int, latest_year: int, source_
     Returns the years written (none if the row has earlier figures, or if
     its year columns cannot be read).
 
+    Any content in the row's earlier year columns (a number in any
+    format, text, a formula's result) counts as existing figures, and the
+    row is left alone.
+
     The year header is read from the sheet; the writer's own column for
     the latest year fixes how source years line up with header years (a
     fiscal header "2024/25" may hold the source's 2024 or 2025). No
@@ -186,13 +203,13 @@ def backfill_new_row(sheet, row: int, latest_col: int, latest_year: int, source_
     if not isinstance(figures, list):
         figures = [figures]
     figures = [v for c, v in zip(range(columns[0], columns[-1] + 1), figures) if c in columns]
-    if any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in figures):
+    if any(v is not None and not (isinstance(v, str) and not v.strip()) for v in figures):
         return []
     header_year_at_latest = next(y for y, c in header.items() if c == latest_col)
     offset = header_year_at_latest - latest_year
     written = []
     for year, value in sorted((int(y), v) for y, v in source_series.items()):
-        if year >= latest_year or not isinstance(value, (int, float)) or isinstance(value, bool):
+        if year >= latest_year or as_number(value) is None:
             continue
         col = header.get(year + offset)
         if col is None:
@@ -309,8 +326,8 @@ def read_existing_series(sheet: "xw.Sheet", row: int, exclude_col: int | None = 
         col = FIRST_YEAR_COLUMN + offset
         if col == exclude_col:
             continue
-        if isinstance(yr, (int, float)) and isinstance(val, (int, float)):
-            series[int(yr)] = val
+        if as_number(yr) is not None and as_number(val) is not None:
+            series[int(as_number(yr))] = as_number(val)
     return series
 
 

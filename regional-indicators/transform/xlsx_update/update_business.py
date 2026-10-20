@@ -51,7 +51,7 @@ import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
 from audit import audit_cell, audit_series, WriteAuditReport, apply_write_formatting, describe_write_outcome
-from base import _fiscal_label, backfill_new_row
+from base import _fiscal_label, as_number, backfill_new_row
 
 SHEET_NAME = "Business"
 FIRST_YEAR_COLUMN = 2   # column B
@@ -201,9 +201,9 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
             continue
         if label is None:
             break  # end of the data columns
-        if isinstance(label, str) and "/" in label and isinstance(val, (int, float)):
+        if isinstance(label, str) and "/" in label and as_number(val) is not None:
             year = int(label.split("/")[0]) + 1
-            series[year] = val
+            series[year] = as_number(val)
     return series
 
 

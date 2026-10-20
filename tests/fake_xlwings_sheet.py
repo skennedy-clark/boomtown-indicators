@@ -15,9 +15,14 @@ Only the xlwings behaviour the writers rely on is provided:
   sheet.used_range.last_cell.row / .column
   sheet.range((r1, c1), (r2, c2)).value   scalar / flat list / list of lists
   sheet.cells(r, c).value / .formula / .address / .number_format / .font
-Numbers are returned as float, as xlwings returns them.
+Numbers are returned as float, as xlwings returns them, except in cells
+with a currency or accounting format ("$" in the number format), which
+are returned as decimal.Decimal, as Excel returns them through xlwings on
+Windows.
 """
 from __future__ import annotations
+
+from decimal import Decimal
 
 import openpyxl
 from openpyxl.utils import get_column_letter
@@ -96,7 +101,10 @@ class FakeSheet:
     def _value(self, r, c):
         if (r, c) in self.writes:
             return _num(self.writes[(r, c)])
-        return _num(self._wv.cell(r, c).value)
+        value = _num(self._wv.cell(r, c).value)
+        if isinstance(value, float) and "$" in (self._wf.cell(r, c).number_format or ""):
+            return Decimal(repr(value))
+        return value
 
     def range(self, a, b):
         return _Range(self, a, b)

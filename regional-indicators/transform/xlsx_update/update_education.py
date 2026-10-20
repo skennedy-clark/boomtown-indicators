@@ -48,7 +48,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
-from base import backfill_new_row, filled_note  # noqa: E402
+from base import as_number, backfill_new_row, filled_note  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 
 SHEET_NAME      = "Exogenous"
@@ -163,8 +163,8 @@ def _read_existing_series(sheet, header_row: int, row: int, exclude_col: int) ->
     for offset, (yr, val) in enumerate(zip(years, values)):
         if FIRST_YEAR_COLUMN + offset == exclude_col:
             continue
-        if _is_year(yr) and isinstance(val, (int, float)) and not isinstance(val, bool):
-            series[int(yr)] = val
+        if _is_year(yr) and as_number(val) is not None:
+            series[int(yr)] = as_number(val)
     return series
 
 

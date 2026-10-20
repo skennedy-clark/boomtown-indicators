@@ -47,7 +47,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
-from base import backfill_new_row  # noqa: E402
+from base import as_number, backfill_new_row  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport, apply_write_formatting, describe_write_outcome
 
 SHEET_NAME = "Crime"
@@ -166,8 +166,8 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
             continue
         if label is None:
             break
-        if isinstance(label, (int, float)) and isinstance(val, (int, float)):
-            series[int(label)] = val
+        if as_number(label) is not None and as_number(val) is not None:
+            series[int(as_number(label))] = as_number(val)
     return series
 
 

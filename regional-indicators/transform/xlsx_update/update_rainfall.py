@@ -59,7 +59,7 @@ from pathlib import Path
 import xlwings as xw
 
 sys.path.insert(0, str(Path(__file__).parent))
-from base import backfill_new_row  # noqa: E402
+from base import as_number, backfill_new_row  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
 
 SHEET_NAME = "Exogenous"
@@ -239,8 +239,8 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
         col = FIRST_YEAR_COLUMN + offset
         if col == exclude_col:
             continue
-        if isinstance(yr, (int, float)) and isinstance(val, (int, float)):
-            series[int(yr)] = val
+        if as_number(yr) is not None and as_number(val) is not None:
+            series[int(as_number(yr))] = as_number(val)
     return series
 
 
@@ -260,7 +260,7 @@ def _carry_forward_historic_average(sheet, row: int, year: int) -> tuple[bool, s
     if not isinstance(existing_values, list):
         existing_values = [existing_values]
 
-    existing_numeric = [v for v in existing_values if isinstance(v, (int, float))]
+    existing_numeric = [as_number(v) for v in existing_values if as_number(v) is not None]
     if not existing_numeric:
         return False, (
             "no previous average available either (row has no existing data) — "
@@ -290,7 +290,7 @@ def _write_historic_average_row(sheet, row: int, new_value: float) -> tuple[bool
     if not isinstance(existing_values, list):
         existing_values = [existing_values]
 
-    existing_numeric = [v for v in existing_values if isinstance(v, (int, float))]
+    existing_numeric = [as_number(v) for v in existing_values if as_number(v) is not None]
     if existing_numeric:
         current = existing_numeric[0]
         if current != 0:

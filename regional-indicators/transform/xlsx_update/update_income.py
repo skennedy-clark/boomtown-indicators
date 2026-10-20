@@ -64,7 +64,7 @@ import xlwings as xw
 sys.path.insert(0, str(Path(__file__).parent))
 from base import backfill_new_row, filled_note  # noqa: E402
 from audit import audit_cell, audit_series, audit_historical_series, WriteAuditReport
-from base import _fiscal_label
+from base import _fiscal_label, as_number
 
 SHEET_NAME = "Income"
 FIRST_YEAR_COLUMN = 3    # column C
@@ -140,7 +140,7 @@ def _fill_calendar_year(sheet, col: int, year: int) -> None:
     if cell.value not in (None, ""):
         return
     previous = sheet.cells(CALENDAR_YEAR_ROW, col - 1).value
-    if isinstance(previous, (int, float)) and not isinstance(previous, bool) and int(previous) == year - 1:
+    if as_number(previous) is not None and int(as_number(previous)) == year - 1:
         cell.value = year
         cell.number_format = "General"
 
@@ -233,9 +233,9 @@ def _read_existing_series(sheet, row: int, exclude_col: int | None = None) -> di
         col = FIRST_YEAR_COLUMN + offset
         if col == exclude_col:
             continue
-        if isinstance(label, str) and "/" in label and isinstance(val, (int, float)):
+        if isinstance(label, str) and "/" in label and as_number(val) is not None:
             year = int(label.split("/")[0])
-            series[year] = val
+            series[year] = as_number(val)
     return series
 
 
