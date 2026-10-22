@@ -14,7 +14,7 @@ The ABS dataflow is used in preference to the QGSO regional database
 multi-step session. Its Queensland figures are identical to QRSIS's,
 which republishes the ABS series.
 
-API notes (same host and conventions as fetch_narrabri_approvals.py):
+API notes (same host and conventions as fetch_nsw_approvals.py):
   - Host: https://data.api.abs.gov.au/rest/
   - A new ERP_LGA<year> dataflow is published each year on that year's
     LGA boundaries. The available dataflows are listed at run time and

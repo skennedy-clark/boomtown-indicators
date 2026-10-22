@@ -419,6 +419,39 @@ cover_photo      = "cover.jpg"
 notes            = "NSW town. SA3 11003 is Moree - Narrabri. The adjacent SA2, Narrabri Surrounds (110031198), has no town in this project. lga_code is the ABS LGA code (towns outside Queensland have no qgso_lga)."
 
 
+[towns.muswellbrook]
+name             = "Muswellbrook"
+state            = "NSW"
+postcode         = "2333"
+postcodes        = ["2333"]
+sa2_code         = "106041126"
+sa2_name         = "Muswellbrook"
+sa3_code         = "10604"
+lga              = "Muswellbrook"
+lga_code         = "15650"
+bom_station      = "61168"
+benchmark        = false
+district         = "Muswellbrook and District"
+cover_photo      = "cover.jpg"
+notes            = "NSW comparison town (Upper Hunter), added as a proof of concept for adding towns outside Queensland; no CSG development, so no csg_notice_year. SA3 10604 is Upper Hunter. The adjacent SA2, Muswellbrook Surrounds (106041127), has no town in this project. lga_code is the ABS LGA code. Rainfall station to be confirmed: no station in town covers 2001 onwards; Muswellbrook (Lindisfarne) 061168, about 5 km south, is open since 1960 and is in SILO."
+
+[towns.singleton]
+name             = "Singleton"
+state            = "NSW"
+postcode         = "2330"
+postcodes        = ["2330"]
+sa2_code         = "106011112"
+sa2_name         = "Singleton"
+sa3_code         = "10601"
+lga              = "Singleton"
+lga_code         = "17000"
+bom_station      = "61397"
+benchmark        = false
+district         = "Singleton and District"
+cover_photo      = "cover.jpg"
+notes            = "NSW comparison town (Hunter Valley), added as a proof of concept for adding towns outside Queensland; no CSG development (exploration near Broke-Fordwich was opposed), so no csg_notice_year. The adjacent SA2, Singleton Surrounds (106011113), has no town in this project. lga_code is the ABS LGA code. Rainfall station to be confirmed: Singleton STP 061397 is in town but closed in 2019 (SILO fills later years from nearby stations); Singleton Defence AWS 061430 (from 2017) is not in SILO; Broke (Harrowby) 061100 is open, about 25 km south."
+
+
 # ─── VICTORIA TOWNS ─────────────────────────────────────────────────────────
 
 [towns.shepparton]

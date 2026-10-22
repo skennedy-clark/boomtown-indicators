@@ -52,8 +52,9 @@ themselves; where they cannot, the fallback is a constant marked
 - `fetchers/fetch_population_ucl.py`, `fetch_population_nrw.py`
 - `fetchers/fetch_qgso_housing.py`, `fetch_qrsis_labour.py` (QRSIS date ranges)
 - `fetchers/fetch_salm_unemployment.py`
-- `fetchers/fetch_business.py`, `fetch_narrabri_approvals.py`,
-  `fetch_narrabri_sales_rent.py`, `fetch_nsw_labour.py`, `fetch_crime_bocsar.py`
+- `fetchers/fetch_business.py`, `fetch_nsw_approvals.py`,
+  `fetch_nsw_sales_rent.py`, `fetch_nsw_labour.py`, `fetch_crime_bocsar.py`,
+  `fetch_population_erp_abs.py`
 
 A source that fails shows in the run report under "Downloading the latest
 figures"; the full log names the address it tried. The rest of the run still

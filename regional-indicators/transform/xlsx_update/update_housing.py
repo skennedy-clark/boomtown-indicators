@@ -4,9 +4,10 @@ regional-indicators/transform/xlsx_update/update_housing.py
 Writes housing indicators into the Housing sheet.
 
 Input:  cache/housing/regions/*.json -- one file per region from
-        fetch_qgso_housing.py (Queensland LGA, SA2 and state), plus
-        narrabri_approvals.json and narrabri_sales_rent.json from
-        fetch_narrabri_approvals.py and fetch_narrabri_sales_rent.py.
+        fetch_qgso_housing.py (Queensland LGA, SA2 and state), plus, for
+        each New South Wales town, <town>_approvals.json and
+        <town>_sales_rent.json from fetch_nsw_approvals.py and
+        fetch_nsw_sales_rent.py.
 Target: the Housing sheet.
 
 Sheet layout:
@@ -23,13 +24,13 @@ Sheet layout:
   A region name can occur in more than one section, so rows are searched
   for only within the bounds of their own section.
 
-  Narrabri (NSW) has a separate block, headed "Narrabri (LGA)", with its
-  own structure and its own sources (ABS building approvals; NSW
-  Department of Communities and Justice Rent and Sales Report). It is
-  handled by process_narrabri(). Its rows are located by their column B
-  labels, except the all-dwellings rent row, which has no label and is
-  taken as the row below "House 3-Bed". Narrabri values are displayed as
-  whole numbers.
+  Each New South Wales town (Narrabri, and towns added later) has a
+  separate block, headed "<Town> (LGA)", with its own structure and its
+  own sources (ABS building approvals; NSW Department of Communities and
+  Justice Rent and Sales Report). These are handled by process_nsw_town().
+  Rows are located by their column B labels, except the all-dwellings
+  rent row, which has no label and is taken as the row below "House
+  3-Bed". The values are displayed as whole numbers.
 
 Section finding is shared with update_employment.py and the year-column
 and write helpers with update_crime.py; all three sheets have the same
@@ -48,6 +49,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -74,81 +76,96 @@ def _find_housing_indicator_row(sheet, block_start_row: int, label: str) -> int:
     )
 
 
-# ── Narrabri block ───────────────────────────────────────────────────────
+# ── New South Wales town blocks ───────────────────────────────────────────────────────
 
-NARRABRI_NUMBER_FORMAT = "0"   # dollar amounts and counts: display as whole numbers
+NSW_NUMBER_FORMAT = "0"   # dollar amounts and counts: display as whole numbers
 
 # Cache key -> the column B label that identifies its row within the block.
-NARRABRI_ROW_LABELS = {
+NSW_ROW_LABELS = {
     "mean_sales_price":         "Mean Sale Price",
     "median_sales_price":       "Median Sale Price",
     "rent_house_3bed":          "House 3-Bed",
     "sales_no":                 "Sales No.",
     "new_residential_building": "New Residential Building",
     "new_houses":                "New Houses",
-    # "rent_total_3bed" has no column B label; see _find_narrabri_data_row.
+    # "rent_total_3bed" has no column B label; see _find_nsw_data_row.
 }
 
 
-def _find_narrabri_block_row(sheet) -> int:
-    """Return the row of the "Narrabri (LGA)" block heading, found by its
+NSW_FILES = {"approvals": "Building Approvals", "sales_rent": "Sales/Rent"}
+NSW_FILE_PATTERN = re.compile(r"^(?P<town>.+)_(?P<kind>approvals|sales_rent)\.json$")
+
+
+def _find_nsw_block_row(sheet, town: str) -> int:
+    """Return the row of the "<town> (LGA)" block heading, found by its
     column A text so that inserted rows elsewhere do not matter.
     """
-    used = sheet.used_range
-    last_row = used.last_cell.row
-    for row in range(1, last_row + 1):
-        if sheet.cells(row, 1).value == "Narrabri (LGA)":
-            return row
-    raise ValueError(f"Could not find 'Narrabri (LGA)' in column A of sheet '{sheet.name}'.")
+    heading = f"{town} (LGA)"
+    last_row = sheet.used_range.last_cell.row
+    column_a = sheet.range((1, 1), (last_row, 1)).value
+    for offset, value in enumerate(column_a if isinstance(column_a, list) else [column_a]):
+        if isinstance(value, str) and value.strip() == heading:
+            return offset + 1
+    raise ValueError(f"Could not find '{heading}' in column A of sheet '{sheet.name}'.")
 
 
-def _find_narrabri_data_row(sheet, block_row: int, key: str) -> int:
-    """Return the row for one Narrabri indicator.
+def _find_nsw_data_row(sheet, block_row: int, key: str) -> int:
+    """Return the row for one indicator in a New South Wales town's block.
 
-    Rows are found by their column B label (NARRABRI_ROW_LABELS), except
+    Rows are found by their column B label (NSW_ROW_LABELS), except
     "rent_total_3bed", which is the row immediately below "House 3-Bed".
-    The search covers a fixed window below the block heading.
+    The search stops at the next block heading or after SEARCH_WINDOW rows.
     """
     SEARCH_WINDOW = 40
     if key == "rent_total_3bed":
-        house_row = _find_narrabri_data_row(sheet, block_row, "rent_house_3bed")
-        return house_row + 1
-    label = NARRABRI_ROW_LABELS[key]
+        return _find_nsw_data_row(sheet, block_row, "rent_house_3bed") + 1
+    label = NSW_ROW_LABELS[key]
     for row in range(block_row + 1, block_row + SEARCH_WINDOW):
+        heading = sheet.cells(row, 1).value
+        if isinstance(heading, str) and heading.strip().endswith("(LGA)"):
+            break
         if sheet.cells(row, 2).value == label:
             return row
     raise ValueError(
-        f"Could not find column-B label '{label}' (for '{key}') within "
-        f"{SEARCH_WINDOW} rows of the Narrabri block (starting row {block_row}) "
-        f"in sheet '{sheet.name}'."
+        f"Could not find column-B label '{label}' (for '{key}') in the block "
+        f"starting row {block_row} in sheet '{sheet.name}'."
     )
 
 
-def process_narrabri(sheet, cache_dir: Path) -> list[tuple[str, bool, bool]]:
-    """Write Narrabri's indicators from its two cache files into its block."""
+def nsw_town_files(regions_dir: Path) -> dict[str, dict[str, Path]]:
+    """{town slug: {"approvals": path, "sales_rent": path}} for the New
+    South Wales towns' cache files in `regions_dir`."""
+    found: dict[str, dict[str, Path]] = {}
+    for path in sorted(regions_dir.glob("*.json")):
+        match = NSW_FILE_PATTERN.match(path.name)
+        if match:
+            found.setdefault(match.group("town"), {})[match.group("kind")] = path
+    return found
+
+
+def process_nsw_town(sheet, files: dict[str, Path]) -> list[tuple[str, bool, bool]]:
+    """Write one New South Wales town's indicators from its cache files
+    (nsw_town_files) into its "<Town> (LGA)" block."""
     results = []
-    files = {
-        "narrabri_approvals.json": "Building Approvals",
-        "narrabri_sales_rent.json": "Sales/Rent",
-    }
-    found_any_file = False
+    loaded = []
+    for kind, source_label in NSW_FILES.items():
+        path = files.get(kind)
+        if path is None:
+            continue
+        with open(path, encoding="utf-8") as f:
+            loaded.append((source_label, json.load(f)))
+    if not loaded:
+        return []
+    town = loaded[0][1].get("region", "")
 
     try:
-        block_row = _find_narrabri_block_row(sheet)
+        block_row = _find_nsw_block_row(sheet, town)
     except ValueError as exc:
-        return [(f"Narrabri: SKIPPED (block not found) — {exc}", False, True)]
+        return [(f"{town}: SKIPPED (block not found) — {exc}", False, True)]
 
-    for filename, source_label in files.items():
-        path = cache_dir / "regions" / filename
-        if not path.exists():
-            results.append((f"Narrabri ({source_label}): no cache file, skipped — run the matching fetcher first", False, False))
-            continue
-        found_any_file = True
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-
+    for source_label, data in loaded:
         for key, entry in data.get("indicators", {}).items():
-            tag = f"Narrabri [{key}]"
+            tag = f"{town} [{key}]"
             row_label = entry.get("label")
             values = entry.get("values", {})
             if not row_label or not values:
@@ -160,7 +177,7 @@ def process_narrabri(sheet, cache_dir: Path) -> list[tuple[str, bool, bool]]:
             source_series = {int(y): v for y, v in values.items()}
 
             try:
-                row = _find_narrabri_data_row(sheet, block_row, key)
+                row = _find_nsw_data_row(sheet, block_row, key)
             except ValueError as exc:
                 results.append((f"{tag}: SKIPPED (row-finding) — {exc}", False, True))
                 continue
@@ -171,12 +188,13 @@ def process_narrabri(sheet, cache_dir: Path) -> list[tuple[str, bool, bool]]:
                 # Whole-number display format, set after _write_crime_row because
                 # that function's formatting step resets the number format.
                 col = _find_year_column(sheet, year)
-                sheet.cells(row, col).number_format = NARRABRI_NUMBER_FORMAT
+                sheet.cells(row, col).number_format = NSW_NUMBER_FORMAT
             results.append((line, is_written, is_flagged))
 
-    if not found_any_file:
-        results.append(("Narrabri: SKIPPED — neither cache file found, run narrabri_approvals and narrabri_sales_rent first", False, True))
-
+    missing = [label for kind, label in NSW_FILES.items() if kind not in files]
+    if missing:
+        results.append((f"{town}: no {' or '.join(missing)} cache file -- run the matching fetcher "
+                        f"(nsw_approvals, nsw_sales_rent)", False, False))
     return results
 
 
@@ -222,9 +240,9 @@ def process_region(sheet, section_rows: dict, data: dict):
 
 def update_housing(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
     all_region_files = sorted((cache_dir / "regions").glob("*.json"))
-    narrabri_filenames = {"narrabri_approvals.json", "narrabri_sales_rent.json"}
-    region_files = [p for p in all_region_files if p.name not in narrabri_filenames]
-    if not region_files and not any((cache_dir / "regions" / n).exists() for n in narrabri_filenames):
+    nsw_towns = nsw_town_files(cache_dir / "regions")
+    region_files = [p for p in all_region_files if not NSW_FILE_PATTERN.match(p.name)]
+    if not region_files and not nsw_towns:
         raise FileNotFoundError(
             f"No region files in {cache_dir / 'regions'} -- run "
             f"`run_update.py --only qgso_housing` first."
@@ -248,14 +266,15 @@ def update_housing(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> l
                     flagged += is_flagged
                     any_written |= is_written
 
-            # Narrabri's block is not part of the LGA/SA2/State sections and is
-            # written separately; its two cache files are excluded from the
-            # per-region loop above.
-            for line, is_written, is_flagged in process_narrabri(sheet, cache_dir):
-                results.append(line)
-                written += is_written
-                flagged += is_flagged
-                any_written |= is_written
+            # The New South Wales towns' blocks are not part of the
+            # LGA/SA2/State sections and are written separately; their cache
+            # files are excluded from the per-region loop above.
+            for files in nsw_towns.values():
+                for line, is_written, is_flagged in process_nsw_town(sheet, files):
+                    results.append(line)
+                    written += is_written
+                    flagged += is_flagged
+                    any_written |= is_written
 
             if any_written:
                 wb.save()

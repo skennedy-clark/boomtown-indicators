@@ -231,14 +231,14 @@ On Windows `cmd`, substitute the paths in full; in PowerShell use
 |---|---|---|
 | Population (town) | `update_population_ucl.py` | `population_ucl` |
 | Population (non-resident workers) | `update_population_nrw.py`, `update_population_nrw_lga.py` | `population_nrw` |
-| Population (SA2) | `update_population_erp.py` | `population_erp` |
+| Population (SA2) | `update_population_erp.py` | `population_erp`, `population_erp_abs` |
 | Population (LGA) | `update_population_erp_lga.py` | `population_erp_lga` |
 | Exogenous: rainfall | `update_rainfall.py` | `bom_rainfall` |
 | Exogenous: education | `update_education.py` | `schools` |
 | Exogenous: fuel | `update_fuel.py` | `fuel`, `fuel_qld` |
 | Crime | `update_crime.py` | `crime_qps`, `crime_bocsar` |
 | Employment | `update_employment.py` | `salm_unemployment`, `qrsis_labour`, `nsw_labour` |
-| Housing | `update_housing.py` | `qgso_housing`, `narrabri_approvals`, `narrabri_sales_rent` |
+| Housing | `update_housing.py` | `qgso_housing`, `nsw_approvals`, `nsw_sales_rent` |
 | Income | `update_income.py` | `income`, `income_table6` |
 | Business | `update_business.py` | `business` |
 
@@ -359,6 +359,13 @@ Windows.
        --page Emerald
    ```
 
+   A New South Wales town is copied from Narrabri (`--like Narrabri`).
+   Its crime block (in the New South Wales part of the Crime sheet) and
+   its "<Town> (LGA)" housing block are copied as well. Narrabri's page
+   also plots Narrabri Surrounds (the surrounding SA2); the add_town
+   report lists those series, which are to be deleted or replaced on the
+   new page.
+
 5. Check the new page: text that names the template town and the CSG
    notice line, which is placed by hand. The add_town report lists what
    to look at. The rainfall station row on the Exogenous sheet is
@@ -393,7 +400,7 @@ Towns currently configured:
 - **Queensland:** Roma, Chinchilla, Dalby, Miles, Tara, Wandoan,
   Wallumbilla, Goondiwindi, Moranbah, Dysart, Toowoomba (and its Central,
   Harlaxton and West sub-areas); Brisbane as a benchmark.
-- **New South Wales:** Narrabri.
+- **New South Wales:** Narrabri; Muswellbrook and Singleton (comparison towns).
 - **Victoria:** Shepparton, Yarram.
 
 ## Data sources
@@ -401,15 +408,16 @@ Towns currently configured:
 | Fetcher | Indicator | Source |
 |---|---|---|
 | `population_ucl` | Town (UCL) resident population | Queensland Government Statistician's Office (QGSO) |
-| `population_erp` | SA2 resident population | QGSO Queensland Regional Database (QRSIS) |
+| `population_erp` | SA2 resident population, Queensland | QGSO Queensland Regional Database (QRSIS) |
+| `population_erp_abs` | SA2 resident population, other states | ABS Data API (`ABS_ANNUAL_ERP_ASGS2021`) |
 | `population_erp_lga` | LGA resident population | ABS Data API (`ERP_LGA<year>`) |
 | `population_nrw` | Non-resident workers | QGSO Surat Basin and Bowen Basin population reports |
 | `salm_unemployment` | Unemployment, SA2 | Small Area Labour Markets (DEWR) |
 | `qrsis_labour` | Unemployment, Queensland LGAs and state | QGSO Queensland Regional Database |
 | `nsw_labour` | Unemployment, New South Wales | ABS Labour Force |
 | `qgso_housing` | Sales, median price, rent, building approvals | QGSO Queensland Regional Database |
-| `narrabri_approvals` | Building approvals, Narrabri | ABS Data API |
-| `narrabri_sales_rent` | Sales and rent, Narrabri | NSW Department of Communities and Justice |
+| `nsw_approvals` | Building approvals, New South Wales towns (by LGA) | ABS Data API |
+| `nsw_sales_rent` | Sales and rent, New South Wales towns (by LGA), from 2018 | NSW Department of Communities and Justice |
 | `income`, `income_table6` | Taxable income by postcode | ATO Taxation Statistics (data.gov.au) |
 | `business` | Business counts | ABS Counts of Australian Businesses |
 | `crime_qps` | Offence rates, Queensland | Queensland Police Service open data |
@@ -486,8 +494,10 @@ docs/                          runbook, handover notes, manual processes, projec
   figures are identical. Dalby and Dysart use larger SA2s (Wambo and
   Broadsound-Nebo) that extend well beyond the town.
 - **Coverage outside Queensland.** Several fetchers are Queensland-only.
-  Narrabri is covered through separate New South Wales sources; the
-  Victorian towns are configured but not covered for most indicators.
+  New South Wales towns are covered through separate sources (crime,
+  housing, state unemployment) and national ones; town (UCL) population,
+  non-resident workers and fuel prices are not covered. The Victorian
+  towns are configured but not covered for most indicators.
 - **Derived rows.** Rows that the workbook calculates and benchmark rows
   without a fetcher are not yet updated automatically.
 - **Booklets.** Generation is in development.

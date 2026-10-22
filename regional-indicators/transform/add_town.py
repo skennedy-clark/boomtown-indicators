@@ -115,7 +115,7 @@ def norm(text) -> str:
     """Compare labels loosely: case, surrounding space, a trailing "LGA" and a
     state or type suffix such as "(Qld)" or "(R)" are ignored."""
     text = str(text or "").casefold().strip()
-    text = re.sub(r"\((qld|nsw|vic|sa|wa|tas|nt|act|[a-z])\)", "", text)
+    text = re.sub(r"\((qld|nsw|vic|sa|wa|tas|nt|act|lga|sa2|[a-z])\)", "", text)
     text = re.sub(r"\blga\b", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -123,6 +123,15 @@ def norm(text) -> str:
 def lga_label(name: str) -> str:
     """"Central Highlands (Qld)" -> "Central Highlands"."""
     return re.sub(r"\s*\([^)]*\)\s*$", "", name or "").strip()
+
+
+LEVEL_SUFFIXES = {"lga": "(LGA)", "sa2": "(SA2)"}
+
+
+def label_suffix(label: str) -> str:
+    """The "(LGA)" or "(SA2)" at the end of a block label, or ""."""
+    match = re.search(r"\((LGA|SA2)\)\s*$", str(label or ""), re.IGNORECASE)
+    return match.group(0).strip() if match else ""
 
 
 def area_name(town, level: str) -> str:
@@ -176,9 +185,23 @@ def read_units(sheet_name: str, rows: list[tuple]) -> list[Unit]:
     def blank(r):
         return all(v is None or (isinstance(v, str) and not v.strip()) for v in rows[r - 1])
 
+    def year_row(r):
+        """The row's figures are a run of at least three consecutive years:
+        a year header, not data."""
+        values = [v for v in rows[r - 1][1:] if is_number(v)]
+        return (len(values) >= 3 and all(float(v).is_integer() and 1990 <= v <= 2100 for v in values)
+                and all(b - a == 1 for a, b in zip(values, values[1:])))
+
     n = len(rows)
     indicator_labels = {norm(a(r)) for r in range(1, n + 1)
-                        if isinstance(a(r), str) and a(r) and numbers(r) and a(r) not in SECTION_HEADINGS}
+                        if isinstance(a(r), str) and a(r) and numbers(r) and not year_row(r)
+                        and a(r) not in SECTION_HEADINGS}
+
+    def own_header(r):
+        """A block heading that carries the block's own year header
+        ("Narrabri (LGA)  2010 2011 ..." on the Housing sheet)."""
+        return (isinstance(a(r), str) and bool(a(r)) and a(r) not in SECTION_HEADINGS
+                and b(r) in (None, "") and year_row(r))
 
     def b(r):
         value = rows[r - 1][1] if len(rows[r - 1]) > 1 else None
@@ -188,28 +211,45 @@ def read_units(sheet_name: str, rows: list[tuple]) -> list[Unit]:
         label = a(r)
         if not isinstance(label, str) or not label:
             return False
-        if label in SECTION_HEADINGS:
+        if label in SECTION_HEADINGS or own_header(r):
             return True
         label_b = b(r)
         b_is_text = isinstance(label_b, str) and label_b != "" and not label_b.startswith("=")
         return not b_is_text and not numbers(r) and norm(label) not in indicator_labels
 
-    # Sections, and the block headings within them.
-    sections: list[tuple[str | None, int, int]] = []   # (name, first row after heading, last row)
-    current, start = None, 1
+    # Sections, and the block headings within them. Besides the section
+    # headings, a section ends at a year header row below row 1 with nothing
+    # in column A (the Crime sheet's New South Wales part has its own), and at the first
+    # block that carries its own year header; such blocks form a section of
+    # their own, in which only those headings start blocks.
+    sections: list[tuple[str | None, int, int, bool]] = []   # (name, first row, last row, own-header blocks)
+    current, start, own = None, 1, False
     for r in range(1, n + 1):
         if isinstance(a(r), str) and a(r) in SECTION_HEADINGS:
-            sections.append((current, start, r - 1))
-            current, start = a(r), r + 1
-    sections.append((current, start, n))
+            sections.append((current, start, r - 1, own))
+            current, start, own = a(r), r + 1, False
+        elif a(r) in (None, "") and year_row(r) and r > 1:
+            # A part of the sheet with its own year header is not part of the
+            # section above it (on the Crime sheet, "State").
+            sections.append((current, start, r - 1, own))
+            current, start, own = None, r + 1, False
+        elif own_header(r) and not own:
+            sections.append((current, start, r - 1, own))
+            start, own = r, True
+    sections.append((current, start, n, own))
 
     units: list[Unit] = []
-    for section_no, (section, s_first, s_last) in enumerate(sections):
+    for section_no, (section, s_first, s_last, own) in enumerate(sections):
         if s_first > s_last:
             continue
-        heads = [r for r in range(s_first, s_last + 1) if heading(r)]
-        # A heading straight after another heading is a sub-heading of the same block.
-        starts = [r for r in heads if (r - 1) not in heads or r == s_first]
+        if own:
+            starts = [r for r in range(s_first, s_last + 1) if own_header(r)]
+        else:
+            heads = [r for r in range(s_first, s_last + 1) if heading(r)]
+            # A heading straight after another heading is a sub-heading of the same block.
+            starts = [r for r in heads if (r - 1) not in heads or r == s_first]
+        if not starts:
+            starts = _figure_headings(rows, s_first, s_last)
         if starts:
             for i, first in enumerate(starts):
                 end = (starts[i + 1] - 1) if i + 1 < len(starts) else s_last
@@ -225,9 +265,34 @@ def read_units(sheet_name: str, rows: list[tuple]) -> list[Unit]:
     return units
 
 
+def _figure_headings(rows, first: int, last: int) -> list[int]:
+    """Block headings in a section whose blocks carry figures on their name
+    row (the Crime sheet's New South Wales part: "Narrabri" with the
+    total rate, then one row per offence category, then "NSW" the same
+    way). A row starts a block when its label is unique in the section and
+    the label of the row below it recurs in the section. Fewer than two
+    such rows means the section is a list of single rows."""
+    labels = {}
+    for r in range(first, last + 1):
+        value = rows[r - 1][0] if rows[r - 1] else None
+        if isinstance(value, str) and value.strip():
+            labels[r] = norm(value)
+    counts = {}
+    for label in labels.values():
+        counts[label] = counts.get(label, 0) + 1
+    starts = [r for r, label in labels.items()
+              if counts[label] == 1 and (r + 1) in labels and counts[labels[r + 1]] > 1]
+    return starts if len(starts) >= 2 else []
+
+
 def unit_level(unit: Unit) -> str | None:
-    if unit.section in NO_LEVEL_SECTIONS:
+    if unit.section in NO_LEVEL_SECTIONS and not label_suffix(unit.label):
         return None
+    suffix = label_suffix(unit.label).upper()
+    if suffix == "(LGA)":
+        return "lga"
+    if suffix == "(SA2)":
+        return "sa2"
     return SECTION_LEVELS.get(unit.section or "") or SHEET_LEVELS.get(unit.sheet)
 
 
@@ -252,6 +317,24 @@ class Plan:
     shared: list[Unit] = field(default_factory=list)
     row_map: dict[tuple[str, int], int] = field(default_factory=dict)  # final rows: template -> new
     notes: list[str] = field(default_factory=list)
+    # Rows (original numbering) of blocks named after the template town that
+    # are not its own areas, such as "Narrabri Surrounds": {(sheet, row): label}.
+    related_rows: dict[tuple[str, int], str] = field(default_factory=dict)
+
+    def related_in(self, formula: str, final: bool) -> list[str]:
+        """Labels of the related blocks that a series formula reads, with
+        rows in final numbering (after the inserts) or original numbering."""
+        rows = {(sheet, self.shift(sheet, r) if final else r): label for (sheet, r), label in self.related_rows.items()}
+        found = []
+        for match in REFERENCE.finditer(formula or ""):
+            sheet = match.group("sheet").strip("'").replace("''", "'")
+            first = int(match.group("r1"))
+            last = int(match.group("r2")) if match.group("r2") else first
+            for r in range(first, last + 1):
+                label = rows.get((sheet, r))
+                if label and label not in found:
+                    found.append(label)
+        return found
 
     def shift(self, sheet: str, row: int) -> int:
         """Where an original row ends up once every insert is made."""
@@ -312,6 +395,8 @@ def make_plan(sheet_rows: dict[str, list[tuple]], town, template) -> Plan:
             if level is None or norm(unit.label) != norm(area_name(template, level)):
                 continue
             new_label = area_name(town, level)
+            if new_label and label_suffix(unit.label):
+                new_label = f"{new_label} {label_suffix(unit.label)}"
             if not new_label:
                 plan.notes.append(f"{sheet} {unit.section or ''} {unit.label}: the new town has no {level} name; skipped")
                 continue
@@ -332,6 +417,15 @@ def make_plan(sheet_rows: dict[str, list[tuple]], town, template) -> Plan:
                     plan.notes.append(f"{sheet} {unit.section or ''}: row {label!r} will read "
                                       f"{replace_word(label.strip(), template.name, town.name)!r}; check it "
                                       f"(for rainfall, the station name)")
+
+    own_areas = {norm(area_name(template, level)) for level in ("town", "sa2", "lga")}
+    for sheet, units in units_by_sheet.items():
+        for unit in units:
+            label = str(unit.label or "")
+            if norm(label) in own_areas or replace_word(label, template.name, "\0") == label:
+                continue
+            for r in range(unit.first, unit.last + 1):
+                plan.related_rows[(sheet, r)] = f"{sheet}: {label.strip()}"
 
     # Rows that the template's charts read, mapped to the new town's rows.
     for insert in plan.inserts:
@@ -387,6 +481,8 @@ def _place(unit: Unit, new_label: str, same_section: list[Unit]) -> Insert:
             gap = siblings[index + 1].first - unit.last - 1
         elif index > 0:
             gap = unit.first - siblings[index - 1].last - 1
+        elif label_suffix(unit.label):
+            gap = 1             # a block with its own year header: keep one blank row between blocks
     after = [u for u in siblings if u.label.casefold() > new_label.casefold()]
     if after:
         return Insert(unit.sheet, after[0].first, unit.size + gap, 0, unit, new_label)
@@ -499,17 +595,40 @@ def plan_lines(plan: Plan, template_series: list | None = None) -> list[str]:
             lines.append(f"  {unit.sheet} {unit.section or ''}: {unit.label}")
     if template_series is not None:
         mapped = left = 0
+        still: list[str] = []
+        original = _original_map(plan)
         for series in template_series:
-            text = f"{series.values},{series.categories}"
-            if remap_formula(text, _original_map(plan)) != text:
+            # A series counts as moved when one of its references is to a
+            # mapped row. (Comparing the remapped text is not enough: a block
+            # inserted where the template's block started takes over its row
+            # numbers.)
+            if any(_reference_rows(match) <= {r for (sheet, r) in original if sheet == _sheet_of(match)}
+                   for match in REFERENCE.finditer(f"{series.values},{series.categories}")):
                 mapped += 1
             else:
                 left += 1
+                related = plan.related_in(f"{series.values},{series.categories}", final=False)
+                if related:
+                    still.append(f"{series.chart_at} '{series.series_name}' reads {', '.join(related)}")
         lines.append(f"Chart page: {len(template_series)} series on {template.name}; "
                      f"{mapped} will read the new town's rows, {left} stay as they are (benchmarks, shared areas).")
+        if still:
+            lines.append(f"  Series that stay but read an area named after {template.name} (such as its "
+                         f"surrounding SA2); delete or replace them on the new page:")
+            lines += [f"    {line}" for line in still]
     if plan.notes:
         lines += ["", "Notes:"] + [f"  {n}" for n in plan.notes]
     return lines
+
+
+def _sheet_of(match) -> str:
+    return match.group("sheet").strip("'").replace("''", "'")
+
+
+def _reference_rows(match) -> set[int]:
+    first = int(match.group("r1"))
+    last = int(match.group("r2")) if match.group("r2") else first
+    return {first} if last == first else {first, last}
 
 
 def _original_map(plan: Plan) -> dict:
@@ -594,6 +713,11 @@ def apply_plan(workbook: Path, plan: Plan, visible: bool = False, replace: bool 
                     new = remap_formula(old, plan.row_map)
                     if new == old:
                         unchanged += 1
+                        related = plan.related_in(old, final=True)
+                        if related:
+                            name = str(_safe(lambda: series.Name, ""))
+                            report.append(f"  chart at {chart_object.TopLeftCell.Address}: series '{name}' still reads "
+                                          f"{', '.join(related)}; delete or replace it")
                         continue
                     try:
                         series.Formula = new
@@ -625,6 +749,13 @@ def apply_plan(workbook: Path, plan: Plan, visible: bool = False, replace: bool 
     finally:
         app.quit()
     return report
+
+
+def _safe(getter, default):
+    try:
+        return getter()
+    except Exception:
+        return default
 
 
 def _rainfall_station_row(column_a: list, town_name: str) -> int | None:
@@ -706,6 +837,10 @@ def _clear_and_relabel(sheet, first: int, size: int, template, town, new_label: 
     new_rows = []
     for row in formulas:
         row = list(row)
+        figures = [v for v in row[1:] if is_number(v) or (isinstance(v, str) and _numeric_text(v))]
+        years = [float(v) for v in figures]
+        keep_figures = (len(years) >= 3 and all(y.is_integer() and 1990 <= y <= 2100 for y in years)
+                        and all(b - a == 1 for a, b in zip(years, years[1:])))      # a year header
         for c, cell in enumerate(row):
             if isinstance(cell, str) and cell.startswith("="):
                 continue
@@ -719,7 +854,7 @@ def _clear_and_relabel(sheet, first: int, size: int, template, town, new_label: 
                     row[c] = replace_word(replace_word(cell, old_label, new_label), template.name, town.name)
             elif c == 1 and isinstance(cell, str) and cell and not _numeric_text(cell):
                 row[c] = replace_word(replace_word(cell, old_label, new_label), template.name, town.name)
-            elif cell not in (None, ""):
+            elif cell not in (None, "") and not keep_figures:
                 row[c] = ""
         new_rows.append(row)
     rng.formula = new_rows

@@ -274,3 +274,86 @@ def test_automatic_axes_are_left_alone():
 
     axis = SimpleNamespace(MaximumScaleIsAuto=True, MinimumScaleIsAuto=True)
     assert _free_template_axes(SimpleNamespace(Axes=lambda kind, group: axis)) == ""
+
+
+# ── New South Wales layouts ────────────────────────────────────────────────────
+
+NARRABRI = town("Narrabri", "Narrabri", "Narrabri", "2390")
+MUSWELLBROOK = town("Muswellbrook", "Muswellbrook", "Muswellbrook", "2333")
+
+# The Crime sheet: Queensland blocks under "State", then a part with its own
+# year header in which each block carries the total rate on its name row.
+CRIME = [
+    (None, None, 2023, 2024, 2025),
+    ("QPS Division", "Chart label", None, None, None),
+    ("Roma", None, None, None, None),
+    ("Drug Offences", "Drug Offences", 10.0, 11.0, 12.0),
+    ("Theft", "Theft", 20.0, 21.0, 22.0),
+    ("State", None, None, None, None),
+    ("Queensland", None, None, None, None),
+    ("Drug Offences", "Queensland (benchmark)", 9.0, 9.5, 9.7),
+    ("Theft", "Queensland (benchmark)", 19.0, 19.5, 19.7),
+    (None, None, None, None, None),
+    (None, None, 2023, 2024, 2025),
+    ("Narrabri", None, 83.9, 62.9, 66.1),
+    ("Assault", None, 16.4, 12.6, 18.2),
+    ("Theft", "Narrabri", 43.1, 30.7, 28.9),
+    ("NSW", None, 105.9, 66.0, 48.6),
+    ("Assault", None, 10.3, 8.0, 8.8),
+    ("Theft", "NSW", 70.5, 28.0, 21.4),
+]
+
+# The Housing sheet: the State section, then Narrabri's block with its own
+# year header and sub-headings.
+HOUSING = [
+    (None, None, 2023, 2024, 2025),
+    ("State", None, None, None, None),
+    ("Queensland", None, None, None, None),
+    ("Detached dwelling: median sale price ($)", "Queensland (benchmark)", 700, 740, 838),
+    (None, None, None, None, None),
+    ("Narrabri (LGA)", None, 2022, 2023, 2024),
+    ("Median Sales Price $", None, None, None, None),
+    ("Total", "Median Sale Price", 360000, 382000, 390500),
+    ("Sales No.", None, None, None, None),
+    ("Total", "Sales No.", 180, 208, 237),
+]
+
+
+def test_nsw_crime_blocks_carry_figures_on_their_name_row():
+    units = {u.label: u for u in read_units("Crime", CRIME)}
+    assert (units["Narrabri"].first, units["Narrabri"].last, units["Narrabri"].kind) == (12, 14, "block")
+    assert (units["NSW"].first, units["NSW"].last) == (15, 17)
+    assert units["Narrabri"].section is None                  # not part of "State"
+    assert (units["Roma"].first, units["Roma"].last) == (3, 5)
+
+
+def test_housing_block_with_its_own_year_header_is_one_block():
+    units = [u for u in read_units("Housing", HOUSING) if u.label == "Narrabri (LGA)"]
+    assert len(units) == 1 and (units[0].first, units[0].last) == (6, 10)
+
+
+def test_nsw_town_gets_crime_and_housing_blocks_named_like_the_template():
+    plan = make_plan({"Crime": CRIME, "Housing": HOUSING}, MUSWELLBROOK, NARRABRI)
+    inserts = {(i.sheet, i.label): i for i in plan.inserts}
+    crime = inserts[("Crime", "Muswellbrook")]
+    assert (crime.at, crime.rows, crime.template.first) == (12, 3, 12)    # before Narrabri, alphabetically
+    housing = inserts[("Housing", "Muswellbrook (LGA)")]
+    assert housing.template.label == "Narrabri (LGA)" and housing.rows == 5 + 1   # one blank row between blocks
+    # Narrabri's rows, wherever they end up, are mapped to Muswellbrook's.
+    assert plan.row_map[("Crime", plan.shift("Crime", 12))] == 12
+
+
+def test_blocks_named_after_the_template_town_are_reported_not_copied():
+    employment = [
+        (None, None, 2024, 2025),
+        ("SA2", None, None, None),
+        ("Narrabri", "Smoothed Unemployment rate (%)", 4.1, 4.0),
+        ("Narrabri Surrounds", "Smoothed Unemployment rate (%)", 3.2, 3.1),
+        ("State", None, None, None),
+        ("NSW", "Smoothed Unemployment rate (%)", 4.0, 4.2),
+    ]
+    plan = make_plan({"Employment": employment}, MUSWELLBROOK, NARRABRI)
+    assert [i.label for i in plan.inserts] == ["Muswellbrook"]
+    assert plan.related_in("Employment!$C$4:$D$4", final=False) == ["Employment: Narrabri Surrounds"]
+    assert plan.related_in("Employment!$C$6:$D$6", final=False) == []          # NSW benchmark
+    assert plan.related_in("Employment!$C$5:$D$5", final=True) == ["Employment: Narrabri Surrounds"]

@@ -40,6 +40,7 @@ from fetchers.fetch_income_table6 import ATOTable6Fetcher
 from fetchers.fetch_population_ucl import QGSOPopulationUCLFetcher
 from fetchers.fetch_population_nrw import QGSOPopulationNRWFetcher
 from fetchers.fetch_population_erp import QGSOPopulationERPFetcher
+from fetchers.fetch_population_erp_abs import ABSPopulationERPFetcher
 from fetchers.fetch_population_erp_lga import ABSPopulationERPLGAFetcher
 from fetchers.fetch_crime_qps import QPSCrimeFetcher
 from fetchers.fetch_crime_bocsar import BOCSARCrimeFetcher
@@ -47,8 +48,8 @@ from fetchers.fetch_qgso_housing import QGSOHousingFetcher
 from fetchers.fetch_salm_unemployment import SALMUnemploymentFetcher
 from fetchers.fetch_qrsis_labour import QRSISLabourFetcher
 from fetchers.fetch_nsw_labour import NSWLabourFetcher
-from fetchers.fetch_narrabri_approvals import NarrabriApprovalsFetcher
-from fetchers.fetch_narrabri_sales_rent import NarrabriSalesRentFetcher
+from fetchers.fetch_nsw_approvals import NSWApprovalsFetcher
+from fetchers.fetch_nsw_sales_rent import NSWSalesRentFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 from fetchers.fetch_business import ABSBusinessFetcher
 from fetchers.fetch_fuel import RACQFuelFetcher
@@ -64,14 +65,15 @@ FETCHER_REGISTRY: dict[str, type] = {
     "population_ucl": QGSOPopulationUCLFetcher,
     "population_nrw": QGSOPopulationNRWFetcher,  # non-resident workers, Surat and Bowen Basins (QGSO)
     "population_erp": QGSOPopulationERPFetcher,  # SA2 estimated resident population (QGSO QRSIS)
+    "population_erp_abs": ABSPopulationERPFetcher,  # SA2 population outside Queensland (ABS Data API)
     "population_erp_lga": ABSPopulationERPLGAFetcher,  # LGA estimated resident population (ABS Data API)
     "crime_qps":      QPSCrimeFetcher,
     "crime_bocsar":   BOCSARCrimeFetcher,   # New South Wales (BOCSAR)
     "salm_unemployment": SALMUnemploymentFetcher,
     "qrsis_labour":      QRSISLabourFetcher,   # Queensland LGAs and state (QGSO QRSIS)
     "nsw_labour":        NSWLabourFetcher,     # New South Wales state (ABS Labour Force)
-    "narrabri_approvals": NarrabriApprovalsFetcher,  # Narrabri LGA building approvals (ABS Data API)
-    "narrabri_sales_rent": NarrabriSalesRentFetcher,  # Narrabri LGA sales and rent (NSW DCJ)
+    "nsw_approvals":     NSWApprovalsFetcher,     # NSW towns' LGA building approvals (ABS Data API)
+    "nsw_sales_rent":    NSWSalesRentFetcher,     # NSW towns' LGA sales and rent (NSW DCJ)
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,
     "business":          ABSBusinessFetcher,

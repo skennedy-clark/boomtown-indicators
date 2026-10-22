@@ -55,6 +55,25 @@ a real question, not just against whether it makes today's run pass.
 ## Inbox
 _(untriaged — add here, sort later)_
 
+- [ ] **Audit flags are too aggressive for new data** (feedback from the
+  presentation, 2026-10-22). Collect examples of flags that were not
+  useful (likely candidates: year-on-year checks on small counts such as
+  "38% change" on 8 -> 11 businesses; flags on rows just back-filled for
+  a new town) and tune or suppress them.
+- [ ] **New South Wales comparison towns (Muswellbrook, Singleton).**
+  add_town copies Narrabri's layouts, including the NSW crime block and
+  the "<Town> (LGA)" housing block; housing fetchers generalised
+  (nsw_approvals, nsw_sales_rent) and SA2 population for other states
+  added (population_erp_abs). Open: rainfall stations to confirm
+  (towns.toml notes); Narrabri Surrounds series on the copied pages to be
+  deleted or replaced (listed by add_town); a possible third town,
+  Gloucester (the AGL Gloucester Gas Project, withdrawn in 2016).
+- [ ] Narrabri's hand-entered history differs from the sources for two
+  housing series: building approvals 2020-2024 (the "new residential
+  building" row has 0 in years with new houses) and all-dwellings
+  3-bedroom rent 2018-2022 (looks like an all-bedrooms figure). Ask the
+  research team which to keep; the writers do not change earlier years.
+
 - [ ] **Audit for hard-coded row numbers (and other fixed positions) in
   the writers and tools.** Adding a town inserts rows, so any fixed row
   number points at the wrong place afterwards. Found so far:

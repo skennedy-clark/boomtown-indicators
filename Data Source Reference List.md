@@ -42,7 +42,7 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 
 ## 4. update_housing.py
 
-**Fetchers:** `fetch_qgso_housing.py` (QLD), `fetch_narrabri_approvals.py` (Narrabri approvals), `fetch_narrabri_sales_rent.py` (Narrabri sales/rent)
+**Fetchers:** `fetch_qgso_housing.py` (QLD), `fetch_nsw_approvals.py` (New South Wales towns' approvals), `fetch_nsw_sales_rent.py` (New South Wales towns' sales/rent)
 
 | # | Data Source | Publisher | URL / API |
 |---|---|---|---|
