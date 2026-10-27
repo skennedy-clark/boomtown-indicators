@@ -19,8 +19,10 @@ Indicators produced (per town, annual):
   rent_3bed_median       House - 3 bedrooms - median rent of lodgements ($/week)
   building_approvals     Residential dwelling units (Private); New Houses (Number)
 
-The same four series are also fetched for the LGA, SA2 and State regions
-that the Housing sheet lists in its own sections (see _fetch_regions).
+The same four series, and the approvals series "Non-residential dwelling
+units (Private); Total (Number)", are also fetched for the LGA, SA2 and
+State regions that the Housing sheet lists in its own sections (see
+_fetch_regions).
 
 Output:
   cache/housing/<slug>_qgso.json                 one per town
@@ -99,6 +101,11 @@ SERIES_SALES_COUNT = "Detached dwelling: number of sales (Number)"
 SERIES_SALES_PRICE = "Detached dwelling: median sale price ($)"
 SERIES_RENT        = "House - 3 bedrooms - median rent of lodgements ($/week)"
 SERIES_APPROVALS   = "Residential dwelling units (Private); New Houses (Number)"
+SERIES_NONRES      = "Non-residential dwelling units (Private); Total (Number)"
+
+# Building approval series fetched for the Housing sheet's regions. Both
+# are monthly counts in collections 2075 and 2031 and are summed by year.
+REGION_APPROVAL_SERIES = [SERIES_APPROVALS, SERIES_NONRES]
 
 COLLECTIONS = {
     "sales": {
@@ -217,6 +224,9 @@ REGION_SERIES_LABELS = {
     # monthly, so _fetch_regions sums it in a separate branch from the
     # quarterly logic used for the other three series.
     SERIES_APPROVALS:   "Building Approvals: Residential dwelling units (Private) New Houses (Number)",
+    # Dwelling units approved in non-residential buildings (a flat in a
+    # shop, a caretaker's residence): small counts, mostly 0.
+    SERIES_NONRES:      "Building Approvals: Non-residential dwelling units (Private) Total (Number)",
 }
 
 def _q(*pairs) -> list[tuple]:
@@ -243,6 +253,44 @@ def _parse_options(html: str, select_name: str) -> list[str]:
         opts = [o.get_text(strip=True) for o in sel.find_all("option")]
         return [o for o in opts if o]
     return []
+
+
+def add_monthly(by_region: dict, raw: dict, region_map: dict, series: list[str], parse_month_year) -> None:
+    """Add a monthly approvals report (`raw`: {region code: {period:
+    {series: value}}}) to `by_region` ({code: {series: {year: {period:
+    value}}}}), for the regions in `region_map` and years in range."""
+    from config import YEAR_START, YEAR_END
+    for region_code, periods in raw.items():
+        code = next((c for c in region_map if region_code.startswith(c)), None)
+        if code is None:
+            continue
+        for period, vals in periods.items():
+            parsed = parse_month_year(period)
+            if not parsed:
+                continue
+            year, _month = parsed
+            if not (YEAR_START <= year <= YEAR_END):
+                continue
+            for name in series:
+                value = vals.get(name)
+                if value is not None:
+                    by_region.setdefault(code, {}).setdefault(name, {}).setdefault(year, {})[period] = value
+
+
+def approval_totals(by_year: dict[int, dict[str, float]]) -> dict[str, int]:
+    """Annual approvals: the sum of the monthly values. A year needs all
+    twelve months, except the latest year, which is the year in progress
+    and counts the approvals to date. A year the collection starts part
+    way through is left out: the historical collection (2075) starts in
+    July 2001 for SA2s and part way through 2006 for LGAs, and half a
+    year's count would read as a fall. The Housing sheet has never held
+    those years from this source."""
+    if not by_year:
+        return {}
+    latest = max(by_year)
+    return {str(year): int(sum(months.values()))
+            for year, months in sorted(by_year.items())
+            if months and (len(months) == 12 or year == latest)}
 
 
 class QGSOHousingFetcher(BaseFetcher):
@@ -460,7 +508,7 @@ class QGSOHousingFetcher(BaseFetcher):
 
             avail_series = self._get_options(session, "QIS1110W$UDQSER.ProcessSeries",
                                               udqctl_id, "infoser.htm", "p_new_multi")
-            matched = self._match_series(cfg["series"], avail_series)
+            matched = self._match_series(REGION_APPROVAL_SERIES, avail_series)
             if not matched:
                 raise RuntimeError(f"No series matched for collection {cfg['id']}")
             time_periods_html = self._select_series(session, udqctl_id, matched)
@@ -481,25 +529,7 @@ class QGSOHousingFetcher(BaseFetcher):
             html = self._submit_report(session, udqctl_id, cfg["id"])
             raw = self._parse_output_html(html)
             self.log.info(f"  Region fetch {coll_key}: {len(raw)} regions parsed")
-
-            for region_code, periods in raw.items():
-                match = next(((c, lbl_sec) for c, lbl_sec in region_map.items()
-                              if region_code.startswith(c)), None)
-                if not match:
-                    continue
-                code, _ = match
-                for period, vals in periods.items():
-                    parsed = self._parse_month_year(period)
-                    if not parsed:
-                        continue
-                    yr, _mo = parsed
-                    if not (YEAR_START <= yr <= YEAR_END):
-                        continue
-                    v = vals.get(SERIES_APPROVALS)
-                    if v is None:
-                        continue
-                    by_region.setdefault(code, {}).setdefault(SERIES_APPROVALS, {}) \
-                             .setdefault(yr, {})[period] = v
+            add_monthly(by_region, raw, region_map, matched, self._parse_month_year)
 
         out_dir = CACHE_DIR / "housing" / "regions"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -529,16 +559,8 @@ class QGSOHousingFetcher(BaseFetcher):
                         str(yr): int(sum(period_vals.values()))
                         for yr, period_vals in by_year.items() if len(period_vals) == 4
                     }
-                elif series_name == SERIES_APPROVALS:
-                    # Sum of the monthly values present for the year. Twelve
-                    # months are not required: the current, in-progress year
-                    # has fewer, and the per-town code applies the same rule.
-                    # A partial-year count is still a valid total of approvals
-                    # to date, unlike a partial-year mean.
-                    values = {
-                        str(yr): int(sum(period_vals.values()))
-                        for yr, period_vals in by_year.items() if period_vals
-                    }
+                elif series_name in REGION_APPROVAL_SERIES:
+                    values = approval_totals(by_year)
                 else:
                     round_fn = round if series_name == SERIES_SALES_PRICE else (lambda x: round(x, 4))
                     values = {

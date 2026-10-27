@@ -76,14 +76,49 @@ _(untriaged — add here, sort later)_
   (RACQ, Qld open data, RACQ history), LGA and other-state SA2 population
   and the history fetchers; added 2026-10-22. Check it whenever a fetcher
   is added (every `fetchers/fetch_*.py` should be named in it).
-- [ ] **New South Wales comparison towns (Muswellbrook, Singleton).**
-  add_town copies Narrabri's layouts, including the NSW crime block and
-  the "<Town> (LGA)" housing block; housing fetchers generalised
-  (nsw_approvals, nsw_sales_rent) and SA2 population for other states
-  added (population_erp_abs). Rainfall stations confirmed (Muswellbrook
-  Lindisfarne 061168, Singleton STP 061397). Open: Narrabri Surrounds series on the copied pages to be
-  deleted or replaced (listed by add_town); a possible third town,
-  Gloucester (the AGL Gloucester Gas Project, withdrawn in 2016).
+- [ ] **New towns: fill every data point (2026-10-27).** Checked with
+  `transform/town_coverage.py` on the latest test workbooks.
+  - One workbook: the Queensland towns (Emerald, Mitchell, Charleville)
+    are in test_1/test_2, the New South Wales towns (Muswellbrook,
+    Singleton) in a different copy. Add Muswellbrook and Singleton
+    (`--like Narrabri`) to the workbook with the Queensland towns, then
+    run every writer and update_charts. Singleton then gets its Business
+    and Crime blocks (the earlier add missed them).
+  - test_2 has no Mitchell fuel block (test_1 has one, 2019 onwards).
+  - [x] Population projections (2026-10-27): fetcher
+    `population_projections` and writer `update_population_projections.py`
+    fill the QGSO 2018 edition rows (LGA high/medium/low, SA2 medium) and
+    the NSW ERP rows' 2031/2036/2041 (NSW Planning 2024 edition), for
+    every area on the sheet. Columns follow the filled rows (the 2016,
+    2021 and 2026 figures sit under 2011, 2017 and 2025). On the
+    hand-made 2026 workbook it writes nothing and every filled cell
+    matches the source.
+  - [ ] Decide: the 2026 workbook added QGSO **2023 edition** rows by hand
+    (LGA high/low/medium "2021 to 2046, 2023ed"; the SA2 row relabelled
+    "2023e" with 2023 figures over the 2018 ones from 2021). QGSO now
+    publishes only the 2025 edition; the 2023 tables are gone. A new
+    town's 2023 rows cannot be filled. Options: ask QGSO for the 2023
+    tables, move all towns to the 2025 edition, or keep the 2018 rows
+    only.
+  - Non-resident population projections 2022 (series A, C, D) for
+    Central Highlands: in the QGSO Bowen and Galilee PDF; by hand or a
+    fetcher.
+  - Non-resident workers by UCL: Emerald 2011-2018 are in the archived
+    Bowen Basin reports (values in docs/historic-data-for-new-towns.md);
+    2019-2023 only from QGSO on request. Mitchell and Charleville: none
+    (outside the basins); leave blank.
+  - [x] Non-residential building approvals (2026-10-27): qgso_housing
+    now fetches QRSIS "Non-residential dwelling units (Private); Total"
+    for every Queensland LGA and SA2 on the sheet. Matches the workbook
+    in all 407 region-years that both hold. Full years only: SA2s from
+    2002, LGAs from 2007 (the historical collection starts part way
+    through 2001 and 2006). The workbook's zeros before those years were
+    not from this source. New South Wales: no such row on the sheet.
+  - Narrabri Surrounds series on the copied NSW pages: delete or replace
+    (listed by add_town).
+  - Possible third NSW town: Gloucester (AGL Gloucester Gas Project,
+    withdrawn 2016).
+
 - [ ] Narrabri's hand-entered history differs from the sources for two
   housing series: building approvals 2020-2024 (the "new residential
   building" row has 0 in years with new houses) and all-dwellings

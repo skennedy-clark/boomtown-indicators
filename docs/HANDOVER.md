@@ -77,14 +77,15 @@ folder. A step stuck on an invisible Excel dialog is stopped after 15 minutes.
 
 ## Known gaps (fine for now, listed in TODO.md)
 
-- **Population projections** are not fetched; projection rows are left as they
-  are.
+- **Population projections**: the QGSO 2018 edition rows and the New South
+  Wales projections are filled (`update_population_projections.py`). The QGSO
+  2023 edition rows added by hand in the 2026 workbook are not: that edition is
+  no longer published (QGSO now has the 2025 edition).
 - **Earlier years are not revised.** Writers add the new year and report, but do
   not apply, revisions that sources have made to earlier years. The hand-made
   workbook applies some of these.
 - **Chinchilla crime** uses the Dalby police division; the hand-made figures
   differ. Left as it is by decision.
-- **Non-residential building approvals** have no fetcher.
 - **Rainfall**: SILO figures differ slightly from BOM's raw station data
   (Dysart, Roma, Toowoomba); BOM's historic-average page returns 404 for some
   stations, so the previous average is kept and reported.

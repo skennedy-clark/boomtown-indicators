@@ -233,6 +233,7 @@ On Windows `cmd`, substitute the paths in full; in PowerShell use
 | Population (non-resident workers) | `update_population_nrw.py`, `update_population_nrw_lga.py` | `population_nrw` |
 | Population (SA2) | `update_population_erp.py` | `population_erp`, `population_erp_abs` |
 | Population (LGA) | `update_population_erp_lga.py` | `population_erp_lga` |
+| Population (projections) | `update_population_projections.py` | `population_projections` |
 | Exogenous: rainfall | `update_rainfall.py` | `bom_rainfall` |
 | Exogenous: education | `update_education.py` | `schools` |
 | Exogenous: fuel | `update_fuel.py` | `fuel`, `fuel_qld` |
@@ -341,9 +342,10 @@ Windows.
    only the latest year. What has no history to fill:
    - non-resident workers by urban centre: QGSO publishes only the two
      latest years, and the earlier reports are no longer online;
-   - population projections: the workbook holds the 2018 edition, which
-     QGSO no longer publishes; the 2025 edition is available but would
-     differ from the other towns' rows;
+   - population projections in rows the 2026 workbook added by hand
+     for QGSO's 2023 edition: that edition is no longer published (the
+     2018 edition rows and the New South Wales projections are filled
+     by `update_population_projections.py`);
    - fuel prices for a town RACQ has never reported before 2019 (the
      Queensland open data used for it starts in 2019). A town RACQ
      reported in earlier years (Charleville, to 2016) gets those years
@@ -372,6 +374,20 @@ Windows.
    labelled by add_town with the town's own station (`bom_station` in
    towns.toml, named from BOM's stations list), for example "Mitchell
    Post Office 043020".
+
+6. List what is still missing for the town: blocks that the other towns
+   of the same state have and it lacks, and empty years in its rows that
+   most of those towns have figures for. It reads the workbook only (no
+   Excel needed):
+
+   ```bash
+   python regional-indicators/transform/town_coverage.py "Indicators Data-Charts 2026.xlsx" \
+       --town Emerald
+   ```
+
+   Each line names the towns that have the figures, so a gap can be
+   judged: run the writer, enter the figures by hand, or leave the
+   years blank where no source has them (step 3).
 
 ### Build a booklet
 
@@ -411,11 +427,12 @@ Towns currently configured:
 | `population_erp` | SA2 resident population, Queensland | QGSO Queensland Regional Database (QRSIS) |
 | `population_erp_abs` | SA2 resident population, other states | ABS Data API (`ABS_ANNUAL_ERP_ASGS2021`) |
 | `population_erp_lga` | LGA resident population | ABS Data API (`ERP_LGA<year>`) |
+| `population_projections` | Population projections: Queensland (2018 edition, LGA and SA2), New South Wales (2024 edition, LGA and SA2) | QGSO archive site; NSW Department of Planning |
 | `population_nrw` | Non-resident workers | QGSO Surat Basin and Bowen Basin population reports |
 | `salm_unemployment` | Unemployment, SA2 | Small Area Labour Markets (DEWR) |
 | `qrsis_labour` | Unemployment, Queensland LGAs and state | QGSO Queensland Regional Database |
 | `nsw_labour` | Unemployment, New South Wales | ABS Labour Force |
-| `qgso_housing` | Sales, median price, rent, building approvals | QGSO Queensland Regional Database |
+| `qgso_housing` | Sales, median price, rent, building approvals (new houses; dwelling units in non-residential buildings) | QGSO Queensland Regional Database |
 | `nsw_approvals` | Building approvals, New South Wales towns (by LGA) | ABS Data API |
 | `nsw_sales_rent` | Sales and rent, New South Wales towns (by LGA), from 2018 | NSW Department of Communities and Justice |
 | `income`, `income_table6` | Taxable income by postcode | ATO Taxation Statistics (data.gov.au) |
@@ -470,6 +487,7 @@ regional-indicators/
         web_export.py          website CSV folder from the workbook
         chart_audit.py         lists chart series that do not show the latest year
         add_town.py            adds a town to the workbook, copied from a similar town
+        town_coverage.py       lists the blocks and years still missing for a town
         data_folder.py         builds the "1 Data" folder of source files
         to_csv.py              website CSVs from the cache (earlier approach; web_export.py is the current export)
         booklet/               booklet generation (Word)

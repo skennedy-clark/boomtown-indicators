@@ -49,8 +49,8 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 |---|---|---|---|
 | 1 | QRSIS Regional Database — Collection 1925: Residential land and dwelling sales (SA2, quarterly, Sep 2000 – Sep 2025) | Queensland Government Statistician's Office (QGSO) | `https://statistics.qgso.qld.gov.au/pls/qis_public/` (6-step wizard POST API) |
 | 2 | QRSIS Regional Database — Collection 1929: Median rent (SA2, quarterly, Dec 1989 – Mar 2026) | Queensland Government Statistician's Office (QGSO) | `https://statistics.qgso.qld.gov.au/pls/qis_public/` (6-step wizard POST API) |
-| 3 | QRSIS Regional Database — Collection 2075: Building Approvals Historical (LGA, monthly, Jul 2001 – Dec 2018) | Queensland Government Statistician's Office (QGSO) | `https://statistics.qgso.qld.gov.au/pls/qis_public/` (6-step wizard POST API) |
-| 4 | QRSIS Regional Database — Collection 2031: Building Approvals Current (LGA, monthly, Jan 2019 – present) | Queensland Government Statistician's Office (QGSO) | `https://statistics.qgso.qld.gov.au/pls/qis_public/` (6-step wizard POST API) |
+| 3 | QRSIS Regional Database — Collection 2075: Building Approvals Historical (LGA, SA2 and State, monthly, Jul 2001 – Dec 2018; new houses and non-residential dwelling units) | Queensland Government Statistician's Office (QGSO) | `https://statistics.qgso.qld.gov.au/pls/qis_public/` (6-step wizard POST API) |
+| 4 | QRSIS Regional Database — Collection 2031: Building Approvals Current (LGA, SA2 and State, monthly, Jan 2019 – present; new houses and non-residential dwelling units) | Queensland Government Statistician's Office (QGSO) | `https://statistics.qgso.qld.gov.au/pls/qis_public/` (6-step wizard POST API) |
 | 5 | Building Approvals LGA data — SDMX REST API (dataflows BA_LGA2018 through BA_LGA2026, no API key needed) | Australian Bureau of Statistics (ABS) | `https://data.api.abs.gov.au/rest/` (SDMX 2.1 REST API) |
 | 6 | Rent and Sales Report — quarterly Sales tables (LGA-level, all dwelling types) | NSW Department of Communities and Justice (DCJ) | `https://dcj.nsw.gov.au/about-us/families-and-communities-statistics/housing-rent-and-sales/rent-and-sales-report.html` |
 | 7 | Rent and Sales Report — quarterly Rent tables (LGA-level, by dwelling type and bedrooms) | NSW Department of Communities and Justice (DCJ) | `https://dcj.nsw.gov.au/about-us/families-and-communities-statistics/housing-rent-and-sales/rent-and-sales-report.html` |
@@ -93,6 +93,18 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 | # | Data Source | Publisher | URL / API |
 |---|---|---|---|
 | 1 | ERP by LGA, 2001 to the latest year — dataflow `ERP_LGA<year>` (one national dataset per boundary year; the newest is found at run time) | Australian Bureau of Statistics (ABS) | `https://data.api.abs.gov.au/rest/data/ABS,ERP_LGA<year>,...` |
+
+---
+
+## 6b. update_population_projections.py
+
+**Fetcher:** `fetch_population_projections.py`
+
+| # | Data Source | Publisher | URL / API |
+|---|---|---|---|
+| 1 | Projected population by LGA, low, medium and high series, 2016 to 2041, 2018 edition (archive) | Queensland Government Statistician's Office (QGSO) | `https://archive.qgso.qld.gov.au/products/tables/proj-pop-lga-qld/proj-pop-lga-qld-2018-edn.xlsx` |
+| 2 | Projected population by SA2, medium series, 2016 to 2041, 2018 edition (archive) | QGSO | `https://archive.qgso.qld.gov.au/products/tables/proj-pop-medium-series-sa2-sa3-sa4-qld/proj-pop-medium-series-sa2-sa3-sa4-qld-2018-ed.xlsx` |
+| 3 | NSW Common Planning Assumption population projections, LGA and SA2, 2024 edition | NSW Department of Planning | `https://www.planning.nsw.gov.au/data-and-resources/population-projections/explore-the-data` (files `<edition>-nsw-population-projections-local-government-areas.xlsx`, `...-sa2s.xlsx`) |
 
 ---
 

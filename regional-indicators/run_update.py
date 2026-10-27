@@ -41,6 +41,7 @@ from fetchers.fetch_population_ucl import QGSOPopulationUCLFetcher
 from fetchers.fetch_population_nrw import QGSOPopulationNRWFetcher
 from fetchers.fetch_population_erp import QGSOPopulationERPFetcher
 from fetchers.fetch_population_erp_abs import ABSPopulationERPFetcher
+from fetchers.fetch_population_projections import PopulationProjectionsFetcher
 from fetchers.fetch_population_erp_lga import ABSPopulationERPLGAFetcher
 from fetchers.fetch_crime_qps import QPSCrimeFetcher
 from fetchers.fetch_crime_bocsar import BOCSARCrimeFetcher
@@ -66,6 +67,7 @@ FETCHER_REGISTRY: dict[str, type] = {
     "population_nrw": QGSOPopulationNRWFetcher,  # non-resident workers, Surat and Bowen Basins (QGSO)
     "population_erp": QGSOPopulationERPFetcher,  # SA2 estimated resident population (QGSO QRSIS)
     "population_erp_abs": ABSPopulationERPFetcher,  # SA2 population outside Queensland (ABS Data API)
+    "population_projections": PopulationProjectionsFetcher,  # QGSO 2018 edition, NSW Planning (fixed files)
     "population_erp_lga": ABSPopulationERPLGAFetcher,  # LGA estimated resident population (ABS Data API)
     "crime_qps":      QPSCrimeFetcher,
     "crime_bocsar":   BOCSARCrimeFetcher,   # New South Wales (BOCSAR)

@@ -88,6 +88,7 @@ WRITER_STEPS = [
     ("Population: non-residents, LGA",    "update_population_nrw_lga.py", "population"),
     ("Population: district (SA2)",        "update_population_erp.py",     "population"),
     ("Population: LGA",                   "update_population_erp_lga.py", "population"),
+    ("Population: projections",           "update_population_projections.py", "population"),
     ("Exogenous: rainfall",               "update_rainfall.py",           "rainfall"),
     ("Exogenous: education",              "update_education.py",          "schools"),
     ("Exogenous: fuel",                   "update_fuel.py",               "fuel"),
