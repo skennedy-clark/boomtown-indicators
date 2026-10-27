@@ -182,6 +182,12 @@ def read_units(sheet_name: str, rows: list[tuple]) -> list[Unit]:
     def numbers(r):
         return any(is_number(v) for v in rows[r - 1][1:])
 
+    def figures(r):
+        """Two or more numbers: a row of data. A block heading may carry a
+        single total (the Business sheet's region rows do, in the latest
+        year's column), which does not make it a data row."""
+        return sum(1 for v in rows[r - 1][1:] if is_number(v)) >= 2
+
     def blank(r):
         return all(v is None or (isinstance(v, str) and not v.strip()) for v in rows[r - 1])
 
@@ -194,7 +200,7 @@ def read_units(sheet_name: str, rows: list[tuple]) -> list[Unit]:
 
     n = len(rows)
     indicator_labels = {norm(a(r)) for r in range(1, n + 1)
-                        if isinstance(a(r), str) and a(r) and numbers(r) and not year_row(r)
+                        if isinstance(a(r), str) and a(r) and figures(r) and not year_row(r)
                         and a(r) not in SECTION_HEADINGS}
 
     def own_header(r):
@@ -215,40 +221,48 @@ def read_units(sheet_name: str, rows: list[tuple]) -> list[Unit]:
             return True
         label_b = b(r)
         b_is_text = isinstance(label_b, str) and label_b != "" and not label_b.startswith("=")
-        return not b_is_text and not numbers(r) and norm(label) not in indicator_labels
+        return not b_is_text and not figures(r) and norm(label) not in indicator_labels
 
     # Sections, and the block headings within them. Besides the section
     # headings, a section ends at a year header row below row 1 with nothing
     # in column A (the Crime sheet's New South Wales part has its own), and at the first
     # block that carries its own year header; such blocks form a section of
     # their own, in which only those headings start blocks.
-    sections: list[tuple[str | None, int, int, bool]] = []   # (name, first row, last row, own-header blocks)
-    current, start, own = None, 1, False
+    # Each section: (name, first row, last row, kind), where kind is "" for an
+    # ordinary section, "own" for blocks with their own year header and
+    # "figures" for the part below a year header row with nothing in column
+    # A (blocks whose name row carries figures).
+    sections: list[tuple[str | None, int, int, str]] = []
+    current, start, kind = None, 1, ""
     for r in range(1, n + 1):
         if isinstance(a(r), str) and a(r) in SECTION_HEADINGS:
-            sections.append((current, start, r - 1, own))
-            current, start, own = a(r), r + 1, False
+            sections.append((current, start, r - 1, kind))
+            current, start, kind = a(r), r + 1, ""
         elif a(r) in (None, "") and year_row(r) and r > 1:
             # A part of the sheet with its own year header is not part of the
             # section above it (on the Crime sheet, "State").
-            sections.append((current, start, r - 1, own))
-            current, start, own = None, r + 1, False
-        elif own_header(r) and not own:
-            sections.append((current, start, r - 1, own))
-            start, own = r, True
-    sections.append((current, start, n, own))
+            sections.append((current, start, r - 1, kind))
+            current, start, kind = None, r + 1, "figures"
+        elif own_header(r) and kind != "own":
+            sections.append((current, start, r - 1, kind))
+            start, kind = r, "own"
+    sections.append((current, start, n, kind))
 
     units: list[Unit] = []
-    for section_no, (section, s_first, s_last, own) in enumerate(sections):
+    for section_no, (section, s_first, s_last, kind) in enumerate(sections):
         if s_first > s_last:
             continue
-        if own:
+        if kind == "own":
             starts = [r for r in range(s_first, s_last + 1) if own_header(r)]
         else:
             heads = [r for r in range(s_first, s_last + 1) if heading(r)]
             # A heading straight after another heading is a sub-heading of the same block.
             starts = [r for r in heads if (r - 1) not in heads or r == s_first]
-        if not starts:
+        if kind == "figures":
+            # A town's name row starts its block whether or not it carries
+            # figures (a block just copied by this tool has been cleared).
+            starts = sorted(set(starts) | set(_figure_headings(rows, s_first, s_last, minimum=1)))
+        elif not starts:
             starts = _figure_headings(rows, s_first, s_last)
         if starts:
             for i, first in enumerate(starts):
@@ -260,12 +274,15 @@ def read_units(sheet_name: str, rows: list[tuple]) -> list[Unit]:
                 units.append(Unit(sheet_name, section, section_no, a(first), first, end, "block", signature))
         else:
             for r in range(s_first, s_last + 1):
-                if isinstance(a(r), str) and a(r) and numbers(r):
+                # A row with figures, or one still empty but labelled in column B
+                # (a town's row just added by this tool).
+                labelled = isinstance(b(r), str) and bool(b(r)) and not b(r).startswith("=")
+                if isinstance(a(r), str) and a(r) and (numbers(r) or labelled):
                     units.append(Unit(sheet_name, section, section_no, a(r), r, r, "row", (norm(b(r)),)))
     return units
 
 
-def _figure_headings(rows, first: int, last: int) -> list[int]:
+def _figure_headings(rows, first: int, last: int, minimum: int = 2) -> list[int]:
     """Block headings in a section whose blocks carry figures on their name
     row (the Crime sheet's New South Wales part: "Narrabri" with the
     total rate, then one row per offence category, then "NSW" the same
@@ -282,7 +299,7 @@ def _figure_headings(rows, first: int, last: int) -> list[int]:
         counts[label] = counts.get(label, 0) + 1
     starts = [r for r, label in labels.items()
               if counts[label] == 1 and (r + 1) in labels and counts[labels[r + 1]] > 1]
-    return starts if len(starts) >= 2 else []
+    return starts if len(starts) >= minimum else []
 
 
 def unit_level(unit: Unit) -> str | None:

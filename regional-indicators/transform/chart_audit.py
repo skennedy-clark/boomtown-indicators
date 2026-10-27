@@ -618,12 +618,27 @@ def assess(series: Series, cells: Cells, last_year: int) -> None:
     # the header nor a figure (spacer columns). They draw an empty, unlabelled
     # slot at the end of the axis; their positions in the category range
     # are recorded so that the chart can filter them out.
+    # The label is read from the chart's own category cells where they are a
+    # single row (the Income sheet's charts label their axis from the fiscal
+    # years in row 1, while its data rows sit under calendar years in row 2).
+    # A row with no figures at all (a town just added, not yet written) has
+    # no spacer columns to report.
     cat_areas = parse_reference(series.categories) if series.categories else None
-    cat_start = cat_areas[0].col1 if cat_areas and len(cat_areas) == 1 else area.col1
+    single_cat = cat_areas[0] if cat_areas and len(cat_areas) == 1 and cat_areas[0].row1 == cat_areas[0].row2 else None
+    cat_start = single_cat.col1 if single_cat else area.col1
+
+    def labelled(col: int) -> bool:
+        if year_at(col) is not None:
+            return True
+        if single_cat and cells.has(single_cat.sheet):
+            value = cells.value(single_cat.sheet, single_cat.row1, col)
+            return value not in (None, "") and not (isinstance(value, str) and not value.strip())
+        return False
+
     last_figure = max((c for c in shown if has_data(c)), default=0)
-    series.blank_positions = [
+    series.blank_positions = [] if not last_figure else [
         c - cat_start + 1 for c in sorted(shown)
-        if c > last_figure and year_at(c) is None and not has_data(c) and c >= cat_start
+        if c > last_figure and not labelled(c) and not has_data(c) and c >= cat_start
     ]
     shown_years = [year_at(c) for c in sorted(shown) if year_at(c) is not None]
     series.range_from_year = shown_years[0] if shown_years else None

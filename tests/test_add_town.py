@@ -357,3 +357,47 @@ def test_blocks_named_after_the_template_town_are_reported_not_copied():
     assert plan.related_in("Employment!$C$4:$D$4", final=False) == ["Employment: Narrabri Surrounds"]
     assert plan.related_in("Employment!$C$6:$D$6", final=False) == []          # NSW benchmark
     assert plan.related_in("Employment!$C$5:$D$5", final=True) == ["Employment: Narrabri Surrounds"]
+
+
+def test_second_nsw_town_finds_the_template_after_a_cleared_block():
+    # Muswellbrook was added first: its copied crime block has no figures.
+    crime = CRIME[:11] + [
+        ("Muswellbrook", None, None, None, None),
+        ("Assault", None, None, None, None),
+        ("Theft", "Muswellbrook", None, None, None),
+    ] + CRIME[11:]
+    singleton = town("Singleton", "Singleton", "Singleton", "2330")
+    units = {u.label: u for u in read_units("Crime", crime)}
+    assert (units["Muswellbrook"].first, units["Muswellbrook"].last) == (12, 14)
+    assert (units["Narrabri"].first, units["Narrabri"].last) == (15, 17)
+    plan = make_plan({"Crime": crime}, singleton, NARRABRI)
+    assert [(i.label, i.template.label) for i in plan.inserts] == [("Singleton", "Narrabri")]
+
+
+def test_business_heading_with_a_single_total_is_still_a_heading():
+    business = [
+        (None, "2023/24", "2024/25"),
+        ("Non-primary production", None, None),
+        ("Muswellbrook", None, None),
+        ("0k-50k", None, None),
+        ("2m+", None, None),
+        ("Narrabri", None, 606),                 # a total in the latest year's column
+        ("0k-50k", 110, 107),
+        ("2m+", 34, 34),
+        ("Roma", "=SUM(B10:B11)", 696),
+        ("0k-50k", 168, 201),
+        ("2m+", 66, 68),
+    ]
+    labels = [(u.label, u.first, u.last) for u in read_units("Business", business)]
+    assert labels == [("Muswellbrook", 3, 5), ("Narrabri", 6, 8), ("Roma", 9, 11)]
+
+
+def test_an_empty_labelled_row_added_earlier_is_reused():
+    employment = [
+        (None, None, 2024, 2025),
+        ("SA2", None, None, None),
+        ("Muswellbrook", "Smoothed Unemployment rate (%)", None, None),
+        ("Narrabri", "Smoothed Unemployment rate (%)", 4.1, 4.0),
+    ]
+    plan = make_plan({"Employment": employment}, MUSWELLBROOK, NARRABRI)
+    assert plan.inserts == [] and [e.label for _, e in plan.reused] == ["Muswellbrook"]

@@ -433,7 +433,7 @@ bom_station      = "61168"
 benchmark        = false
 district         = "Muswellbrook and District"
 cover_photo      = "cover.jpg"
-notes            = "NSW comparison town (Upper Hunter), added as a proof of concept for adding towns outside Queensland; no CSG development, so no csg_notice_year. SA3 10604 is Upper Hunter. The adjacent SA2, Muswellbrook Surrounds (106041127), has no town in this project. lga_code is the ABS LGA code. Rainfall station to be confirmed: no station in town covers 2001 onwards; Muswellbrook (Lindisfarne) 061168, about 5 km south, is open since 1960 and is in SILO."
+notes            = "NSW comparison town (Upper Hunter), added as a proof of concept for adding towns outside Queensland; no CSG development, so no csg_notice_year. SA3 10604 is Upper Hunter. The adjacent SA2, Muswellbrook Surrounds (106041127), has no town in this project. lga_code is the ABS LGA code. Rainfall: no station in town covers 2001 onwards; Muswellbrook (Lindisfarne) 061168, about 5 km south, open since 1960 and in SILO, chosen 2026-10-22."
 
 [towns.singleton]
 name             = "Singleton"
@@ -449,7 +449,7 @@ bom_station      = "61397"
 benchmark        = false
 district         = "Singleton and District"
 cover_photo      = "cover.jpg"
-notes            = "NSW comparison town (Hunter Valley), added as a proof of concept for adding towns outside Queensland; no CSG development (exploration near Broke-Fordwich was opposed), so no csg_notice_year. The adjacent SA2, Singleton Surrounds (106011113), has no town in this project. lga_code is the ABS LGA code. Rainfall station to be confirmed: Singleton STP 061397 is in town but closed in 2019 (SILO fills later years from nearby stations); Singleton Defence AWS 061430 (from 2017) is not in SILO; Broke (Harrowby) 061100 is open, about 25 km south."
+notes            = "NSW comparison town (Hunter Valley), added as a proof of concept for adding towns outside Queensland; no CSG development (exploration near Broke-Fordwich was opposed), so no csg_notice_year. The adjacent SA2, Singleton Surrounds (106011113), has no town in this project. lga_code is the ABS LGA code. Rainfall: Singleton STP 061397, in town, chosen 2026-10-22; it closed in 2019 and SILO fills later years from nearby stations (Singleton Defence AWS 061430, from 2017, is not in SILO)."
 
 
 # ─── VICTORIA TOWNS ─────────────────────────────────────────────────────────

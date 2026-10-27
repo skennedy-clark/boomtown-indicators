@@ -6,11 +6,12 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 
 ## 1. update_business.py
 
-**Fetcher:** `fetch_business.py`
+**Fetchers:** `fetch_business.py` (latest year), `fetch_business_history.py` (earlier years, for a town just added; on request)
 
 | # | Data Source | Publisher | URL / API |
 |---|---|---|---|
 | 1 | Counts of Australian Businesses, including Entries and Exits — Data Cube 9 (SA2 by industry division and turnover) | Australian Bureau of Statistics (ABS) | `https://www.abs.gov.au/statistics/economy/business-indicators/counts-australian-businesses-including-entries-and-exits/{release}/8165DC09.xlsx` |
+| 2 | Earlier releases of the same cube, June 2009 onwards (before 2019 on the ABS archive site) | ABS | `https://www.abs.gov.au/ausstats/subscriber.nsf/log?openagent&...` (listed in `fetch_business_history.py`) |
 
 ---
 
@@ -60,7 +61,7 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 
 ## 5. update_income.py
 
-**Fetchers:** `fetch_income.py` (Table 8), `fetch_income_table6.py` (Table 6), `ato_release.py` (release discovery)
+**Fetchers:** `fetch_income.py` (Table 8), `fetch_income_table6.py` (Table 6), `ato_release.py` (release discovery), `fetch_income_history.py` (Table 6 for every income year from 2000-01, for a town just added; on request)
 
 | # | Data Source | Publisher | URL / API |
 |---|---|---|---|
@@ -76,11 +77,22 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 
 ## 6. update_population_erp.py
 
-**Fetcher:** `fetch_population_erp.py`
+**Fetchers:** `fetch_population_erp.py` (Queensland), `fetch_population_erp_abs.py` (other states)
 
 | # | Data Source | Publisher | URL / API |
 |---|---|---|---|
 | 1 | QRSIS Regional Database — Population (ERP) collection (collgrp_id=1, coll_id=1961): Estimated Resident Population, persons only, 1991–2025, ASGS 2021 boundaries | Queensland Government Statistician's Office (QGSO) | `https://statistics.qgso.qld.gov.au/pls/qis_public/` (6-step wizard POST API) |
+| 2 | ERP by SA2 and above (ASGS Edition 3), 2001 onwards — dataflow `ABS_ANNUAL_ERP_ASGS2021`, for towns outside Queensland | Australian Bureau of Statistics (ABS) | `https://data.api.abs.gov.au/rest/data/ABS,ABS_ANNUAL_ERP_ASGS2021,/ERP.SA2.{codes}.A` |
+
+---
+
+## 6a. update_population_erp_lga.py
+
+**Fetcher:** `fetch_population_erp_lga.py`
+
+| # | Data Source | Publisher | URL / API |
+|---|---|---|---|
+| 1 | ERP by LGA, 2001 to the latest year — dataflow `ERP_LGA<year>` (one national dataset per boundary year; the newest is found at run time) | Australian Bureau of Statistics (ABS) | `https://data.api.abs.gov.au/rest/data/ABS,ERP_LGA<year>,...` |
 
 ---
 
@@ -127,6 +139,29 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 | 2 | SILO documentation | Queensland Government | `https://www.longpaddock.qld.gov.au/silo/` |
 | 3 | Climate Data Online — climate averages (fallback for stations not in SILO) | Bureau of Meteorology (BOM) | `https://www.bom.gov.au/climate/averages/tables/cw_{station}.shtml` |
 | 4 | Climate Data Online — weather data request (fallback) | Bureau of Meteorology (BOM) | `https://www.bom.gov.au/jsp/ncc/cdio/weatherData/av` |
+| 5 | List of all stations (name for each station number; used for the station label of a town added by `add_town.py`, via `fetchers/bom_stations.py`) | Bureau of Meteorology (BOM) | `https://www.bom.gov.au/climate/data/lists_by_element/stations.txt` |
+
+---
+
+## 11. update_education.py
+
+**Fetcher:** `fetch_schools.py`
+
+| # | Data Source | Publisher | URL / API |
+|---|---|---|---|
+| 1 | School Profile — full-time equivalent enrolments and teaching staff by school, 2008 onwards (the schools in each town's postcode) | Australian Curriculum, Assessment and Reporting Authority (ACARA) | `https://dataandreporting.blob.core.windows.net/anrdataportal/Data-Access-Program/` (files listed on `https://www.acara.edu.au/contact-us/acara-data-access`) |
+
+---
+
+## 12. update_fuel.py
+
+**Fetchers:** `fetch_fuel.py` (latest report), `fetch_fuel_qld.py` (towns RACQ does not name), `fetch_fuel_history.py` (earlier years, for a town just added; on request)
+
+| # | Data Source | Publisher | URL / API |
+|---|---|---|---|
+| 1 | Annual Fuel Price Report — Appendix 1, Average RULP Prices in Queensland (about eleven years per report) | RACQ | `https://www.racq.com.au/car/queensland-fuel-prices` and `https://www.racq.com.au/about-us/advocacy/reports-and-research` (report PDF found on the page) |
+| 2 | Every Annual Fuel Price Report from 2010 (regional RULP tables) | RACQ | `https://www.racq.com.au/about-us/advocacy/reports-and-research` |
+| 3 | Fuel price reporting — site price changes, monthly CSV, from 2019 | Queensland Government (Open Data Portal) | `https://www.data.qld.gov.au/api/3/action/package_show` (datasets `fuel-price-reporting-2019-2022`, `fuel-price-reporting`, `fuel-price-reporting-<year>`) |
 
 ---
 

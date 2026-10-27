@@ -60,12 +60,28 @@ _(untriaged — add here, sort later)_
   useful (likely candidates: year-on-year checks on small counts such as
   "38% change" on 8 -> 11 businesses; flags on rows just back-filled for
   a new town) and tune or suppress them.
+  - Example (2026-10-22): Breach Domestic Violence Protection Order 2025 =
+    18.6 after 17.2, 13.6 and 17.0 was flagged. That value is within the
+    recent range and should pass. `audit_series` on those years alone
+    returns OK, so the flag comes from the ISOLATED_OUTLIER check, which
+    looks over the whole history and flags the new write when any earlier
+    year jumped and reverted (or from the historical comparison).
+  - Proposed rule: judge the new value against the recent range (say the
+    last five years, widened by a margin, or a multiple of their spread)
+    instead of the last year alone; report odd points in the older history
+    separately (a list at the end of the run), not as a flag on the new
+    cell; allow larger relative changes for small numbers (counts under
+    about 20).
+- [ ] **Data Source Reference List** was missing education (ACARA), fuel
+  (RACQ, Qld open data, RACQ history), LGA and other-state SA2 population
+  and the history fetchers; added 2026-10-22. Check it whenever a fetcher
+  is added (every `fetchers/fetch_*.py` should be named in it).
 - [ ] **New South Wales comparison towns (Muswellbrook, Singleton).**
   add_town copies Narrabri's layouts, including the NSW crime block and
   the "<Town> (LGA)" housing block; housing fetchers generalised
   (nsw_approvals, nsw_sales_rent) and SA2 population for other states
-  added (population_erp_abs). Open: rainfall stations to confirm
-  (towns.toml notes); Narrabri Surrounds series on the copied pages to be
+  added (population_erp_abs). Rainfall stations confirmed (Muswellbrook
+  Lindisfarne 061168, Singleton STP 061397). Open: Narrabri Surrounds series on the copied pages to be
   deleted or replaced (listed by add_town); a possible third town,
   Gloucester (the AGL Gloucester Gas Project, withdrawn in 2016).
 - [ ] Narrabri's hand-entered history differs from the sources for two
