@@ -129,6 +129,28 @@ def test_web_map_lines(tmp_path):
     ]
 
 
+def test_web_map_lines_for_a_new_south_wales_town(tmp_path):
+    # The NSW lines name the town in the section ("Narrabri (LGA)" housing
+    # block) and in the State part of the Crime sheet; each is renamed.
+    narrabri = town("Narrabri", "Narrabri", "Narrabri")
+    singleton = town("Singleton", "Singleton", "Singleton")
+    path = tmp_path / "map.csv"
+    path.write_text(
+        "folder,file,sheet,section,block,row_label,sub_label,note\n"
+        "Narrabri,House sales,Housing,Narrabri (LGA),Sales No.,Total,,\n"
+        "Narrabri,Crime rate,Crime,State,,Narrabri,,\n"
+        "Narrabri,Theft,Crime,State,Narrabri,Theft,,\n"
+        "Narrabri,Surrounds,Population,SA2,Narrabri Surrounds,Population (ERP),,\n",
+        encoding="utf-8")
+    lines, _ = web_map_lines(path, singleton, narrabri)
+    assert [(l["section"], l["block"], l["row_label"]) for l in lines] == [
+        ("Singleton (LGA)", "Sales No.", "Total"),
+        ("State", "", "Singleton"),
+        ("State", "Singleton", "Theft"),
+        ("SA2", "Narrabri Surrounds", "Population (ERP)"),
+    ]
+
+
 def test_area_name_drops_state_suffix():
     assert area_name(EMERALD, "lga") == "Central Highlands"
     assert area_name(MITCHELL, "sa2") == "Roma Surrounds"

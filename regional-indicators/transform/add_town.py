@@ -560,8 +560,33 @@ def web_map_lines(path: Path, town, template, replace: bool = False) -> tuple[li
                 new["block"] = new_area
             elif not line["block"] and norm(line["row_label"]) == norm(old_area):
                 new["row_label"] = new_area
+        else:
+            # Lines without an area level: a block with its own heading used
+            # as the section ("Narrabri (LGA)" on the Housing sheet), or the
+            # State part of the Crime sheet, where the town's block and its
+            # total row are named after the town. Each field that names one
+            # of the template's areas is renamed to the new town's.
+            for key in ("section", "block", "row_label"):
+                renamed = _renamed_area(line.get(key) or "", town, template)
+                if renamed:
+                    new[key] = renamed
         added.append(new)
     return added, header
+
+
+def _renamed_area(text: str, town, template) -> str | None:
+    """The new town's area for a field naming one of the template's areas:
+    "Narrabri (LGA)" -> "Muswellbrook (LGA)", "Narrabri" -> "Muswellbrook".
+    None for any other text (including "Narrabri Surrounds")."""
+    suffix = label_suffix(text)
+    base = text[: len(text) - len(suffix)].strip() if suffix else text.strip()
+    if not base:
+        return None
+    level = {"(LGA)": "lga", "(SA2)": "sa2"}.get(suffix.upper(), "town")
+    if norm(base) != norm(area_name(template, level)):
+        return None
+    name = area_name(town, level)
+    return f"{name} {suffix}" if suffix else name
 
 
 def append_web_map(path: Path, lines: list[dict], header: list[str]) -> None:
