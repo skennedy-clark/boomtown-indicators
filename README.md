@@ -340,8 +340,12 @@ Windows.
 3. Run the writers (or the whole update). A row with no figures yet
    (or only the latest year's) receives the source's full history, not
    only the latest year. What has no history to fill:
-   - non-resident workers by urban centre: QGSO publishes only the two
-     latest years, and the earlier reports are no longer online;
+   - non-resident workers by urban centre for 2019-2023: the reports
+     are on neither QGSO site. Earlier years are read from the archived
+     reports into `docs/non-resident-population-register.csv` by
+     `transform/non_resident_register.py`, and `update_population_nrw.py`
+     fills a new town's row from it (see
+     `docs/non-resident-population-audit.md`);
    - population projections in rows the 2026 workbook added by hand
      for QGSO's 2023 edition: that edition is no longer published (the
      2018 edition rows and the New South Wales projections are filled

@@ -89,10 +89,9 @@ _(untriaged — add here, sort later)_
     `population_projections` and writer `update_population_projections.py`
     fill the QGSO 2018 edition rows (LGA high/medium/low, SA2 medium) and
     the NSW ERP rows' 2031/2036/2041 (NSW Planning 2024 edition), for
-    every area on the sheet. Columns follow the filled rows (the 2016,
-    2021 and 2026 figures sit under 2011, 2017 and 2025). On the
-    hand-made 2026 workbook it writes nothing and every filled cell
-    matches the source.
+    every area on the sheet, each under its own year (from 2026-10-28;
+    see below). Every filled cell of the hand-made 2026 workbook matches
+    the source.
   - [ ] Decide: the 2026 workbook added QGSO **2023 edition** rows by hand
     (LGA high/low/medium "2021 to 2046, 2023ed"; the SA2 row relabelled
     "2023e" with 2023 figures over the 2018 ones from 2021). QGSO now
@@ -100,13 +99,22 @@ _(untriaged — add here, sort later)_
     town's 2023 rows cannot be filled. Options: ask QGSO for the 2023
     tables, move all towns to the 2025 edition, or keep the 2018 rows
     only.
-  - Non-resident population projections 2022 (series A, C, D) for
-    Central Highlands: in the QGSO Bowen and Galilee PDF; by hand or a
-    fetcher.
-  - Non-resident workers by UCL: Emerald 2011-2018 are in the archived
-    Bowen Basin reports (values in docs/historic-data-for-new-towns.md);
-    2019-2023 only from QGSO on request. Mitchell and Charleville: none
-    (outside the basins); leave blank.
+  - [x] Non-resident population audit (2026-10-27,
+    `docs/non-resident-population-audit.md`): register of every town
+    figure with table and page (`transform/non_resident_register.py`,
+    `docs/non-resident-population-register.csv`); 96 of 97 agree with the
+    2026 workbook. The NRW town writer fills a new town's row from it
+    (Emerald 2011-2018, 2024-2025; Mitchell 2010-2013, 2017).
+  - [ ] Ask the research team / QGSO (audit section 6): the 2019-2023
+    Bowen and Surat reports (town figures for Emerald, Mitchell); Toowoomba
+    2018 (workbook 205, report 165); Tara and Wallumbilla figures in years
+    the reports group them into "other towns".
+  - [x] Projection rows moved to their own years (2026-10-28, agreed):
+    update_population_projections.py moves the 2018-edition and NRW 2022e
+    figures held under other years' columns (129 cells on the 2025
+    starting workbook) and writes the NRW projections for Central
+    Highlands (A, C, D; B not published). The fetcher reads the NRW
+    tables from the two QGSO reports.
   - [x] Non-residential building approvals (2026-10-27): qgso_housing
     now fetches QRSIS "Non-residential dwelling units (Private); Total"
     for every Queensland LGA and SA2 on the sheet. Matches the workbook

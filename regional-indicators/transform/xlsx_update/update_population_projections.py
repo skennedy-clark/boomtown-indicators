@@ -1,7 +1,9 @@
 """
 regional-indicators/transform/xlsx_update/update_population_projections.py
 
-Writes population projections into the Population sheet.
+Writes population projections into the Population sheet, each under its
+own year, and first moves any projection the sheet holds under another
+year's column to its own.
 
 Input:  cache/population/population_projections.json, from
         fetchers/fetch_population_projections.py.
@@ -13,27 +15,41 @@ Rows written
      (Persons), 2018ed"            in each LGA's block, from the LGA table;
     "Population projection: district 2018e (Medium Series)"
                                    in each SA2's block, from the SA2 table.
+    Years 2016, 2021, ..., 2041 (2016 is the base estimate).
+  Queensland resource regions, QGSO non-resident population projections
+  2022 to 2026:
+    "Population projection: NRW 2022e (Series A|B|C|D)" in each LGA's
+    block, years 2022-2026 (the 2021 estimate they start from is the
+    observed non-resident row's figure, not a projection). A series QGSO
+    does not publish for the LGA (Central Highlands: Series B) is left
+    empty and reported. QGSO has since withdrawn these projections ("no
+    longer current and should not be used"); they are kept as the
+    historical vintage the sheet shows.
   New South Wales, NSW Planning projections: the "Population (ERP)" row
     of the LGA and SA2 blocks of New South Wales towns (towns.toml), in
-    columns after the last data year, as Narrabri's rows hold them.
+    columns after the last data year. The years are those the other New
+    South Wales rows show (Narrabri: 2031, 2036, 2041); with none to
+    follow, the five-year points 2031, 2036, 2041.
 
   A block is matched to a source area by name, compared loosely ("Isaac
   (R)" = "Isaac", "Broadsound - Nebo" = "Broadsound-Nebo"). An SA2 renamed
   since 2016 is found by its code, through the town in towns.toml whose
   SA2 it is (Roma Surrounds was "Roma Region" in the 2018 edition).
 
-Columns
-  The sheet does not put each projection under its own year: the 2018
-  edition's 2016, 2021 and 2026 figures sit in the columns headed 2011,
-  2017 and 2025. The columns are therefore taken from the rows already
-  filled: for each row type and projection year, the column in which the
-  other areas' rows hold that year's figure. Only the years those rows
-  show are written (for New South Wales, 2031, 2036 and 2041). Where no
-  row of the type has figures yet, each year goes under its own year,
-  limited to the columns the other projection rows use (2031, 2036,
-  2041) where those are among its years.
-  Whether figures are rounded is also taken from the filled rows (the
-  LGA rows hold whole numbers, the SA2 rows the source's decimals).
+Moving projections to their own years
+  The workbooks up to 2026 held the 2018 edition's 2016, 2021 and 2026
+  figures under the columns headed 2011, 2017 and 2025, and the
+  non-resident projections for 2022-2026 under 2019, 2021, 2023, 2024
+  and 2026. A row is moved only when its figures are, in column order,
+  exactly the source's figures in year order (within rounding), so a
+  row is never rearranged on a guess; each move is listed. A row whose
+  figures do not match the source in that way is left as it is and
+  reported. New South Wales rows are already under their own years and
+  are not moved. The charts that read these rows span the years
+  concerned, so they need no change.
+
+Rounding follows the rows already filled (the LGA rows hold whole
+numbers, the SA2 rows the source's decimals).
 
 Only empty cells are written. A cell that already holds a different
 figure is kept and reported.
@@ -49,7 +65,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,7 +81,9 @@ SECTIONS = {"LGA": "lga", "SA2": "sa2", "UCL": "ucl"}
 
 QLD_LGA_ROW = re.compile(r"^Projected Population - (High|Low|Medium) series\b.*2018ed", re.IGNORECASE)
 QLD_SA2_ROW = re.compile(r"^Population projection: district 2018e \(Medium Series\)", re.IGNORECASE)
+NRW_ROW = re.compile(r"^Population projection: NRW 2022e \(Series ([A-D])\)", re.IGNORECASE)
 ERP_ROW = "Population (ERP)"
+NSW_DEFAULT_YEARS = (2031, 2036, 2041)
 MATCH_TOLERANCE = 0.5
 
 
@@ -105,6 +123,10 @@ class Target:
     key: tuple              # row type: ("qld_lga", "medium"), ("qld_sa2", "medium"), ("nsw", "lga")
     area: str               # block label
     series: dict[int, float]
+    years: tuple = ()       # the years to show; empty = every year of the series
+
+    def shown(self) -> dict[int, float]:
+        return {y: v for y, v in self.series.items() if not self.years or y in self.years}
 
 
 def find_targets(grid: list[list], data: dict, towns: list) -> tuple[list[Target], list[str]]:
@@ -119,6 +141,7 @@ def find_targets(grid: list[list], data: dict, towns: list) -> tuple[list[Target
     nsw_areas = {"lga": {loose_name(re.sub(r"\s*\([^)]*\)\s*$", "", t.lga)) for t in towns if t.state == "NSW"},
                  "sa2": {loose_name(t.sa2_name) for t in towns if t.state == "NSW"}}
     nsw_series = {level: {loose_name(k): v for k, v in (nsw.get(level) or {}).items()} for level in ("lga", "sa2")}
+    nrw = {loose_name(k): v for k, v in ((data.get("nrw_2022") or {}).get("lga") or {}).items()}
 
     targets, notes = [], []
     section = block = None
@@ -129,7 +152,8 @@ def find_targets(grid: list[list], data: dict, towns: list) -> tuple[list[Target
             section, block = SECTIONS[label], None
             continue
         b = row[1] if len(row) > 1 else None
-        is_data_row = bool(QLD_LGA_ROW.match(label) or QLD_SA2_ROW.match(label) or label == ERP_ROW)
+        is_data_row = bool(QLD_LGA_ROW.match(label) or QLD_SA2_ROW.match(label) or NRW_ROW.match(label)
+                           or label == ERP_ROW)
         if label and not is_data_row and _empty(b):
             # A block heading: a name in column A and nothing in column B.
             # Some headings carry growth-rate formulas across the row. A
@@ -160,6 +184,20 @@ def find_targets(grid: list[list], data: dict, towns: list) -> tuple[list[Target
             else:
                 notes.append(f"{block} (SA2): not in the QGSO 2018 projections; row {r} left as it is")
             continue
+        match = NRW_ROW.match(label)
+        if match:
+            table = nrw.get(name)
+            series_name = f"Series {match.group(1).upper()}"
+            if table and series_name in table["series"]:
+                values = as_years(table["series"][series_name])
+                targets.append(Target(r, ("nrw", series_name), block, values,
+                                      tuple(y for y in values if y > int(table["estimate_year"]))))
+            elif table:
+                notes.append(f"{block} (LGA): {series_name} not published for this LGA ({table['table']}); "
+                             f"row {r} left empty. {table.get('not_published', '')}".strip())
+            else:
+                notes.append(f"{block} (LGA): not in the QGSO non-resident projections; row {r} left as it is")
+            continue
         if label == ERP_ROW and section in ("lga", "sa2") and name in nsw_areas[section]:
             series = nsw_series[section].get(name)
             if series:
@@ -169,91 +207,156 @@ def find_targets(grid: list[list], data: dict, towns: list) -> tuple[list[Target
     return targets, notes
 
 
-def column_map(grid, targets: list[Target], years_by_col: dict[int, int],
-               candidates: set[int]) -> tuple[dict[int, int], bool, bool]:
-    """For one row type: ({projection year: column}, whether the filled
-    rows hold whole numbers, whether the map came from filled rows)."""
-    votes: dict[int, Counter] = defaultdict(Counter)
-    whole = []
+def own_columns(years_by_col: dict[int, int]) -> dict[int, int]:
+    """{year: column} from the year header."""
+    return {y: c for c, y in years_by_col.items()}
+
+
+def plan_moves(grid: list[list], targets: list["Target"], years_by_col: dict[int, int]):
+    """([(row, from column, to column)], report lines): projections held
+    under another year's column, to be moved to their own. See the module
+    docstring for the rule."""
+    column_of = own_columns(years_by_col)
+    moves, lines = [], []
     for t in targets:
+        if t.key[0] == "nsw":
+            continue
         row = grid[t.row - 1]
-        for year, value in t.series.items():
-            for c in candidates:
-                cell = _number(row[c - 1]) if c - 1 < len(row) else None
-                if cell is not None and abs(cell - value) <= MATCH_TOLERANCE:
-                    votes[year][c] += 1
-                    whole.append(cell.is_integer())
-    if votes:
-        mapping = {}
-        for year, counter in votes.items():
-            best = max(counter.values())
-            tied = [c for c, n in counter.items() if n == best]
-            mapping[year] = next((c for c in tied if years_by_col.get(c) == year), min(tied))
-        return mapping, bool(whole) and all(whole), True
-    by_year = {y: c for c, y in years_by_col.items() if c in candidates}
-    years = {y for t in targets for y in t.series}
-    return {y: by_year[y] for y in years if y in by_year}, True, False
+        cells = [(c, _number(row[c - 1])) for c in sorted(years_by_col)
+                 if c - 1 < len(row) and _number(row[c - 1]) is not None]
+        expected = sorted(t.shown().items())
+        if not cells:
+            continue
+        matches = (len(cells) == len(expected)
+                   and all(abs(v - src) <= MATCH_TOLERANCE for (_, v), (_, src) in zip(cells, expected)))
+        if not matches:
+            if any(years_by_col[c] not in t.series for c, _ in cells):
+                lines.append(f"  {t.area} (row {t.row}): NOT MOVED -- its figures do not match the source "
+                             f"year by year; check by hand")
+            continue
+        planned = [(c, column_of.get(year), year) for (c, _), (year, _) in zip(cells, expected)
+                   if years_by_col[c] != year]
+        if not planned:
+            continue
+        if any(to is None for _, to, _ in planned):
+            lines.append(f"  {t.area} (row {t.row}): NOT MOVED -- no column for "
+                         f"{', '.join(str(y) for _, to, y in planned if to is None)}")
+            continue
+        sources = {c for c, _ in cells}
+        blocked = [to for _, to, _ in planned if to not in sources and not _empty(row[to - 1] if to - 1 < len(row) else None)]
+        if blocked:
+            lines.append(f"  {t.area} (row {t.row}): NOT MOVED -- the column for "
+                         f"{', '.join(str(years_by_col[b]) for b in blocked)} already holds another figure")
+            continue
+        moves += [(t.row, frm, to) for frm, to, _ in planned]
+        lines.append(f"  {t.area} (row {t.row}): MOVED to own year: "
+                     + ", ".join(f"{year} (was under {years_by_col[frm]})" for frm, _, year in planned))
+    return moves, lines
+
+
+def apply_moves(grid: list[list], moves) -> None:
+    """Make the moves in the grid of values (all values read first, so a
+    figure moved into a column another figure leaves is not lost)."""
+    by_row = defaultdict(list)
+    for r, frm, to in moves:
+        by_row[r].append((frm, to))
+    for r, pairs in by_row.items():
+        row = grid[r - 1]
+        width = max(len(row), max(to for _, to in pairs))
+        row.extend([None] * (width - len(row)))
+        values = {frm: row[frm - 1] for frm, _ in pairs}
+        for frm, _ in pairs:
+            row[frm - 1] = None
+        for frm, to in pairs:
+            row[to - 1] = values[frm]
 
 
 def plan_writes(grid: list[list], data: dict, towns: list, last_data_year: int):
-    """([(row, column, value)], report lines) for the Population sheet,
-    given as a grid of cell values (rows of 1-based columns)."""
+    """([(row, column, value)], [(row, from, to)], report lines) for the
+    Population sheet, given as a grid of cell values (rows of 1-based
+    columns). The writes are planned on the grid after the moves; the
+    grid passed in is changed accordingly."""
     years_by_col = header_years(grid)
+    column_of = own_columns(years_by_col)
     targets, notes = find_targets(grid, data, towns)
     lines = list(notes)
-    writes = []
+
+    moves, move_lines = plan_moves(grid, targets, years_by_col)
+    apply_moves(grid, moves)
+    lines += move_lines
+
     by_key: dict[tuple, list[Target]] = defaultdict(list)
     for t in targets:
         by_key[t.key].append(t)
-    def candidates_for(key):
-        if key[0] == "nsw":
-            return {c for c, y in years_by_col.items() if y > last_data_year}
-        return set(years_by_col)
 
-    maps = {key: column_map(grid, group, years_by_col, candidates_for(key)) for key, group in by_key.items()}
-    # A row type with no filled rows yet shows the future years that the
-    # other row types show (the sheet's projection columns: 2031, 2036,
-    # 2041), each under its own year; failing those, every year.
-    shown_cols = {c for mapping, _, from_rows in maps.values() if from_rows for c in mapping.values()}
-    for key, group in sorted(by_key.items()):
-        mapping, whole, from_rows = maps[key]
-        if not from_rows:
-            future = {y: c for y, c in mapping.items() if c in shown_cols and years_by_col.get(c) == y}
-            mapping = future or mapping
-        shown = ", ".join(f"{y}->{years_by_col.get(c, c)}" for y, c in sorted(mapping.items()))
-        lines.append(f"{key[0]} {key[1]}: years -> columns headed {shown}"
-                     + ("" if from_rows else " (no filled rows of this type to follow)"))
+    # New South Wales: the years the filled rows show, after the last data year.
+    for key, group in by_key.items():
+        if key[0] != "nsw":
+            continue
+        shown = {y for t in group for y, v in t.series.items()
+                 if y > last_data_year and y in column_of
+                 and _number(_cell(grid, t.row, column_of[y])) is not None}
+        years = tuple(sorted(shown)) or tuple(y for y in NSW_DEFAULT_YEARS if y > last_data_year)
         for t in group:
-            row = grid[t.row - 1]
-            done, kept = [], []
-            for year, c in sorted(mapping.items()):
-                if year not in t.series:
+            t.years = years
+
+    writes = []
+    for key, group in sorted(by_key.items()):
+        filled = [_number(_cell(grid, t.row, c)) for t in group for c in years_by_col
+                  if _number(_cell(grid, t.row, c)) is not None]
+        whole = all(v.is_integer() for v in filled) if filled else key[0] != "qld_sa2"
+        for t in group:
+            done, kept, no_column = [], [], []
+            for year, value in sorted(t.shown().items()):
+                c = column_of.get(year)
+                if c is None:
+                    no_column.append(year)
                     continue
-                value = round(t.series[year]) if whole else t.series[year]
-                current = row[c - 1] if c - 1 < len(row) else None
+                current = _cell(grid, t.row, c)
                 if _empty(current):
-                    writes.append((t.row, c, value))
+                    writes.append((t.row, c, round(value) if whole else value))
                     done.append(year)
-                elif _number(current) is None or abs(_number(current) - t.series[year]) > MATCH_TOLERANCE:
-                    kept.append(f"{year}: sheet {current}, source {round(t.series[year], 1)}")
+                elif _number(current) is None or abs(_number(current) - value) > MATCH_TOLERANCE:
+                    kept.append(f"{year}: sheet {current}, source {round(value, 1)}")
             if done:
                 lines.append(f"  {t.area} (row {t.row}): WRITTEN {', '.join(map(str, done))}")
             if kept:
                 lines.append(f"  {t.area} (row {t.row}): kept, differs from the source: {'; '.join(kept)}")
-    return writes, lines
+            if no_column:
+                lines.append(f"  {t.area} (row {t.row}): no column for {', '.join(map(str, no_column))}")
+    return writes, moves, lines
+
+
+def _cell(grid, r: int, c: int):
+    row = grid[r - 1]
+    return row[c - 1] if c - 1 < len(row) else None
 
 
 def write_projections(sheet, data: dict, towns: list, last_data_year: int) -> tuple[list[str], int]:
-    """Plan and make the writes on an xlwings sheet (or a stand-in with the
-    same interface, tests/fake_xlwings_sheet.py)."""
+    """Plan and make the moves and writes on an xlwings sheet (or a
+    stand-in with the same interface, tests/fake_xlwings_sheet.py).
+    Returns (report lines, number of cells changed)."""
     last = sheet.used_range.last_cell
     grid = sheet.range((1, 1), (last.row, last.column)).value
     grid = [list(r) if isinstance(r, (list, tuple)) else [r] for r in grid]
-    writes, lines = plan_writes(grid, data, towns, last_data_year)
+    original = [list(r) for r in grid]
+    writes, moves, lines = plan_writes(grid, data, towns, last_data_year)
+    by_row = defaultdict(list)
+    for r, frm, to in moves:
+        by_row[r].append((frm, to))
+    for r, pairs in by_row.items():
+        formats = {frm: sheet.cells(r, frm).number_format for frm, _ in pairs}
+        for frm, _ in pairs:
+            sheet.cells(r, frm).value = None
+        for frm, to in pairs:
+            sheet.cells(r, to).value = original[r - 1][frm - 1]
+            sheet.cells(r, to).number_format = formats[frm]
     for r, c, value in writes:
         if _empty(sheet.cells(r, c).value):
             sheet.cells(r, c).value = value
-    return lines, len(writes)
+    if moves:
+        lines.insert(0, f"{len(moves)} projections moved to their own year's column.")
+    return lines, len(writes) + len(moves)
 
 
 def update_population_projections(xlsx_path: Path, cache_dir: Path, visible: bool = False) -> list[str]:
@@ -280,7 +383,7 @@ def update_population_projections(xlsx_path: Path, cache_dir: Path, visible: boo
             wb.close()
     finally:
         app.quit()
-    lines += ["", f"Summary: {written} cells written."]
+    lines += ["", f"Summary: {written} cells written or moved."]
     return lines
 
 

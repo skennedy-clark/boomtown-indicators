@@ -2,7 +2,9 @@
 
 Where the earlier years come from when a town is added to the workbook
 (`transform/add_town.py`), checked with Emerald, Mitchell and Charleville in
-October 2026. The writers fill a row that has no figures before the latest
+October 2026. The non-resident population series were re-checked against
+the QGSO publications on 27 October 2026; see
+`docs/non-resident-population-audit.md` and the register it describes. The writers fill a row that has no figures before the latest
 year from each source's history (`base.backfill_new_row`); the rows below
 without a fetcher have to be entered by hand.
 
@@ -10,10 +12,10 @@ without a fetcher have to be entered by hand.
 |---|---|---|
 | Population ERP (UCL, SA2, LGA) | QGSO UCL file, QRSIS, ABS Data API | Writers, 2001 onwards |
 | Non-resident workers, LGA | QGSO Bowen and Surat Basin tables, by LGA, 2006 onwards | Writers |
-| Non-resident workers, UCL | 2011-2018: Table 2 ("FTE population estimates ... UCLs") of each year's Bowen or Surat Basin population report on the QGSO archive site (see Links). 2019-2023: the reports are no longer online; QGSO can supply them. Latest two years: the current QGSO FTE table | By hand. Emerald: 2011 850, 2012 920, 2013 425, 2014 215, 2015 185, 2016 95, 2017 150, 2018 405. Towns outside the two basins (Mitchell, Charleville) have none |
-| Population projections, 2018 edition | QGSO archive site: LGA low/medium/high and SA2 medium series (see Links). These are the workbook's existing source (every filled cell in the 2026 workbook matches). The current QGSO site has the 2025 edition only; the 2023 edition rows added in the 2026 workbook cannot be filled for a new town | `population_projections`, then `update_population_projections.py` |
+| Non-resident workers, UCL | The town's row of the "FTE population estimates ... UCLs" table in each Bowen Basin (2011-2018) and Surat Basin (2008, 2010-2018) population report on the QGSO archive site, and the 2024 and 2025 reports on the current site. Read and listed, with table and page, in `docs/non-resident-population-register.csv` (`transform/non_resident_register.py`); 96 of the 97 figures the 2026 workbook also holds agree. 2019-2023: not located (the reports are on neither QGSO site; see the audit). Years where a town is grouped into "other towns" are not published | `update_population_nrw.py` fills a new town's row from the register: Emerald 2011-2018, 2024, 2025; Mitchell 2010-2013, 2017 (grouped with other towns since 2018). Charleville: outside every QGSO study area |
+| Population projections, 2018 edition | QGSO archive site: LGA low/medium/high and SA2 medium series (see Links). These are the workbook's existing source (every filled cell in the 2026 workbook matches). Until 2026 the sheet held the 2016, 2021 and 2026 figures under 2011, 2017 and 2025; the writer moves them to their own years. The current QGSO site has the 2025 edition only; the 2023 edition rows added in the 2026 workbook cannot be filled for a new town | `population_projections`, then `update_population_projections.py` |
 | Population projections, New South Wales | NSW Planning, 2024 edition, LGA and SA2 (Narrabri's 2031, 2036 and 2041 match exactly) | `population_projections`, then `update_population_projections.py` |
-| Non-resident population projections, 2022 edition | Current QGSO report (see Links), one table per LGA. Central Highlands has series A, C and D; series B is not published by LGA | By hand |
+| Non-resident population projections, 2022 edition | QGSO report 2022 to 2026 (see Links), Table 3, page 6: Central Highlands series A, C and D (2021 estimate and 2022-2026 projections) are in the register; series B is not published at LGA level. QGSO: the report is "no longer current and should not be used" | `population_projections` (reads the Bowen and Surat reports), then `update_population_projections.py`: 2022-2026 under their own years; series not published are left empty |
 | Unemployment (SALM) | The current SA2 and LGA files hold 2011 onwards | Writers |
 | Business counts | ABS 8165.0, SA2 by turnover, 14 releases back to June 2009 (before 2019 on the ABS archive site) | `run_update.py --only business_history`, then the writers. Matches the hand-made Roma, Chinchilla and Moranbah rows in 12 of 17 years; in the others the workbook holds an earlier release's figure (about 1% different) |
 | Income (postcode) | ATO data.gov.au package `taxation-statistics-postcode-data`, one Table 6 per income year | `run_update.py --only income_history`, then the writers. 2010-11 has no average for taxable individuals |

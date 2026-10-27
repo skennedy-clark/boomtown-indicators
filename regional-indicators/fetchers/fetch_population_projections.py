@@ -28,6 +28,17 @@ Government Area" (or "SA2") followed by years, one area per row. The
 title row says which years are projected ("Historic (2001-2021) and
 Projected (2022-2041)"); only projected years are kept.
 
+Queensland resource regions: QGSO non-resident population projections,
+2022 to 2026 (published June 2022), one table per LGA ("Table 3
+Projected non-resident population, Central Highlands"): the June 2021
+estimate and series A to D for 2022-2026, in non-resident workers
+on-shift. A series QGSO does not publish for an LGA is absent from its
+table (the table's note says so). QGSO's page says these projections
+"are no longer current and should not be used"; they are what the
+sheet's "Population projection: NRW 2022e" rows hold.
+      https://www.qgso.qld.gov.au/issues/3376/bowen-galilee-basins-non-resident-population-projections-2022-2026.pdf
+      https://www.qgso.qld.gov.au/issues/3191/surat-basin-non-resident-population-projections-2022-2026.pdf
+
 The source files are kept in cache/population/projections/ and are
 downloaded only when missing (or with force). A projection edition is
 fixed, so the files never need replacing; a new edition is taken only
@@ -39,7 +50,10 @@ Output: cache/population/population_projections.json
                   "lga": {name: {"low"|"medium"|"high": {year: value}}},
                   "sa2": {name: {"code", "medium": {year: value}}}},
      "nsw": {"source", "edition", "first_projected_year",
-             "lga": {name: {year: value}}, "sa2": {name: {year: value}}}}
+             "lga": {name: {year: value}}, "sa2": {name: {year: value}}},
+     "nrw_2022": {"source", "warning", "lga": {name: {"estimate_year",
+             "series": {"Series A": {year: value}}, "not_published",
+             "table", "page", "url"}}}}
 Names are as the sources write them; update_population_projections.py
 compares them loosely ("Isaac (R)" = "Isaac", "Broadsound - Nebo" =
 "Broadsound-Nebo").
@@ -64,6 +78,14 @@ QLD_SA2_URL = ("https://archive.qgso.qld.gov.au/products/tables/proj-pop-medium-
 NSW_PAGE = "https://www.planning.nsw.gov.au/data-and-resources/population-projections/explore-the-data"
 NSW_SITE = "https://www.planning.nsw.gov.au"
 NSW_FILE = re.compile(r'href="([^"]*?(\d{4})-nsw-population-projections-(local-government-areas|sa2s)\.xlsx)"')
+
+NRW_REPORTS = [
+    "https://www.qgso.qld.gov.au/issues/3376/bowen-galilee-basins-non-resident-population-projections-2022-2026.pdf",
+    "https://www.qgso.qld.gov.au/issues/3191/surat-basin-non-resident-population-projections-2022-2026.pdf",
+]
+NRW_SOURCE = "QGSO non-resident population projections, 2022 to 2026 (June 2022)"
+NRW_WARNING = ("QGSO: the 2022 to 2026 projections are representative of information available in 2021; "
+               "'They are no longer current and should not be used.'")
 
 SOURCE_DIR = CACHE_DIR / "population" / "projections"
 OUTPUT = CACHE_DIR / "population" / "population_projections.json"
@@ -161,6 +183,40 @@ def parse_nsw(rows) -> tuple[int | None, dict[str, dict[str, float]]]:
     return first, out
 
 
+NRW_TABLE = re.compile(r"^Table \d+ Projected non-resident population, (.+?)\s*$")
+
+
+def parse_nrw_tables(pages: list[list[str]]) -> dict[str, dict]:
+    """{LGA: {"estimate_year", "series": {"Series A": {year: value}},
+    "not_published", "table", "page"}} from the text of a QGSO
+    non-resident population projections report (fetchers/pdf_text.py).
+    The first year of each table is the estimate the projections start
+    from. Region totals ("Bowen Basin", "Surat Basin") are kept as well."""
+    out: dict[str, dict] = {}
+    for number, lines in enumerate(pages, start=1):
+        for i, line in enumerate(lines):
+            match = NRW_TABLE.match(line)
+            if not match:
+                continue
+            years, series, note = [], {}, ""
+            for following in lines[i + 1:i + 14]:
+                if NRW_TABLE.match(following) or following.startswith("Source:"):
+                    break
+                if not years and re.fullmatch(r"(20\d\d\s+){2,}20\d\d", following):
+                    years = [int(y) for y in following.split()]
+                row = re.match(r"^(Series [A-D])\s+([\d,\s]+)$", following)
+                if row and years:
+                    values = [int(v.replace(",", "")) for v in row.group(2).split()]
+                    if len(values) == len(years):
+                        series[row.group(1)] = {str(y): v for y, v in zip(years, values)}
+                if following.startswith("(a)"):
+                    note = following
+            if years and series:
+                out[match.group(1).strip()] = {"estimate_year": years[0], "series": series,
+                                               "not_published": note, "table": line, "page": number}
+    return out
+
+
 def nsw_links(html: str) -> dict[str, tuple[str, int]]:
     """{"local-government-areas"|"sa2s": (url, edition)} from the NSW
     page, the newest edition of each."""
@@ -247,6 +303,26 @@ class PopulationProjectionsFetcher(BaseFetcher):
         if nsw:
             nsw["source"] = f"NSW Common Planning Assumption population projections, {nsw['edition']} edition"
             out["nsw"] = nsw
+
+        nrw: dict[str, dict] = {}
+        for url in NRW_REPORTS:
+            path = SOURCE_DIR / url.rsplit("/", 1)[-1]
+            if not path.exists() or self.force:
+                try:
+                    response = requests.get(url, headers=HEADERS, timeout=180)
+                    response.raise_for_status()
+                    if not response.content.startswith(b"%PDF"):
+                        raise ValueError("not a PDF")
+                    path.write_bytes(response.content)
+                except Exception as exc:
+                    self.result.add_error("QLD", f"{url}: {exc}")
+                    continue
+            from fetchers.pdf_text import page_lines
+            for lga, table in parse_nrw_tables(page_lines(path)).items():
+                nrw[lga] = dict(table, url=url)
+        if nrw:
+            out["nrw_2022"] = {"source": NRW_SOURCE, "warning": NRW_WARNING, "lga": nrw}
+            self.log.info(f"  Non-resident projections 2022 to 2026: {', '.join(sorted(nrw))}")
 
         if not out:
             return

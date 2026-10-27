@@ -12,9 +12,17 @@ Target: the "UCL" section of the Population sheet, row "Non-resident
 The LGA-level figures in the same cache files are written by
 update_population_nrw_lga.py.
 
-The source publishes only the latest year at UCL level, so these writes
-are checked with the cell and shape-based series audits only; no
-historical comparison is possible.
+The current source publishes only the two latest years at UCL level.
+Earlier years come from the source register,
+docs/non-resident-population-register.csv (built from the QGSO reports by
+transform/non_resident_register.py): its verified UCL figures are the
+town's history. With that history:
+  - a town's row with no figures yet (a town just added) is filled with
+    every verified year; years the reports do not publish stay blank;
+  - existing figures are compared with the publications
+    (audit_historical_series) instead of the shape-based outlier check;
+  - a town with no current figure (Mitchell: grouped with other towns
+    since 2018) still receives its history.
 
 --deep-audit adds context to any flagged town: the corresponding LGA
 series (already in the cache file) is examined for a change in the same
@@ -29,17 +37,42 @@ Usage:
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from pathlib import Path
 
 import xlwings as xw
 
-from base import write_one, deep_audit_context
+from base import write_one, deep_audit_context, _find_town_indicator_row, read_existing_series
 
 INDICATOR_NAME = "Non-resident workers on-shift"
 SHEET_NAME = "Population"
 UCL_SUB_LABEL = "Non-resident workers (UCL)"
+REGISTER = Path(__file__).resolve().parents[3] / "docs" / "non-resident-population-register.csv"
+
+
+def _row_is_empty(sheet, town: str) -> bool:
+    """Whether the town's UCL row has no figures (False if not found)."""
+    try:
+        row = _find_town_indicator_row(sheet, town, INDICATOR_NAME, UCL_SUB_LABEL)
+    except ValueError:
+        return False
+    return not read_existing_series(sheet, row)
+
+
+def register_history(path: Path = REGISTER) -> dict[str, dict[int, int]]:
+    """{town: {year: non-resident workers on-shift}} from the verified UCL
+    rows of the source register; {} if there is no register."""
+    history: dict[str, dict[int, int]] = {}
+    if not path.exists():
+        return history
+    with open(path, encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            if (row["geography_level"] == "UCL" and row["verification_status"] == "verified"
+                    and row["measure"] == "non-resident workers on-shift" and row["value"]):
+                history.setdefault(row["geography"], {})[int(row["reference_year"])] = int(float(row["value"]))
+    return history
 
 
 def update_population_nrw(
@@ -63,6 +96,7 @@ def update_population_nrw(
         try:
             sheet = wb.sheets[SHEET_NAME]
             any_written = False
+            histories = register_history()
 
             for path in cache_files:
                 with open(path, encoding="utf-8") as f:
@@ -73,19 +107,31 @@ def update_population_nrw(
                 lga_series = data.get("lga_nrw_on_shift_by_year")
                 ucl_latest = data.get("ucl_nrw_latest")
 
+                history = dict(histories.get(town, {}))
+                if not ucl_latest and history and _row_is_empty(sheet, town):
+                    # No current figure, and a row with no figures yet (a town
+                    # just added): the latest published year carries the history.
+                    year = max(history)
+                    ucl_latest = {"year": year, "value": history[year]}
                 if not ucl_latest:
                     results.append(f"{town} (UCL): no data, skipped")
                     continue
+                if history:
+                    history[int(ucl_latest["year"])] = ucl_latest["value"]
 
                 try:
                     report, coord = write_one(
                         sheet, town, INDICATOR_NAME, UCL_SUB_LABEL,
                         ucl_latest["year"], ucl_latest["value"],
+                        source_series=history or None,
                     )
                     if report.safe_to_write:
+                        filled = getattr(report, "history_filled", None)
                         results.append(
                             f"{town} (UCL): WRITTEN {ucl_latest['year']} = "
                             f"{ucl_latest['value']:,} -> {coord}"
+                            + (f" (new row: history {min(filled)}-{max(filled)} filled, {len(filled)} years)"
+                               if filled else "")
                         )
                         written_count += 1
                         any_written = True

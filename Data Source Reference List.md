@@ -104,7 +104,8 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 |---|---|---|---|
 | 1 | Projected population by LGA, low, medium and high series, 2016 to 2041, 2018 edition (archive) | Queensland Government Statistician's Office (QGSO) | `https://archive.qgso.qld.gov.au/products/tables/proj-pop-lga-qld/proj-pop-lga-qld-2018-edn.xlsx` |
 | 2 | Projected population by SA2, medium series, 2016 to 2041, 2018 edition (archive) | QGSO | `https://archive.qgso.qld.gov.au/products/tables/proj-pop-medium-series-sa2-sa3-sa4-qld/proj-pop-medium-series-sa2-sa3-sa4-qld-2018-ed.xlsx` |
-| 3 | NSW Common Planning Assumption population projections, LGA and SA2, 2024 edition | NSW Department of Planning | `https://www.planning.nsw.gov.au/data-and-resources/population-projections/explore-the-data` (files `<edition>-nsw-population-projections-local-government-areas.xlsx`, `...-sa2s.xlsx`) |
+| 3 | Non-resident population projections, 2022 to 2026 (Bowen and Galilee Basins; Surat Basin), one table per LGA, series A-D. Withdrawn by QGSO as no longer current; kept as the vintage the sheet shows | QGSO | `https://www.qgso.qld.gov.au/issues/3376/bowen-galilee-basins-non-resident-population-projections-2022-2026.pdf`, `https://www.qgso.qld.gov.au/issues/3191/surat-basin-non-resident-population-projections-2022-2026.pdf` |
+| 4 | NSW Common Planning Assumption population projections, LGA and SA2, 2024 edition | NSW Department of Planning | `https://www.planning.nsw.gov.au/data-and-resources/population-projections/explore-the-data` (files `<edition>-nsw-population-projections-local-government-areas.xlsx`, `...-sa2s.xlsx`) |
 
 ---
 
@@ -118,6 +119,10 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 | 2 | Bowen Basin Population Report — Non-resident workers on shift by LGA (2006–2025) | Queensland Government Statistician's Office (QGSO) | `https://www.qgso.qld.gov.au/issues/3341/bowen-basin-population-report-tables-non-resident-workers-on-shift-local-government-area-lga-2006-2025.xlsx` |
 | 3 | Surat Basin Population Report — FTE population estimates by LGA and UCL (2024–2025) | Queensland Government Statistician's Office (QGSO) | `https://www.qgso.qld.gov.au/issues/6606/` |
 | 4 | Surat Basin Population Report — Non-resident workers on shift by LGA (2008–2025) | Queensland Government Statistician's Office (QGSO) | `https://www.qgso.qld.gov.au/issues/6606/surat-basin-population-report-tables-non-resident-workers-on-shift-local-government-area-lga-2008-2025.xlsx` |
+
+---
+
+**Town history:** `docs/non-resident-population-register.csv`, built by `transform/non_resident_register.py` from the QGSO Bowen Basin reports 2011-2018 (`https://archive.qgso.qld.gov.au/products/reports/bowen-basin-pop-report/`), Surat Basin reports 2008 and 2010-2018 (`https://archive.qgso.qld.gov.au/products/reports/surat-basin-pop-report/`) and the 2024 and 2025 reports. Each figure's table and page are in the register; see `docs/non-resident-population-audit.md`.
 
 ---
 
