@@ -114,9 +114,12 @@ history; `run_update.py --only business_history income_history fuel_history`
 fetches the earlier years of business counts (ABS releases back to June
 2009), postcode income (ATO tables back to 2000-01) and RACQ fuel prices
 (every annual report since 2011, back to 2009), which the annual run
-does not need. Non-resident workers by urban centre, the 2018 population
-projections and fuel prices before 2019 for towns RACQ has never
-reported have no history to fill.
+does not need. Non-resident workers by town come from the source
+register (`docs/non-resident-population-register.csv`); projections from
+the projections fetcher. Run `transform/town_coverage.py` afterwards to
+list what is still empty. Version 2.0 added Emerald, Mitchell,
+Charleville, Muswellbrook and Singleton this way; see
+`docs/release-notes-v2.md`.
 
 ## Where things are
 

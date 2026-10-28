@@ -1,6 +1,6 @@
 [project]
 name = "boomtown-indicators"
-version = "0.1.0"
+version = "2.0.0"
 description = "Data pipeline for the UQ Centre for Natural Gas regional indicators project"
 requires-python = ">=3.10"
 dependencies = [

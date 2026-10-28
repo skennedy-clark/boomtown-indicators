@@ -231,3 +231,21 @@ def test_comparing_with_the_folder_being_written_reads_it_first(workbook, tmp_pa
     report, _ = export(workbook, out, map_path, compare_with=out, last_year=2026)
     assert "1 with differences" in "\n".join(report)                    # the earlier 2019 figure was read
     assert "6001" in _read(out / "Goondiwindi" / "Population - district.csv")   # and then replaced
+
+
+def test_each_new_south_wales_housing_block_is_its_own_section():
+    # Muswellbrook (LGA), Narrabri (LGA) and Singleton (LGA) blocks share
+    # their row labels; each "<Town> (LGA)" heading ends the block above.
+    import openpyxl
+    from web_export import MapEntry, SheetGrid, find_row
+
+    ws = openpyxl.Workbook().active
+    ws.title = "Housing"
+    for town in ("Muswellbrook", "Narrabri", "Singleton"):
+        ws.append([f"{town} (LGA)", None] + list(range(2017, 2026)))
+        ws.append(["Sales No.", None])
+        ws.append(["Total", None] + [1] * 9)
+    grid = SheetGrid(ws)
+    for town, row in (("Muswellbrook", 2), ("Narrabri", 5), ("Singleton", 8)):
+        entry = MapEntry(town, "House sales (number)", "Housing", f"{town} (LGA)", "Sales No.", "Total", "", 1)
+        assert find_row(grid, entry, set()) == row

@@ -33,7 +33,8 @@ Towns and indicators are defined entirely by this file.
 
 Row resolution:
   1. The section starts at the first row whose column A equals the
-     section name and ends at the next section heading.
+     section name and ends at the next section heading (one of
+     SECTION_LABELS, or another "<Town> (LGA)" block heading).
   2. The block is the row in that section whose column A equals the
      block name.
   3. The row is the first one below the block heading whose column A
@@ -88,7 +89,15 @@ DEFAULT_MAP  = PROJECT_DIR / "web_export_map.csv"
 DEFAULT_OUT  = PROJECT_DIR.parent / "3 Web Content"
 FIRST_YEAR   = 2000
 NEXT_ROW     = "@next"
-SECTION_LABELS = {"LGA", "SA2", "UCL", "State", "Rainfall", "Education", "Fuel", "Narrabri (LGA)"}
+SECTION_LABELS = {"LGA", "SA2", "UCL", "State", "Rainfall", "Education", "Fuel"}
+# A block with its own year header, named "<Town> (LGA)" (the New South
+# Wales towns' housing blocks), is a section of its own; the next one
+# ends it.
+OWN_SECTION_RE = re.compile(r".+\((?:LGA|SA2)\)$")
+
+
+def is_section_heading(text: str) -> bool:
+    return text in SECTION_LABELS or bool(OWN_SECTION_RE.fullmatch(text or ""))
 MIN_YEARS_IN_HEADER = 8
 FISCAL_RE = re.compile(r"^(\d{4})/(\d{2})$")
 
@@ -221,10 +230,10 @@ def find_row(grid: SheetGrid, entry: MapEntry, known_blocks: set[str]) -> int:
         if not starts:
             raise LookupError(f"no section '{entry.section}' on sheet '{grid.name}'")
         start = starts[0] + 1
-        end = next((i for i in range(start, len(grid.rows)) if grid.col_a[i] in SECTION_LABELS),
+        end = next((i for i in range(start, len(grid.rows)) if is_section_heading(grid.col_a[i])),
                    len(grid.rows))
     else:
-        end = next((i for i, a in enumerate(grid.col_a) if a in SECTION_LABELS), len(grid.rows))
+        end = next((i for i, a in enumerate(grid.col_a) if is_section_heading(a)), len(grid.rows))
 
     def matches(i: int) -> bool:
         return grid.col_a[i] == entry.row_label and (
