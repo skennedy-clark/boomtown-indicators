@@ -25,9 +25,12 @@ Sheet layout:
   for only within the bounds of their own section.
 
   Each New South Wales town (Narrabri, and towns added later) has a
-  separate block, headed "<Town> (LGA)", with its own structure and its
+  separate block, headed "<LGA> (LGA)", with its own structure and its
   own sources (ABS building approvals; NSW Department of Communities and
   Justice Rent and Sales Report). These are handled by process_nsw_town().
+  Victorian towns use the same block (copied from Narrabri by add_town)
+  and the same cache file names; their approvals come from the same ABS
+  fetcher (nsw_approvals).
   Rows are located by their column B labels, except the all-dwellings
   rent row, which has no label and is taken as the row below "House
   3-Bed". The values are displayed as whole numbers.
@@ -157,11 +160,19 @@ def process_nsw_town(sheet, files: dict[str, Path]) -> list[tuple[str, bool, boo
     if not loaded:
         return []
     town = loaded[0][1].get("region", "")
+    lga = next((d.get("lga") for _, d in loaded if d.get("lga")), "")
 
-    try:
-        block_row = _find_nsw_block_row(sheet, town)
-    except ValueError as exc:
-        return [(f"{town}: SKIPPED (block not found) — {exc}", False, True)]
+    # The block is headed by the LGA's name ("Greater Shepparton (LGA)"),
+    # which for Narrabri and the other NSW towns is also the town's.
+    block_row, error = None, None
+    for name in dict.fromkeys(n for n in (lga, town) if n):
+        try:
+            block_row = _find_nsw_block_row(sheet, name)
+            break
+        except ValueError as exc:
+            error = exc
+    if block_row is None:
+        return [(f"{town}: SKIPPED (block not found) — {error}", False, True)]
 
     for source_label, data in loaded:
         for key, entry in data.get("indicators", {}).items():

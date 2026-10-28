@@ -69,6 +69,9 @@ class Town:
                                         # needed only where qgso_lga is absent
                                         # (towns outside Queensland). See abs_lga_code.
     bom_station:      str        = ""   # Bureau of Meteorology station number
+    locality:         str        = ""   # locality (suburb or town) name in suburb-level
+                                        # tables, e.g. Valuer-General Victoria's
+                                        # median house prices; "" = not used
     csg_notice_year:  int        = 0
     benchmark:        bool       = False
     notes:            str        = ""
@@ -180,6 +183,7 @@ class Config:
                     qgso_lga=t.get("qgso_lga", ""),
                     lga_code=str(t.get("lga_code", "")),
                     bom_station=t.get("bom_station", ""),
+                    locality=t.get("locality", ""),
                     csg_notice_year=t.get("csg_notice_year", 0),
                     benchmark=t.get("benchmark", False),
                     notes=t.get("notes", ""),

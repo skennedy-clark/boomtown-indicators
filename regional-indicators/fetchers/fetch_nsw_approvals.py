@@ -1,7 +1,8 @@
 """
 regional-indicators/fetchers/fetch_nsw_approvals.py
 
-Fetches building approvals for each New South Wales town's LGA, for the
+Fetches building approvals for each New South Wales and Victorian
+town's LGA (the source is national; the name is historical), for the
 town's "<Town> (LGA)" block of the Housing sheet ("Building approvals:
 new residential building" and "Building approvals: new houses").
 
@@ -162,12 +163,12 @@ def town_code(town, codes: dict[str, str]) -> str | None:
 class NSWApprovalsFetcher(BaseFetcher):
 
     SOURCE_NAME      = "nsw_approvals"
-    SUPPORTED_STATES = ["NSW"]
+    SUPPORTED_STATES = ["NSW", "VIC"]   # ABS is national; Queensland towns use QRSIS (qgso_housing)
 
     def fetch_all(self):
         towns = self.applicable_towns()
         if not towns:
-            self.log.info("  no New South Wales towns in towns.toml")
+            self.log.info("  no New South Wales or Victorian towns in towns.toml")
             return
         dataflows = _discover_lga_dataflows(self.log)
         if not dataflows:
@@ -248,6 +249,7 @@ class NSWApprovalsFetcher(BaseFetcher):
 
         out = {
             "region":     town.name,
+            "lga":        re.sub(r"\s*\([^)]*\)\s*$", "", town.lga or "").strip(),
             "lga":        town.lga,
             "section":    f"{town.name} (LGA)",
             "source":     "ABS Building Approvals, Australia (SDMX Data API) — LGA, by financial-year/boundary-vintage dataflow",

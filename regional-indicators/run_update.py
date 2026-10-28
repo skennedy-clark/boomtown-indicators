@@ -42,6 +42,7 @@ from fetchers.fetch_population_nrw import QGSOPopulationNRWFetcher
 from fetchers.fetch_population_erp import QGSOPopulationERPFetcher
 from fetchers.fetch_population_erp_abs import ABSPopulationERPFetcher
 from fetchers.fetch_population_projections import PopulationProjectionsFetcher
+from fetchers.fetch_crime_csa import CSACrimeFetcher
 from fetchers.fetch_population_erp_lga import ABSPopulationERPLGAFetcher
 from fetchers.fetch_crime_qps import QPSCrimeFetcher
 from fetchers.fetch_crime_bocsar import BOCSARCrimeFetcher
@@ -51,6 +52,7 @@ from fetchers.fetch_qrsis_labour import QRSISLabourFetcher
 from fetchers.fetch_nsw_labour import NSWLabourFetcher
 from fetchers.fetch_nsw_approvals import NSWApprovalsFetcher
 from fetchers.fetch_nsw_sales_rent import NSWSalesRentFetcher
+from fetchers.fetch_vic_sales_rent import VICSalesRentFetcher
 from fetchers.fetch_bom_rainfall import BOMRainfallFetcher
 from fetchers.fetch_business import ABSBusinessFetcher
 from fetchers.fetch_fuel import RACQFuelFetcher
@@ -71,11 +73,13 @@ FETCHER_REGISTRY: dict[str, type] = {
     "population_erp_lga": ABSPopulationERPLGAFetcher,  # LGA estimated resident population (ABS Data API)
     "crime_qps":      QPSCrimeFetcher,
     "crime_bocsar":   BOCSARCrimeFetcher,   # New South Wales (BOCSAR)
+    "crime_csa":          CSACrimeFetcher,       # Victoria, Crime Statistics Agency by LGA
     "salm_unemployment": SALMUnemploymentFetcher,
     "qrsis_labour":      QRSISLabourFetcher,   # Queensland LGAs and state (QGSO QRSIS)
     "nsw_labour":        NSWLabourFetcher,     # New South Wales state (ABS Labour Force)
     "nsw_approvals":     NSWApprovalsFetcher,     # NSW towns' LGA building approvals (ABS Data API)
     "nsw_sales_rent":    NSWSalesRentFetcher,     # NSW towns' LGA sales and rent (NSW DCJ)
+    "vic_sales_rent":    VICSalesRentFetcher,     # VIC towns: VGV house prices (locality), DFFH rents (LGA)
     "bom_rainfall":      BOMRainfallFetcher,
     "qgso_housing":      QGSOHousingFetcher,
     "business":          ABSBusinessFetcher,

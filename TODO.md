@@ -76,6 +76,15 @@ _(untriaged — add here, sort later)_
   (RACQ, Qld open data, RACQ history), LGA and other-state SA2 population
   and the history fetchers; added 2026-10-22. Check it whenever a fetcher
   is added (every `fetchers/fetch_*.py` should be named in it).
+- [ ] **Victorian towns, first pass (2026-10-28)** -- see
+  `docs/release-notes-v3-draft.md`. Done: crime (`crime_csa`), building
+  approvals (`nsw_approvals` extended), Shepparton SA2 and LGA codes,
+  housing block found by LGA name, VGV median house price (town
+  locality) and DFFH 3-bedroom house rent (`vic_sales_rent`, 2026-10-28).
+  To do: check whether VGV's Year summary files give sales counts by
+  suburb; Victoria in Future projections (need the LGA and SA2 files), Victoria benchmark rows, decide
+  Shepparton's SA2 (North only, or a composite with South East).
+
 - [ ] **New towns: fill every data point (2026-10-27).** Checked with
   `transform/town_coverage.py` on the latest test workbooks.
   - One workbook: the Queensland towns (Emerald, Mitchell, Charleville)

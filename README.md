@@ -237,9 +237,9 @@ On Windows `cmd`, substitute the paths in full; in PowerShell use
 | Exogenous: rainfall | `update_rainfall.py` | `bom_rainfall` |
 | Exogenous: education | `update_education.py` | `schools` |
 | Exogenous: fuel | `update_fuel.py` | `fuel`, `fuel_qld` |
-| Crime | `update_crime.py` | `crime_qps`, `crime_bocsar` |
+| Crime | `update_crime.py` | `crime_qps`, `crime_bocsar`, `crime_csa` |
 | Employment | `update_employment.py` | `salm_unemployment`, `qrsis_labour`, `nsw_labour` |
-| Housing | `update_housing.py` | `qgso_housing`, `nsw_approvals`, `nsw_sales_rent` |
+| Housing | `update_housing.py` | `qgso_housing`, `nsw_approvals`, `nsw_sales_rent`, `vic_sales_rent` |
 | Income | `update_income.py` | `income`, `income_table6` |
 | Business | `update_business.py` | `business` |
 
@@ -437,12 +437,14 @@ Towns currently configured:
 | `qrsis_labour` | Unemployment, Queensland LGAs and state | QGSO Queensland Regional Database |
 | `nsw_labour` | Unemployment, New South Wales | ABS Labour Force |
 | `qgso_housing` | Sales, median price, rent, building approvals (new houses; dwelling units in non-residential buildings) | QGSO Queensland Regional Database |
-| `nsw_approvals` | Building approvals, New South Wales towns (by LGA) | ABS Data API |
+| `nsw_approvals` | Building approvals, New South Wales and Victorian towns (by LGA) | ABS Data API |
 | `nsw_sales_rent` | Sales and rent, New South Wales towns (by LGA), from 2018 | NSW Department of Communities and Justice |
+| `vic_sales_rent` | Median house price (town locality) and 3-bedroom house rent (LGA), Victorian towns | Valuer-General Victoria; DFFH Rental Report (manual download fallback in 1 Data/Housing) |
 | `income`, `income_table6` | Taxable income by postcode | ATO Taxation Statistics (data.gov.au) |
 | `business` | Business counts | ABS Counts of Australian Businesses |
 | `crime_qps` | Offence rates, Queensland | Queensland Police Service open data |
 | `crime_bocsar` | Offence rates, New South Wales | NSW Bureau of Crime Statistics and Research |
+| `crime_csa` | Offence rates, Victoria (by LGA, grouped into the New South Wales rows) | Crime Statistics Agency Victoria |
 | `bom_rainfall` | Rainfall | SILO Patched Point Dataset (Bureau of Meteorology stations) |
 | `fuel` | Average petrol price | RACQ Annual Fuel Price Report |
 | `fuel_qld` | Average petrol price, for towns RACQ does not name (from 2019) | Queensland fuel price reporting open data (data.qld.gov.au) |

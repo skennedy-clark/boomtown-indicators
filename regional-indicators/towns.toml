@@ -17,6 +17,8 @@
 #   lga_code         ABS LGA code, for towns that have no qgso_lga
 #   qps_division     Queensland Police Service division used for crime rates
 #   bom_station      Bureau of Meteorology station number for rainfall
+#   locality         locality name in suburb-level tables (Victoria: the median house
+#                    price from Valuer-General Victoria); omit to leave that row blank
 #   csg_notice_year  CSG notice year for the town (not currently used by the code)
 #   benchmark        true for comparison regions (see BENCHMARKS below)
 #   district         text shown on the booklet title page
@@ -459,15 +461,17 @@ name             = "Shepparton"
 state            = "VIC"
 postcode         = "3630"
 postcodes        = ["3630", "3631"]
-sa2_code         = "213041536"
-sa2_name         = "Shepparton"
-sa3_code         = "21304"
+sa2_code         = "216031416"
+sa2_name         = "Shepparton - North"
+sa3_code         = "21603"
 lga              = "Greater Shepparton"
+lga_code         = "22830"
+locality         = "Shepparton"
 bom_station      = "81125"
 benchmark        = false
 district         = "Shepparton and District"
 cover_photo      = "cover.jpg"
-notes            = "VIC town. Absent from SALM. Crime data from Victoria Police, not QPS."
+notes            = "VIC town. SA2 on 2021 boundaries: the city is split between Shepparton - North (216031416, used here) and Shepparton - South East (216031594); a composite, as for Toowoomba, is an option. Crime from the Crime Statistics Agency (Greater Shepparton LGA)."
 
 [towns.yarram]
 name             = "Yarram"
@@ -478,6 +482,8 @@ sa2_code         = "205051104"
 sa2_name         = "Yarram"
 sa3_code         = "20505"
 lga              = "Wellington"
+lga_code         = "26810"
+locality         = "Yarram"
 bom_station      = "85193"
 benchmark        = false
 district         = "Yarram and District"

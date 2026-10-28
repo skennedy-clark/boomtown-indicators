@@ -17,13 +17,14 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 
 ## 2. update_crime.py
 
-**Fetchers:** `fetch_crime_bocsar.py`, `fetch_crime_qps.py`
+**Fetchers:** `fetch_crime_bocsar.py`, `fetch_crime_qps.py`, `fetch_crime_csa.py`
 
 | # | Data Source | Publisher | URL / API |
 |---|---|---|---|
 | 1 | Recorded Criminal Incidents — NSW-wide | NSW Bureau of Crime Statistics and Research (BOCSAR) | `https://bocsar.nsw.gov.au/content/dam/dcj/bocsar/documents/open-datasets/Incident_by_NSW.xlsx` |
 | 2 | Recorded Criminal Incidents — by LGA | NSW Bureau of Crime Statistics and Research (BOCSAR) | `https://bocsarblob.blob.core.windows.net/bocsar-open-data/RCI_offencebymonth.xlsm` |
 | 3 | Reported Offence Rates by police division (monthly, from Jul 2001) | Queensland Police Service (QPS) via Queensland Government open data | `https://open-crime-data.s3-ap-southeast-2.amazonaws.com/Crime%20Statistics/division_Reported_Offences_Rates.csv` |
+| 5 | Criminal incidents by LGA, year ending December (ten years per workbook; Table 02, rates per 100,000) | Crime Statistics Agency Victoria | listed at `https://discover.data.vic.gov.au/api/3/action/package_show?id=criminal-incident`; files at `https://files.crimestatistics.vic.gov.au/` |
 | 4 | Regional Population (used for per-capita crime rates) | Australian Bureau of Statistics (ABS) | `https://www.abs.gov.au/statistics/people/population/regional-population/2024-25/32180DS0004_2001-25.xlsx` |
 
 ---
@@ -43,7 +44,7 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 
 ## 4. update_housing.py
 
-**Fetchers:** `fetch_qgso_housing.py` (QLD), `fetch_nsw_approvals.py` (New South Wales towns' approvals), `fetch_nsw_sales_rent.py` (New South Wales towns' sales/rent)
+**Fetchers:** `fetch_qgso_housing.py` (QLD), `fetch_nsw_approvals.py` (New South Wales towns' approvals), `fetch_nsw_sales_rent.py` (New South Wales towns' sales/rent), `fetch_vic_sales_rent.py` (Victorian towns' sales/rent)
 
 | # | Data Source | Publisher | URL / API |
 |---|---|---|---|
@@ -54,6 +55,8 @@ Organised by XLSX updater. Each updater consumes one or more fetchers, which in 
 | 5 | Building Approvals LGA data — SDMX REST API (dataflows BA_LGA2018 through BA_LGA2026, no API key needed) | Australian Bureau of Statistics (ABS) | `https://data.api.abs.gov.au/rest/` (SDMX 2.1 REST API) |
 | 6 | Rent and Sales Report — quarterly Sales tables (LGA-level, all dwelling types) | NSW Department of Communities and Justice (DCJ) | `https://dcj.nsw.gov.au/about-us/families-and-communities-statistics/housing-rent-and-sales/rent-and-sales-report.html` |
 | 7 | Rent and Sales Report — quarterly Rent tables (LGA-level, by dwelling type and bedrooms) | NSW Department of Communities and Justice (DCJ) | `https://dcj.nsw.gov.au/about-us/families-and-communities-statistics/housing-rent-and-sales/rent-and-sales-report.html` |
+| 8 | Victorian Property Sales Report — Houses by suburb time series (median house price by locality, calendar years, ten years per file) | Valuer-General Victoria (VGV) | `https://discover.data.vic.gov.au/dataset/victorian-property-sales-report-median-house-by-suburb-time-series` (files on www.land.vic.gov.au; manual fallback `1 Data/Housing/vgv_houses_by_suburb.xlsx`) |
+| 9 | Rental Report — Quarterly median rents by LGA (sheet "3br House", June 1999 onwards) | Department of Families, Fairness and Housing (DFFH), Victoria | `https://discover.data.vic.gov.au/dataset/rental-report-quarterly-quarterly-median-rents-by-lga` (pages on www.dffh.vic.gov.au; manual fallback `1 Data/Housing/dffh_rents_by_lga.xlsx`) |
 
 **QRSIS portal page:** `https://www.qgso.qld.gov.au/statistics/queensland-regions/regional-tools-statistics/queensland-regional-database`
 
