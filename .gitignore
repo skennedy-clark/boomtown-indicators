@@ -62,6 +62,7 @@ get_bom.py
 *.csv
 # ...except the website export map, which is configuration, not data
 !regional-indicators/web_export_map.csv
+!docs/non-resident-population-register.csv
 assemble_maps/**/*.shp
 assemble_maps/**/*.shx
 assemble_maps/**/*.dbf

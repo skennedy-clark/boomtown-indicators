@@ -97,6 +97,10 @@ def update_population_nrw(
             sheet = wb.sheets[SHEET_NAME]
             any_written = False
             histories = register_history()
+            if not histories:
+                results.append(f"NOTE: no town history read from {REGISTER} (file missing or empty); "
+                               f"new towns' earlier years are not filled. Rebuild it with "
+                               f"transform/non_resident_register.py.")
 
             for path in cache_files:
                 with open(path, encoding="utf-8") as f:
