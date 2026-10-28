@@ -193,49 +193,37 @@ class NSWApprovalsFetcher(BaseFetcher):
             self._write_town(town, by_month[town.name])
 
     def _months(self, flow_id: str, region_type: str, code: str) -> dict[str, dict[str, float]]:
-        """{month: {building_type_key: value}} for one LGA in one dataflow."""
+        """{month: {building_type_key: value}} for one LGA in one dataflow.
+
+        Read as CSV, not as SDMX-JSON: the JSON response leaves out
+        observations whose value is 0, so a small LGA's month with no new
+        houses went missing and the calendar year was then dropped as
+        incomplete (Muswellbrook and Singleton had no year before 2020).
+        The CSV lists every month, zeros included."""
+        import csv
+        import io
         key = f"1.1.1.{'+'.join(BUILDING_TYPES)}.{region_type}.{code}.M"
         try:
             resp = requests.get(f"{API_BASE}/data/ABS,{flow_id},1.0.0/{key}",
-                                params={"format": "jsondata"}, timeout=60)
+                                params={"format": "csvfile"}, timeout=60)
             resp.raise_for_status()
-            payload = resp.json()
-        except (requests.RequestException, ValueError) as exc:
+        except requests.RequestException as exc:
             self.log.warning(f"  [{flow_id}] {code}: query failed: {exc}")
             return {}
 
-        data = payload.get("data", {})
-        datasets = data.get("dataSets", [])
-        structs = data.get("structures", [])
-        if not datasets or not structs:
-            return {}
-
-        # Map the TIME_PERIOD index to a month string, and the series index
-        # to a building type code.
-        time_values, btype_values = None, None
-        for s in structs:
-            for scope, dl in s.get("dimensions", {}).items():
-                for dim in dl:
-                    if dim["id"] == "TIME_PERIOD":
-                        time_values = [v["id"] for v in dim["values"]]
-                    if dim["id"] == "BUILDING_TYPE":
-                        btype_values = [v["id"] for v in dim["values"]]
-        if time_values is None:
-            return {}
-
         months: dict[str, dict[str, float]] = {}
-        series_dict = datasets[0].get("series", {})
-        for series_key, series_val in series_dict.items():
-            # BUILDING_TYPE is the 4th dimension (index 3) of the series key.
-            btype_code = btype_values[int(series_key.split(":")[3])] if btype_values else None
-            type_key = BUILDING_TYPES.get(btype_code)
-            if not type_key:
+        series = set()
+        for row in csv.DictReader(io.StringIO(resp.text)):
+            type_key = BUILDING_TYPES.get((row.get("BUILDING_TYPE") or "").strip())
+            month = (row.get("TIME_PERIOD") or "").strip()
+            try:
+                value = float(row["OBS_VALUE"])
+            except (KeyError, TypeError, ValueError):
                 continue
-            for obs_idx, obs_val in series_val.get("observations", {}).items():
-                v = obs_val[0] if obs_val else None
-                if v is not None:
-                    months.setdefault(time_values[int(obs_idx)], {})[type_key] = v
-        self.log.info(f"  [{flow_id}] {code}: {len(series_dict)} series, {len(time_values)} months")
+            if type_key and month:
+                months.setdefault(month, {})[type_key] = value
+                series.add(type_key)
+        self.log.info(f"  [{flow_id}] {code}: {len(series)} series, {len(months)} months")
         return months
 
     def _write_town(self, town, by_month: dict[str, dict[str, float]]) -> None:

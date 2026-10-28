@@ -30,6 +30,8 @@ and in `docs/historic-data-for-new-towns.md`.
   categories hidden.
 - `town_coverage.py`: lists the blocks and years still missing for a town.
 - Website export: each New South Wales housing block read separately.
+- New South Wales building approvals read from the ABS CSV response, so
+  months with no approvals are counted (small LGAs lost whole years).
 
 ## Known gaps
 
@@ -41,6 +43,10 @@ and in `docs/historic-data-for-new-towns.md`.
   that edition is no longer published.
 - Muswellbrook rainfall historic average: BOM publishes no average table
   for station 061168; enter by hand if one is wanted.
+- New South Wales building approvals before 2019 for Muswellbrook and
+  Singleton: the ABS Data API starts in July 2018 (Narrabri's earlier
+  years were entered by hand). Sales and rent for 2017: the NSW reports
+  start part way through 2017.
 - Goondiwindi and Moranbah rainfall stations are not in SILO (as in v1).
 - Narrabri Surrounds series on the Muswellbrook and Singleton pages:
   delete or replace by hand (listed by add_town).
