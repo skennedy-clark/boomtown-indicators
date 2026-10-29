@@ -37,7 +37,9 @@ What is added, for each block of the template town
   - otherwise a copy of the template's block is inserted, in
     alphabetical order among the blocks of the same shape, with the
     area name (and, on the Income sheet, the postcode) changed and the
-    figures cleared. Formulas are kept.
+    figures cleared. Formulas are kept, except arithmetic on typed-in
+    numbers ("=46+56+67+70", four quarters' sales added by hand), which
+    is a figure for the template town and is cleared like one.
 
   The template's chart page is copied and named after the new town.
   Every chart series that read the template's rows is pointed at the
@@ -870,7 +872,8 @@ def _free_template_axes(chart) -> str:
 
 def _clear_and_relabel(sheet, first: int, size: int, template, town, new_label: str, old_label: str) -> None:
     """Clear the figures in a copied block and give it the new town's names.
-    Formulas are kept; column B text is kept (with names replaced)."""
+    Formulas are kept, except constant ones (is_constant_formula), which
+    are figures; column B text is kept (with names replaced)."""
     last_col = sheet.used_range.last_cell.column
     rng = sheet.range((first, 1), (first + size - 1, last_col))
     formulas = rng.formula
@@ -885,6 +888,8 @@ def _clear_and_relabel(sheet, first: int, size: int, template, town, new_label: 
                         and all(b - a == 1 for a, b in zip(years, years[1:])))      # a year header
         for c, cell in enumerate(row):
             if isinstance(cell, str) and cell.startswith("="):
+                if c > 1 and is_constant_formula(cell) and not keep_figures:
+                    row[c] = ""
                 continue
             if c == 0:
                 text = str(cell).strip() if cell is not None else ""
@@ -900,6 +905,15 @@ def _clear_and_relabel(sheet, first: int, size: int, template, town, new_label: 
                 row[c] = ""
         new_rows.append(row)
     rng.formula = new_rows
+
+
+CONSTANT_FORMULA = re.compile(r"^=[\d\s.+\-*/()]+$")
+
+
+def is_constant_formula(value) -> bool:
+    """True for a formula of typed-in numbers only ("=46+56+67+70"): a
+    figure entered as a sum, not a formula that reads other cells."""
+    return isinstance(value, str) and bool(CONSTANT_FORMULA.match(value.strip()))
 
 
 def _numeric_text(text: str) -> bool:

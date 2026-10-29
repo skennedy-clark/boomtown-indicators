@@ -39,3 +39,9 @@ def test_zero_months_are_kept(monkeypatch):
     months = fetcher._months("BA_LGA2018", "LGA2018", "15650")
     assert months["2018-07"] == {"new_houses": 0, "new_residential_building": 0}
     assert months["2018-08"] == {"new_houses": 1, "new_residential_building": 3}
+
+
+def test_query_key_leaves_the_region_type_open():
+    # BA_LGA2026 holds its data under region type LGA2025, so the key must
+    # not name a region type (see the fetcher's docstring).
+    assert nsw.data_key("26810") == "1.1.1.110+100..26810.M"

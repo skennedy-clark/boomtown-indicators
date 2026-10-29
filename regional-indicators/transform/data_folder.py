@@ -69,7 +69,7 @@ SOURCE_FILE_RULES = [
     (r"^qgso_ucl_erp|^surat_basin_|^bowen_basin_", "Population"),
     (r"^abs_lga_population", "Crime"),               # populations used to turn NSW offence counts into rates
     (r"^salm|^abs_nsw_labour", "Employment"),
-    (r"^dcj_(rent|sales)", "Housing"),
+    (r"^dcj_(rent|sales)|^vgv_|^dffh_", "Housing"),
     (r"^ato_", "Income"),
     (r"^abs_dc9|business", "Business"),
     (r"^qps_|^bocsar", "Crime"),
@@ -101,6 +101,30 @@ MANUAL_FILES = [
             "The update tries to download this file itself; this is needed only if the run\n"
             "report says the LGA file was not found. Without it the LGA unemployment rows are\n"
             "not updated; everything else still runs."
+        ),
+    ),
+    ManualFile(
+        discipline="Housing",
+        file_name="vgv_houses_by_suburb.xlsx",
+        title="Valuer-General Victoria - Houses by suburb (time series, Excel)",
+        instructions=(
+            "Needed only for Victorian towns, and only if the run report says the file was not obtained.\n"
+            "1. Open https://discover.data.vic.gov.au/dataset/victorian-property-sales-report-median-house-by-suburb-time-series\n"
+            "2. Download the latest 'Houses by suburb <year>-<year>' file.\n"
+            "3. Save it in this folder as:  vgv_houses_by_suburb.xlsx\n"
+            "Without it the Victorian towns' Median Sale Price rows are not updated."
+        ),
+    ),
+    ManualFile(
+        discipline="Housing",
+        file_name="dffh_rents_by_lga.xlsx",
+        title="DFFH Rental Report - Quarterly median rents by LGA (Excel)",
+        instructions=(
+            "Needed only for Victorian towns, and only if the run report says the file was not obtained.\n"
+            "1. Open https://discover.data.vic.gov.au/dataset/rental-report-quarterly-quarterly-median-rents-by-lga\n"
+            "2. Open the latest quarter and download its Excel workbook.\n"
+            "3. Save it in this folder as:  dffh_rents_by_lga.xlsx\n"
+            "Without it the Victorian towns' House 3-Bed rent rows are not updated."
         ),
     ),
 ]

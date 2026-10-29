@@ -84,7 +84,7 @@ def test_manual_downloads_are_kept_and_imported_into_the_cache(cache, tmp_path):
 
     lines = import_manual_files(out, cache)
     assert (cache / "salm_smoothed_lga.csv").read_text() == "lga"
-    assert lines[-1] == "Summary: 1 of 1 manual download(s) imported."
+    assert lines[-1] == "Summary: 1 of 3 manual download(s) imported."
 
     build_data_folder(cache, out)                                       # rebuilding keeps the manual file
     assert (out / "Employment" / "salm_smoothed_lga.csv").read_text() == "lga"
