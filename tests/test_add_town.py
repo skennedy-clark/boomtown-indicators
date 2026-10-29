@@ -423,3 +423,35 @@ def test_an_empty_labelled_row_added_earlier_is_reused():
     ]
     plan = make_plan({"Employment": employment}, MUSWELLBROOK, NARRABRI)
     assert plan.inserts == [] and [e.label for _, e in plan.reused] == ["Muswellbrook"]
+
+
+def test_copied_block_loses_typed_in_sums_but_keeps_real_formulas():
+    from add_town import _clear_and_relabel, is_constant_formula
+
+    class Range:
+        def __init__(self, rows):
+            self.formula = rows
+
+    class Sheet:
+        def __init__(self, rows):
+            self.rows = rows
+            self.used_range = SimpleNamespace(last_cell=SimpleNamespace(column=len(rows[0])))
+            self.written = None
+
+        def range(self, first, last):
+            self.written = Range([list(r) for r in self.rows])
+            return self.written
+
+    sheet = Sheet([
+        ("Narrabri (LGA)", "", "", ""),
+        ("Total", "Sales No.", 230, "=46+56+67+70"),
+        ("Total", "New Houses", "=SUM(C2:C3)", "=(D2-C2)/C2"),
+    ])
+    template = SimpleNamespace(name="Narrabri", postcode="2390")
+    new = SimpleNamespace(name="Shepparton", postcode="3630")
+    _clear_and_relabel(sheet, 1, 3, template, new, "Greater Shepparton (LGA)", "Narrabri (LGA)")
+    rows = sheet.written.formula
+    assert rows[0][0] == "Greater Shepparton (LGA)"
+    assert rows[1][2:] == ["", ""]                       # 230 and the typed-in sum are figures
+    assert rows[2][2:] == ["=SUM(C2:C3)", "=(D2-C2)/C2"]  # formulas that read cells are kept
+    assert is_constant_formula(" =1.5*(2+3) ") and not is_constant_formula("=A1+2")

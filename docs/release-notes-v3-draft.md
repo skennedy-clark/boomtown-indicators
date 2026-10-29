@@ -19,6 +19,13 @@ Yarram are in towns.toml.
 | Housing: Median Sale Price | Valuer-General Victoria, houses by suburb (`vic_sales_rent`), 2015 onwards (earlier years from older editions when they can be downloaded) | **Town locality, houses only** (towns.toml `locality`: Shepparton, Yarram), not the LGA and all dwellings as in the New South Wales rows: VGV publishes no LGA medians. Remove `locality` from a town to leave the row blank instead. |
 | Housing: House 3-Bed rent | DFFH Rental Report, quarterly median rents by LGA, 3-bedroom houses (`vic_sales_rent`), 2000 onwards | Mean of the four quarterly medians, complete years only. DFFH's latest file is the September quarter 2025, so 2025 is not written until the December quarter is published. |
 
+Fixed after the first test run (2026-10-29): `add_town.py` copied the
+template's typed-in sum "=46+56+67+70" (Narrabri's 2025 sales count)
+into the new Housing blocks, where it showed as a 2025 Sales No. of 239.
+Formulas of typed-in numbers only are now cleared like other figures.
+The ABS approvals query leaves the region type open (BA_LGA2026 holds
+its data under LGA2025).
+
 ## Not yet filled
 
 - **Mean Sale Price and Sales No.**: VGV's suburb time series has
@@ -40,6 +47,10 @@ Yarram are in towns.toml.
 - **Benchmark rows for Victoria** (Crime, Employment, Income): the
   workbook has none. The Victorian towns are compared with the New South
   Wales benchmark rows until Victoria rows are added.
+- **Yarram's rainfall historic average**: BOM has no Climate Averages
+  table for station 085193 that the update can read, and the row had no
+  figure to carry forward. Type BOM's figure into the row once; later
+  runs carry it forward. (Shepparton, 081125, was read: 448.4 mm.)
 - **Fuel prices** and **non-resident workers**: no Victorian source.
 - `town_coverage.py` compares a town with others of its state, so it
   lists nothing for the first Victorian towns.
