@@ -46,9 +46,11 @@ Known limitations:
   - A vintage whose codelist has neither the town's lga_code nor its LGA
     name is skipped and reported; the calendar years it covers are then
     incomplete and are not produced.
-  - BA_LGA2026 appears in the dataflow listing but its data query
-    returns 404: a dataflow for a newly opened financial year is
-    registered before it is populated.
+  - REGION_TYPE is left empty (any) in the data query. It usually
+    matches the dataflow's year (LGA2024 in BA_LGA2024), but not always:
+    BA_LGA2026 holds its data under LGA2025, and the region-type
+    codelist has no LGA2026, so a query naming LGA2026 found nothing
+    (checked 2026-10-29). The region code alone identifies the LGA.
 
 Output: cache/housing/regions/<town slug>_approvals.json (for example
 narrabri_approvals.json), read by update_housing.py. Values are
@@ -146,6 +148,12 @@ def _region_codes(log, dataflow_id: str, region_type: str) -> dict[str, str]:
     return {}
 
 
+def data_key(code: str) -> str:
+    """The SDMX data key for one LGA: new private dwelling units, both
+    building types, monthly, any region type (see the module docstring)."""
+    return f"1.1.1.{'+'.join(BUILDING_TYPES)}..{code}.M"
+
+
 def town_code(town, codes: dict[str, str]) -> str | None:
     """The town's LGA code in one vintage's codelist: its lga_code from
     towns.toml if the codelist has it, otherwise the code of the LGA
@@ -203,7 +211,7 @@ class NSWApprovalsFetcher(BaseFetcher):
         The CSV lists every month, zeros included."""
         import csv
         import io
-        key = f"1.1.1.{'+'.join(BUILDING_TYPES)}.{region_type}.{code}.M"
+        key = data_key(code)
         try:
             resp = requests.get(f"{API_BASE}/data/ABS,{flow_id},1.0.0/{key}",
                                 params={"format": "csvfile"}, timeout=60)
